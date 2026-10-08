@@ -1,6 +1,8 @@
 import type { FeatureIdentifier, Map as MlMap } from 'maplibre-gl';
+import polygonClipping, { type MultiPolygon } from 'polygon-clipping';
 import { sameValue, scaleBy, stripWrappers } from '../core/expressions';
-import { pointInPolygons, type Ring } from '../core/geometry';
+import { pointInPolygons, polygonsOf, type Ring } from '../core/geometry';
+import { notifyExemptionsChanged } from '../labels/exemptions';
 import { EARTH_RADIUS_M } from '../core/mercator';
 import type { LandmarkEntry } from './catalogue';
 import { entryKey } from './discovery';
@@ -104,6 +106,57 @@ function centreOf(geometry: { type: string; coordinates: unknown }): number[] | 
   ];
 }
 
+/**
+ * Share of a building inside a footprint above which it is replaced even with its centre
+ * outside: parts straddling the outline (a tower's legs). Neighbours that only share a wall
+ * overlap the inset footprint by about nothing.
+ */
+const MOSTLY_INSIDE = 0.4;
+
+type Bbox = [number, number, number, number];
+
+function bboxOf(polygons: number[][][][]): Bbox {
+  const b: Bbox = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const rings of polygons)
+    for (const [x, y] of rings[0] ?? []) {
+      b[0] = Math.min(b[0], x!);
+      b[1] = Math.min(b[1], y!);
+      b[2] = Math.max(b[2], x!);
+      b[3] = Math.max(b[3], y!);
+    }
+  return b;
+}
+
+const overlaps = (a: Bbox, b: Bbox) => a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+
+/** Shoelace area of polygons with holes (degrees²: only ratios are used). */
+function areaOf(polygons: number[][][][]): number {
+  let total = 0;
+  for (const rings of polygons)
+    rings.forEach((ring, i) => {
+      let a = 0;
+      for (let k = 0; k + 1 < ring.length; k++)
+        a += ring[k]![0]! * ring[k + 1]![1]! - ring[k + 1]![0]! * ring[k]![1]!;
+      total += (i === 0 ? 1 : -1) * Math.abs(a / 2);
+    });
+  return total;
+}
+
+/** Share (0..1) of a building's area inside a footprint; 0 when it cannot be computed. */
+function shareInside(building: number[][][][], footprint: number[][][][]): number {
+  const area = areaOf(building);
+  if (!(area > 0)) return 0;
+  try {
+    const inside = polygonClipping.intersection(
+      building as MultiPolygon,
+      footprint as MultiPolygon,
+    ) as number[][][][];
+    return areaOf(inside) / area;
+  } catch {
+    return 0;
+  }
+}
+
 interface Target {
   layerId: string;
   source: string;
@@ -135,7 +188,14 @@ export class BuildingReplacement {
   private claimed = new Map<string, Claimed>();
   /** Fade value last written to each feature. */
   private applied = new Map<string, FeatureIdentifier & { fade: number }>();
-  private regions: { key: string; footprints: number[][][][]; ids: (number | string)[] }[] = [];
+  private regions: {
+    key: string;
+    footprints: number[][][][];
+    bbox: Bbox;
+    ids: (number | string)[];
+  }[] = [];
+  /** Keys of the claimed features last written (listeners hear when the set changes). */
+  private claimedKey = '';
   private fades = new Map<string, number>();
   private lastKey = '';
   private listening = false;
@@ -153,11 +213,15 @@ export class BuildingReplacement {
     const key = [...this.fades.keys()].sort().join('|');
     if (key !== this.lastKey) {
       this.lastKey = key;
-      this.regions = items.map(({ entry }) => ({
-        key: entryKey(entry),
-        footprints: footprintOf(entry, this.insetM),
-        ids: entry.basemapReplacement?.featureIds ?? [],
-      }));
+      this.regions = items.map(({ entry }) => {
+        const footprints = footprintOf(entry, this.insetM);
+        return {
+          key: entryKey(entry),
+          footprints,
+          bbox: bboxOf(footprints),
+          ids: entry.basemapReplacement?.featureIds ?? [],
+        };
+      });
       if (this.regions.length && !this.listening) {
         this.map.on('sourcedata', this.onSourceData);
         this.listening = true;
@@ -173,6 +237,7 @@ export class BuildingReplacement {
     this.claimed.clear();
     this.applied.clear();
     this.lastKey = '';
+    this.claimedKey = '';
   }
 
   restore(): void {
@@ -183,6 +248,10 @@ export class BuildingReplacement {
       this.safely(() => this.map.removeFeatureState(f, FADE_STATE));
     this.applied.clear();
     this.claimed.clear();
+    if (this.claimedKey) {
+      this.claimedKey = '';
+      notifyExemptionsChanged(this.map);
+    }
     for (const [layerId, props] of this.originals) {
       for (const [prop, { original, applied }] of props) {
         this.safely(() => {
@@ -273,10 +342,20 @@ export class BuildingReplacement {
       );
       for (const f of features) {
         if (f.id === undefined || f.id === null) continue;
-        const centre = centreOf(f.geometry as { type: string; coordinates: unknown });
+        const geometry = f.geometry as { type: string; coordinates: unknown };
+        const centre = centreOf(geometry);
         if (!centre) continue;
+        let polygons: number[][][][] | undefined;
         for (const r of this.regions) {
-          if (pointInPolygons(centre, r.footprints)) claim(`${sourceKey}/${f.id}`, at(f.id), r.key);
+          let inside = pointInPolygons(centre, r.footprints);
+          if (!inside) {
+            // ...or mostly inside it (parts straddling the outline).
+            polygons ??= polygonsOf(geometry);
+            inside =
+              overlaps(bboxOf(polygons), r.bbox) &&
+              shareInside(polygons, r.footprints) >= MOSTLY_INSIDE;
+          }
+          if (inside) claim(`${sourceKey}/${f.id}`, at(f.id), r.key);
         }
       }
     }
@@ -297,6 +376,12 @@ export class BuildingReplacement {
       if (prev?.fade === fade) continue;
       this.map.setFeatureState(feature, { [FADE_STATE]: fade });
       this.applied.set(k, { ...feature, fade });
+    }
+    // Roofs drawn on these buildings hide with them: tell exemption listeners about the change.
+    const key = [...this.claimed.keys()].sort().join('|');
+    if (key !== this.claimedKey) {
+      this.claimedKey = key;
+      notifyExemptionsChanged(this.map);
     }
   }
 

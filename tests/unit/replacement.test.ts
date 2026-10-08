@@ -9,6 +9,7 @@ import {
 } from '../../src/landmarks/replacement';
 import type { LandmarkEntry } from '../../src/landmarks/catalogue';
 import { entry } from './fixtures';
+import { onExemptionsChanged } from '../../src/labels/exemptions';
 
 // ~100 m square around the Eiffel Tower anchor.
 const SQUARE = [
@@ -168,6 +169,44 @@ describe('BuildingReplacement (feature-state)', () => {
       { source: 'protomaps', sourceLayer: 'buildings', id: 1 },
       { [FADE_STATE]: 1 },
     );
+  });
+
+  it('also hides buildings mostly inside the footprint whose centre lies just outside it', () => {
+    const { map, target } = fakeStyle();
+    // The inset footprint's east edge is ~2.29518. A part from 2.29500 to 2.29540 is 45% inside
+    // with its centre (2.29520) just outside; its neighbour starts at the original edge.
+    const box = (id: number, w: number, e: number) => ({
+      id,
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [w, 48.8583],
+            [e, 48.8583],
+            [e, 48.8586],
+            [w, 48.8586],
+            [w, 48.8583],
+          ],
+        ],
+      },
+    });
+    map.features.splice(0, map.features.length, box(5, 2.295, 2.2954), box(6, 2.2952, 2.2956));
+    new BuildingReplacement(target, ['buildings'], 1.5).update([full(landmark())]);
+    expect(map.states.get(5)?.[FADE_STATE]).toBe(1);
+    expect(map.states.has(6)).toBe(false);
+  });
+
+  it('tells exemption listeners (roofs) when the set of hidden buildings changes', () => {
+    const { map, target } = fakeStyle();
+    const listener = vi.fn();
+    onExemptionsChanged(map, listener);
+    const replacement = new BuildingReplacement(target, ['buildings'], 1.5);
+    replacement.update([full(landmark())]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    replacement.update([{ entry: landmark(), fade: 0.5 }]); // same buildings, new fade
+    expect(listener).toHaveBeenCalledTimes(1);
+    replacement.update([]);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("also hides the model's listed basemap feature ids, even outside the footprint", () => {
