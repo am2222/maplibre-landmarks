@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import type {} from '../../demo/e2e';
 
+// CI runners render WebGL in software (SwiftShader) on a few cores: full-screen water and fog
+// shaders take seconds per frame there, so draw a smaller canvas and allow more time.
+test.use({ viewport: { width: 640, height: 400 } });
+test.describe.configure({ timeout: 180_000 });
+
 const LNG = 2.2945;
 const LAT = 48.8584;
 const KX = 111_195 * Math.cos((LAT * Math.PI) / 180);

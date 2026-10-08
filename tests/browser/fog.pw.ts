@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import type {} from '../../demo/e2e';
 
+// CI runners render WebGL in software (SwiftShader) on a few cores: full-screen water and fog
+// shaders take seconds per frame there, so draw a smaller canvas and allow more time.
+test.use({ viewport: { width: 640, height: 400 } });
+test.describe.configure({ timeout: 180_000 });
+
 /**
  * A fixed scene (no Open Landmarks API: fog does not need models, and the API rate-limits test
  * runs): a 30 m square footprint and the red flat neighbour 70 m east of it.
