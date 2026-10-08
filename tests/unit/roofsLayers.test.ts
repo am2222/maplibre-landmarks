@@ -3,6 +3,8 @@ import { Scene } from 'three';
 import type { ModuleContext } from '../../src/core/LayerModule';
 import { RoofsModule } from '../../src/roofs/RoofsModule';
 import { ROOF_STATE } from '../../src/roofs/walls';
+import { FADE_STATE } from '../../src/landmarks/replacement';
+import { notifyExemptionsChanged } from '../../src/labels/exemptions';
 import { view } from './helpers';
 
 const DEG_PER_M = 360 / (2 * Math.PI * 6371008.8);
@@ -161,6 +163,22 @@ describe('RoofsModule with several extrusion layers (buildings + building parts)
     map.states.clear();
     module.styleChanged(true);
     expect(map.removeFeatureState).not.toHaveBeenCalled();
+  });
+
+  it('draws no roof on buildings a landmark model replaces, and brings it back after', () => {
+    const { map, module } = setup();
+    map.features.building = [gabled(1, 0), gabled(2, 30)];
+    // The landmark replacement hides walls with this state; roofs must hide with them.
+    map.states.set('building:1', { [FADE_STATE]: 1 });
+    module.update(view({ zoom: 16 }));
+    expect(module.getStats().buildings).toBe(1);
+    expect(map.states.get('building:1')?.[ROOF_STATE]).toBeUndefined();
+    expect(map.states.get('building:2')?.[ROOF_STATE]).toBe(3);
+    // The model leaves: the replacement clears its state and notifies.
+    map.states.delete('building:1');
+    notifyExemptionsChanged(map);
+    vi.advanceTimersByTime(200);
+    expect(module.getStats().buildings).toBe(2);
   });
 
   it('still accepts a single extrusion layer name', () => {

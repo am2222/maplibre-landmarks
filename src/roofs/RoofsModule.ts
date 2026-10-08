@@ -12,6 +12,7 @@ import { localPosition, originAt } from '../core/mercator';
 import { OwnedPaint } from '../core/ownedPaint';
 import type { LngLat, Origin, ViewState } from '../core/types';
 import { exemptionsFor, offExemptionsChanged, onExemptionsChanged } from '../labels/exemptions';
+import { FADE_STATE } from '../landmarks/replacement';
 import { colorVariance } from './colors';
 import { FootprintIndex, type Footprint, type SourceFeatureLike } from './footprints';
 import type { Vec2 } from './geometry/frame';
@@ -248,8 +249,11 @@ export class RoofsModule implements LayerModule {
       if (index.missingIds) {
         this.report('ids', new Error(`source "${this.options.source}" has buildings without ids`));
       }
-      for (const f of footprints.values())
+      for (const f of footprints.values()) {
+        // Buildings a landmark model replaces lose their roof along with their walls.
+        if (this.replacedByLandmark(map, sourceLayer, f.id)) continue;
         found.push({ sourceLayer, key: `${sourceLayer ?? ''}|${f.key}`, f });
+      }
     }
     const exempt = exemptionsFor(map);
     const [cx, cy] = view.center;
@@ -358,6 +362,19 @@ export class RoofsModule implements LayerModule {
       this.elevations.set(cacheKey, e);
     }
     return e;
+  }
+
+  private replacedByLandmark(
+    map: MlMap,
+    sourceLayer: string | undefined,
+    id: number | string,
+  ): boolean {
+    try {
+      const state = map.getFeatureState({ source: this.options.source, sourceLayer, id });
+      return ((state?.[FADE_STATE] as number | undefined) ?? 0) > 0;
+    } catch {
+      return false;
+    }
   }
 
   /**
