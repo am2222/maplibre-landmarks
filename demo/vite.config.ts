@@ -25,6 +25,7 @@ export default defineConfig({
         main: resolve(import.meta.dirname, 'index.html'),
         e2e: resolve(import.meta.dirname, 'e2e.html'),
         trees: resolve(import.meta.dirname, 'e2e-trees.html'),
+        roofs: resolve(import.meta.dirname, 'roofs-gallery.html'),
       },
     },
   },

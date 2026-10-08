@@ -34,7 +34,17 @@ export const resolveFields = (over: Partial<Fields> = {}): Fields => ({
 });
 
 export type ProfileShape =
-  'gabled' | 'saltbox' | 'hipped' | 'half_hipped' | 'gambrel' | 'mansard' | 'skillion' | 'round';
+  | 'gabled'
+  | 'saltbox'
+  | 'hipped'
+  | 'half_hipped'
+  | 'gambrel'
+  | 'mansard'
+  | 'skillion'
+  | 'round'
+  | 'butterfly'
+  | 'crosspitched'
+  | 'sawtooth';
 export type RadialShape = 'pyramidal' | 'cone' | 'dome' | 'onion';
 export type RoofShape = ProfileShape | RadialShape;
 
@@ -47,19 +57,36 @@ export const PROFILE_SHAPES: ProfileShape[] = [
   'mansard',
   'skillion',
   'round',
+  'butterfly',
+  'crosspitched',
+  'sawtooth',
 ];
 const SHAPES = new Set<string>([...PROFILE_SHAPES, 'pyramidal', 'cone', 'dome', 'onion']);
 const ALIASES: Record<string, RoofShape> = {
   double_saltbox: 'mansard',
   quadruple_saltbox: 'mansard',
   side_hipped: 'hipped',
+  side_half_hipped: 'half_hipped',
+  hipped_and_gabled: 'hipped',
+  gabled_height_moved: 'saltbox',
+  bellcast_gable: 'gabled',
+  pitched: 'gabled',
+  lean_to: 'skillion',
+  monopitch: 'skillion',
+  shed: 'skillion',
   pyramid: 'pyramidal',
 };
 
-/** Every raw `roof_shape` value that draws a roof (lower case, `_` and `-` spellings). */
-export const ROOF_SHAPE_VALUES: string[] = [...SHAPES, ...Object.keys(ALIASES)].flatMap((v) =>
-  v.includes('_') ? [v, v.replaceAll('_', '-')] : [v],
-);
+/** Every `_` / `-` spelling of `v` (OSM mixes them, e.g. `side_half-hipped`). */
+const spellings = (v: string): string[] => {
+  const i = v.indexOf('_');
+  if (i < 0) return [v];
+  const rest = spellings(v.slice(i + 1));
+  return ['_', '-'].flatMap((sep) => rest.map((r) => v.slice(0, i) + sep + r));
+};
+
+/** Every raw `roof_shape` value that draws a roof (lower case, all `_` / `-` spellings). */
+export const ROOF_SHAPE_VALUES: string[] = [...SHAPES, ...Object.keys(ALIASES)].flatMap(spellings);
 
 export function normaliseShape(value: unknown): RoofShape | null {
   if (typeof value !== 'string') return null;

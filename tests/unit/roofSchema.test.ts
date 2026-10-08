@@ -4,6 +4,7 @@ import {
   DEFAULT_FIELDS,
   normaliseShape,
   readRoofProps,
+  ROOF_SHAPE_VALUES,
   resolveFields,
 } from '../../src/roofs/schema';
 
@@ -17,12 +18,29 @@ describe('roof shapes', () => {
     expect(normaliseShape('quadruple_saltbox')).toBe('mansard');
     expect(normaliseShape('side_hipped')).toBe('hipped');
     expect(normaliseShape('pyramid')).toBe('pyramidal');
+    expect(normaliseShape('side_half-hipped')).toBe('half_hipped');
+    expect(normaliseShape('hipped-and-gabled')).toBe('hipped');
+    expect(normaliseShape('gabled_height_moved')).toBe('saltbox');
+    expect(normaliseShape('bellcast_gable')).toBe('gabled');
+    expect(normaliseShape('pitched')).toBe('gabled');
+    expect(normaliseShape('lean_to')).toBe('skillion');
+    expect(normaliseShape('monopitch')).toBe('skillion');
+    expect(normaliseShape('shed')).toBe('skillion');
+    expect(normaliseShape('sawtooth')).toBe('sawtooth');
     expect(normaliseShape('saltbox')).toBe('saltbox');
   });
 
   it('treats flat, unknown and missing shapes as no roof', () => {
-    for (const v of ['flat', 'sawtooth', 'many', '', undefined, 3])
+    for (const v of ['flat', 'many', 'gabled_row', '', undefined, 3])
       expect(normaliseShape(v)).toBeNull();
+  });
+});
+
+describe('ROOF_SHAPE_VALUES', () => {
+  it('lists every _ / - spelling, including mixed ones', () => {
+    for (const v of ['side_half-hipped', 'side-half_hipped', 'hipped-and-gabled', 'lean-to'])
+      expect(ROOF_SHAPE_VALUES).toContain(v);
+    expect(ROOF_SHAPE_VALUES.every((v) => normaliseShape(v) !== null)).toBe(true);
   });
 });
 

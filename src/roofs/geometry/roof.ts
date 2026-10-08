@@ -2,7 +2,7 @@ import { toRGB } from '../colors';
 import type { ProfileShape, RoofProps } from '../schema';
 import { roofFrame, type RoofFrame, type Vec2 } from './frame';
 import { MeshBuilder, type RoofMesh } from './mesh';
-import { buildProfileRoof, profilePlanes } from './profiles';
+import { buildProfileRoof, profilePlanes, sawtoothTeeth } from './profiles';
 import { coneRoof, domeRoof, onionRoof, pyramidRoof } from './radial';
 
 export interface BuiltRoof {
@@ -24,7 +24,9 @@ export function resolveRoofHeight(
 ): number | null {
   const span = props.height - props.minHeight;
   if (props.roofHeight !== undefined) return Math.min(props.roofHeight, span);
-  const half = Math.min(frame.L, frame.W);
+  // A sawtooth's height is per tooth, so its default pitch is measured over one tooth.
+  const half =
+    props.shape === 'sawtooth' ? sawtoothTeeth(frame.W).width / 2 : Math.min(frame.L, frame.W);
   const fallback = ROUNDED.has(props.shape) ? half : half * TAN_30;
   const capped = Math.min(fallback, span / 2);
   return capped >= MIN_DEFAULT_M ? capped : null;
@@ -83,9 +85,9 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][]): BuiltRoof | n
       return { mesh: b.build(), roofHeight: H };
     default: {
       const shape = props.shape as ProfileShape;
-      const planes = profilePlanes(shape, H, frame.L, frame.W);
+      const profile = profilePlanes(shape, H, frame.L, frame.W);
       return {
-        mesh: buildProfileRoof(polygons, frame, planes, roof, toRGB(props.wallColor)),
+        mesh: buildProfileRoof(polygons, frame, profile, roof, toRGB(props.wallColor)),
         roofHeight: H,
       };
     }

@@ -6,10 +6,55 @@ import { MeshBuilder, type RGB, type RoofMesh, type Vec3 } from './mesh';
 /** A plane over the roof frame: h = a·u + b·v + c. */
 export type Plane = [a: number, b: number, c: number];
 
-const EPS = 1e-9;
+/**
+ * A roof surface: the highest of the groups, each group the lowest of its planes. Most roofs are
+ * one group; butterfly, crosspitched and sawtooth combine several. `pairs` lists the planes that
+ * can meet (default: every pair).
+ */
+export interface Profile {
+  groups: Plane[][];
+  pairs?: [Plane, Plane][];
+}
 
-/** The planes whose minimum is the roof surface (spec section 5.2). */
-export function profilePlanes(shape: ProfileShape, H: number, L: number, W: number): Plane[] {
+const EPS = 1e-9;
+/** Target sawtooth tooth width, metres. */
+const TOOTH_M = 8;
+/** Horizontal run of a sawtooth's (near-)vertical glazing face, metres. */
+const GLAZING_M = 0.02;
+
+/** Teeth across a sawtooth roof of half-width `W`, and each tooth's width. */
+export function sawtoothTeeth(W: number): { n: number; width: number } {
+  const n = Math.max(1, Math.round((2 * W) / TOOTH_M));
+  return { n, width: (2 * W) / n };
+}
+
+function sawtooth(H: number, W: number): Profile {
+  const { n, width } = sawtoothTeeth(W);
+  const groups: Plane[][] = [];
+  const pairs: [Plane, Plane][] = [];
+  let prevSlope: Plane | null = null;
+  for (let k = 0; k < n; k++) {
+    const start = -W + k * width;
+    // Glazing up from `start`; from its top (H) the slope runs down to 0 a tooth later, like a
+    // skillion facing +v.
+    const top = k === 0 ? start : start + GLAZING_M;
+    const run = start + width - top;
+    const slope: Plane = [0, -H / run, (H * (start + width)) / run];
+    if (!prevSlope) {
+      // The first tooth's high side is the building's own wall.
+      groups.push([slope]);
+    } else {
+      const glazing: Plane = [0, H / GLAZING_M, (-H * start) / GLAZING_M];
+      groups.push([slope, glazing]);
+      pairs.push([slope, glazing], [prevSlope, glazing]);
+    }
+    prevSlope = slope;
+  }
+  return { groups, pairs };
+}
+
+/** The surface of a profile roof (spec section 5.2). */
+export function profilePlanes(shape: ProfileShape, H: number, L: number, W: number): Profile {
   const gable: Plane[] = [
     [0, -H / W, H],
     [0, H / W, H],
@@ -19,32 +64,33 @@ export function profilePlanes(shape: ProfileShape, H: number, L: number, W: numb
     [0, (-s * 1.8 * H) / W, 1.8 * H],
     [0, (-s * 0.6 * H) / W, H],
   ];
+  const one = (planes: Plane[]): Profile => ({ groups: [planes] });
   switch (shape) {
     case 'gabled':
-      return gable;
+      return one(gable);
     case 'saltbox': {
       const r = W / 3;
-      return [
+      return one([
         [0, -H / (W - r), (H * W) / (W - r)],
         [0, H / (W + r), (H * W) / (W + r)],
-      ];
+      ]);
     }
     case 'hipped':
-      return [...gable, [-H / W, 0, (H * L) / W], [H / W, 0, (H * L) / W]];
+      return one([...gable, [-H / W, 0, (H * L) / W], [H / W, 0, (H * L) / W]]);
     case 'half_hipped':
-      return [...gable, [-H / W, 0, H / 2 + (H * L) / W], [H / W, 0, H / 2 + (H * L) / W]];
+      return one([...gable, [-H / W, 0, H / 2 + (H * L) / W], [H / W, 0, H / 2 + (H * L) / W]]);
     case 'gambrel':
-      return [...sides(1), ...sides(-1)];
+      return one([...sides(1), ...sides(-1)]);
     case 'mansard': {
       // End slopes with the side pitches, measured from the end eaves (u = ±L).
       const ends = (s: number): Plane[] => [
         [(-s * 1.8 * H) / W, 0, (1.8 * H * L) / W],
         [(-s * 0.6 * H) / W, 0, 0.4 * H + (0.6 * H * L) / W],
       ];
-      return [...sides(1), ...sides(-1), ...ends(1), ...ends(-1)];
+      return one([...sides(1), ...sides(-1), ...ends(1), ...ends(-1)]);
     }
     case 'skillion':
-      return [[0, -H / (2 * W), H / 2]];
+      return one([[0, -H / (2 * W), H / 2]]);
     case 'round': {
       const n = 8;
       const arc = (v: number) => H * Math.sqrt(Math.max(0, 1 - (v / W) ** 2));
@@ -55,48 +101,67 @@ export function profilePlanes(shape: ProfileShape, H: number, L: number, W: numb
         const slope = (arc(v1) - arc(v0)) / (v1 - v0);
         planes.push([0, slope, arc(v0) - slope * v0]);
       }
-      return planes;
+      return one(planes);
     }
+    case 'butterfly':
+      // A V: eaves at H on both long sides, valley at 0 along the middle.
+      return { groups: [[[0, -H / W, 0]], [[0, H / W, 0]]] };
+    case 'crosspitched':
+      // Two gables crossing: one ridge along u, one along v, gable ends on all four sides.
+      return {
+        groups: [
+          gable,
+          [
+            [-H / L, 0, H],
+            [H / L, 0, H],
+          ],
+        ],
+      };
+    case 'sawtooth':
+      return sawtooth(H, W);
   }
 }
 
-const heightAt = (planes: Plane[], u: number, v: number) =>
-  Math.max(0, Math.min(...planes.map(([a, b, c]) => a * u + b * v + c)));
+const heightAt = ({ groups }: Profile, u: number, v: number) =>
+  Math.max(0, ...groups.map((g) => Math.min(...g.map(([a, b, c]) => a * u + b * v + c))));
 
 /**
- * Lines where two planes are equal (normalised a·u + b·v + c = 0), deduplicated, keeping only
- * lines that cross `box` = [minU, minV, maxU, maxV].
+ * Lines where two planes of `profile` are equal (normalised a·u + b·v + c = 0), deduplicated,
+ * keeping only lines that cross `box` = [minU, minV, maxU, maxV].
  */
-export function creaseLines(planes: Plane[], box: [number, number, number, number]): Plane[] {
+export function creaseLines(profile: Profile, box: [number, number, number, number]): Plane[] {
+  let pairs = profile.pairs;
+  if (!pairs) {
+    const planes = profile.groups.flat();
+    pairs = planes.flatMap((p, i) => planes.slice(i + 1).map((q): [Plane, Plane] => [p, q]));
+  }
   const out: Plane[] = [];
   const seen = new Set<string>();
-  for (let i = 0; i < planes.length; i++) {
-    for (let j = i + 1; j < planes.length; j++) {
-      let a = planes[i]![0] - planes[j]![0];
-      let b = planes[i]![1] - planes[j]![1];
-      let c = planes[i]![2] - planes[j]![2];
-      const n = Math.hypot(a, b);
-      if (n < EPS) continue;
-      a /= n;
-      b /= n;
-      c /= n;
-      if (a < -EPS || (Math.abs(a) <= EPS && b < 0)) {
-        a = -a;
-        b = -b;
-        c = -c;
-      }
-      const key = [a, b, c].map((x) => x.toFixed(6)).join();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const s = [
-        [box[0], box[1]],
-        [box[2], box[1]],
-        [box[2], box[3]],
-        [box[0], box[3]],
-      ].map(([u, v]) => a * u! + b * v! + c);
-      if (s.every((x) => x > EPS) || s.every((x) => x < -EPS)) continue;
-      out.push([a, b, c]);
+  for (const [p, q] of pairs) {
+    let a = p[0] - q[0];
+    let b = p[1] - q[1];
+    let c = p[2] - q[2];
+    const n = Math.hypot(a, b);
+    if (n < EPS) continue;
+    a /= n;
+    b /= n;
+    c /= n;
+    if (a < -EPS || (Math.abs(a) <= EPS && b < 0)) {
+      a = -a;
+      b = -b;
+      c = -c;
     }
+    const key = [a, b, c].map((x) => x.toFixed(6)).join();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const s = [
+      [box[0], box[1]],
+      [box[2], box[1]],
+      [box[2], box[3]],
+      [box[0], box[3]],
+    ].map(([u, v]) => a * u! + b * v! + c);
+    if (s.every((x) => x > EPS) || s.every((x) => x < -EPS)) continue;
+    out.push([a, b, c]);
   }
   return out;
 }
@@ -119,6 +184,20 @@ function cutConvex(piece: Vec2[], [a, b, c]: Plane, side: number): Vec2[] {
   return out;
 }
 
+/** Whether a planar polygon rises more than 80° from the ground. */
+function steep(poly: Vec3[]): boolean {
+  let [nx, ny, nz] = [0, 0, 0];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i]!;
+    const q = poly[(i + 1) % poly.length]!;
+    nx += (p[1] - q[1]) * (p[2] + q[2]);
+    ny += (p[2] - q[2]) * (p[0] + q[0]);
+    nz += (p[0] - q[0]) * (p[1] + q[1]);
+  }
+  const len = Math.hypot(nx, ny, nz);
+  return len > EPS && Math.abs(ny) / len < Math.cos((80 * Math.PI) / 180);
+}
+
 const close = (ring: Vec2[]): Vec2[] => {
   const [f, l] = [ring[0]!, ring.at(-1)!];
   return f[0] === l[0] && f[1] === l[1] ? ring : [...ring, f];
@@ -136,7 +215,7 @@ const open = (ring: Vec2[]): Vec2[] => {
 export function buildProfileRoof(
   polygons: Vec2[][][],
   frame: RoofFrame,
-  planes: Plane[],
+  profile: Profile,
   roof: RGB,
   wall: RGB,
 ): RoofMesh {
@@ -150,11 +229,11 @@ export function buildProfileRoof(
     Math.max(...all.map((p) => p[0])),
     Math.max(...all.map((p) => p[1])),
   ];
-  const lines = creaseLines(planes, box);
+  const lines = creaseLines(profile, box);
   const b = new MeshBuilder();
   const lift = ([u, v]: Vec2): Vec3 => {
     const [x, z] = fromFrame(frame, [u, v]);
-    return [x, heightAt(planes, u, v), z];
+    return [x, heightAt(profile, u, v), z];
   };
   const ground = ([u, v]: Vec2): Vec3 => {
     const [x, z] = fromFrame(frame, [u, v]);
@@ -180,8 +259,11 @@ export function buildProfileRoof(
     pieces = pieces.filter((piece) => piece.length >= 3);
   }
   for (const piece of pieces) {
-    for (let i = 1; i + 1 < piece.length; i++) {
-      b.triangle(lift(piece[0]!), lift(piece[i]!), lift(piece[i + 1]!), roof, true);
+    const lifted = piece.map(lift);
+    // Near-vertical pieces (sawtooth glazing) read as wall, not roof.
+    const color = steep(lifted) ? wall : roof;
+    for (let i = 1; i + 1 < lifted.length; i++) {
+      b.triangle(lifted[0]!, lifted[i]!, lifted[i + 1]!, color, true);
     }
   }
 
@@ -200,7 +282,7 @@ export function buildProfileRoof(
         const at = (t: number): Vec2 => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
         const pa = at(ts[k]!);
         const pb = at(ts[k + 1]!);
-        if (heightAt(planes, ...pa) < 1e-6 && heightAt(planes, ...pb) < 1e-6) continue;
+        if (heightAt(profile, ...pa) < 1e-6 && heightAt(profile, ...pb) < 1e-6) continue;
         b.quad(ground(pa), ground(pb), lift(pb), lift(pa), wall);
       }
     }

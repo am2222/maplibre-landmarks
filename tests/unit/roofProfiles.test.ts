@@ -106,9 +106,57 @@ describe('profile roofs', () => {
     expect(roofArea(m)).toBeCloseTo(400, 3);
   });
 
+  it('butterfly: eaves at H on both long sides, valley at 0 down the middle', () => {
+    const m = roof('butterfly', [[rect(40, 20)]]);
+    for (let i = 0; i < m.positions.length; i += 3) {
+      if (m.normals[i + 1]! <= 1e-6) continue;
+      const z = m.positions[i + 2]!;
+      expect(m.positions[i + 1]!).toBeCloseTo((5 * Math.abs(z)) / 10, 9);
+    }
+    expect(verticalFaces(m)).toBeGreaterThan(0);
+  });
+
+  it('crosspitched: gable ends on all four sides, one apex at H', () => {
+    const m = roof('crosspitched', [[rect(40, 20)]]);
+    const apex: Vec2[] = [];
+    for (let i = 0; i < m.positions.length; i += 3) {
+      if (Math.abs(m.positions[i + 1]! - 5) < 1e-9)
+        apex.push([m.positions[i]!, m.positions[i + 2]!]);
+    }
+    // The two ridges meet only at the centre; each reaches its own pair of walls.
+    expect(apex.some(([x, z]) => Math.abs(x) > 19 && Math.abs(z) < 1e-9)).toBe(true);
+    expect(apex.some(([x, z]) => Math.abs(z) > 9 && Math.abs(x) < 1e-9)).toBe(true);
+    const sides = new Set<string>();
+    for (let i = 0; i < m.normals.length; i += 9) {
+      if (Math.abs(m.normals[i + 1]!) > 1e-6) continue;
+      sides.add([Math.round(m.normals[i]!), Math.round(m.normals[i + 2]!)].join());
+    }
+    expect(sides.size).toBe(4);
+  });
+
+  it('sawtooth: whole teeth across the roof, glazing in the wall colour', () => {
+    const m = roof('sawtooth', [[rect(40, 24)]], 3); // 24 m across → three 8 m teeth
+    const peaks = new Set<number>();
+    for (let i = 0; i < m.positions.length; i += 3) {
+      if (Math.abs(m.positions[i + 1]! - 3) < 1e-9) peaks.add(Math.round(m.positions[i + 2]!));
+    }
+    expect([...peaks].sort((a, b) => a - b)).toEqual([-12, -4, 4]);
+    let glazing = 0;
+    for (let i = 0; i < m.positions.length; i += 9) {
+      const ny = m.normals[i + 1]!;
+      if (ny > 1e-6 && ny < 0.1) {
+        glazing++;
+        expect(Array.from(m.colors.slice(i, i + 3))).toEqual(GREY);
+      }
+    }
+    expect(glazing).toBeGreaterThan(0);
+  });
+
   it('dedupes crease lines and drops ones that miss the footprint', () => {
     expect(creaseLines(profilePlanes('gabled', 5, 20, 10), [-20, -10, 20, 10])).toHaveLength(1);
     expect(creaseLines(profilePlanes('skillion', 5, 20, 10), [-20, -10, 20, 10])).toHaveLength(0);
     expect(creaseLines(profilePlanes('gabled', 5, 20, 10), [-20, 1, 20, 10])).toHaveLength(0);
+    // Sawtooth: only real creases (two per inner tooth), not every pair of planes.
+    expect(creaseLines(profilePlanes('sawtooth', 3, 20, 24), [-20, -24, 20, 24])).toHaveLength(10);
   });
 });
