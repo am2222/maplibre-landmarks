@@ -28,7 +28,9 @@ if (!key && !pmtilesUrl) {
     '<p class="missing">Set <code>VITE_PROTOMAPS_KEY</code> or <code>VITE_PMTILES_URL</code> in <code>.env.local</code> (see <code>.env.example</code>).</p>';
   throw new Error('No basemap tiles configured');
 }
-if (pmtilesUrl || import.meta.env.VITE_ROOFS_PMTILES) addProtocol('pmtiles', new Protocol().tile);
+// Optional: an Overture-schema building tileset (scripts/buildings) drawn with real roofs.
+const roofsUrl = import.meta.env.VITE_ROOFS_PMTILES as string | undefined;
+if (pmtilesUrl || roofsUrl) addProtocol('pmtiles', new Protocol().tile);
 
 /** Basemap flavour that matches each plugin theme. */
 const FLAVOR: Record<Theme, 'light' | 'dark'> = {
@@ -46,6 +48,26 @@ const FLAVOR: Record<Theme, 'light' | 'dark'> = {
 function withExtrudedBuildings(styleLayers: LayerSpecification[]): LayerSpecification[] {
   const flat = styleLayers.find((l) => l.id === 'buildings' && l.type === 'fill');
   if (!flat || flat.type !== 'fill') return styleLayers;
+  const firstLabel = styleLayers.findIndex((l) => l.type === 'symbol');
+  if (roofsUrl) {
+    // Overture buildings (with roof attributes) replace Protomaps' extrusions; the flat
+    // Protomaps footprints stay underneath. Outlines drawn by their parts are skipped.
+    const walls: LayerSpecification = {
+      id: 'roof-buildings-3d',
+      type: 'fill-extrusion',
+      source: 'roof-buildings',
+      'source-layer': 'building',
+      minzoom: 14,
+      filter: ['!=', ['get', 'has_parts'], true],
+      paint: {
+        'fill-extrusion-color': flat.paint?.['fill-color'] ?? '#d9d4ce',
+        'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
+        'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+      },
+    };
+    const at = firstLabel === -1 ? styleLayers.length : firstLabel;
+    return [...styleLayers.slice(0, at), walls, ...styleLayers.slice(at)];
+  }
   const extruded: LayerSpecification = {
     id: flat.id,
     type: 'fill-extrusion',
@@ -81,6 +103,9 @@ function styleFor(theme: Theme): StyleSpecification {
         attribution:
           '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
       },
+      ...(roofsUrl
+        ? { 'roof-buildings': { type: 'vector' as const, url: `pmtiles://${roofsUrl}` } }
+        : {}),
       terrain: {
         type: 'raster-dem',
         tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
@@ -109,6 +134,8 @@ const map = new MlMap({
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let layer: LandmarksLayer | undefined;
 let trees: TreesLayer | undefined;
+let roofs: RoofsLayer | undefined;
+let occlusion: LabelOcclusion | undefined;
 let channel: 'latest' | 'preview' = 'latest';
 
 function renderList(models: LandmarkInfo[]) {
@@ -124,7 +151,7 @@ function addLandmarks() {
   layer = new LandmarksLayer({
     id: 'landmarks',
     channel,
-    replaceBuildings: ['buildings'],
+    replaceBuildings: roofsUrl ? ['buildings', 'roof-buildings-3d'] : ['buildings'],
     onModelsChanged: renderList,
     onError: (err, ctx) => console.warn('[landmarks]', ctx, err),
   });
@@ -142,14 +169,40 @@ function addTrees() {
   map.addLayer(trees, firstSymbol());
 }
 
+function addRoofs() {
+  if (!roofsUrl) return;
+  if (roofs && map.getLayer(roofs.id)) map.removeLayer(roofs.id);
+  roofs = new RoofsLayer({
+    id: 'roofs',
+    source: 'roof-buildings',
+    sourceLayer: 'building',
+    extrusionLayer: 'roof-buildings-3d',
+    onError: (err) => console.warn('[roofs]', err),
+  });
+  map.addLayer(roofs, firstSymbol());
+}
+
+function setOcclusion(on: boolean) {
+  if (on && !occlusion) {
+    occlusion = new LabelOcclusion();
+    map.addLayer(occlusion);
+  } else if (!on && occlusion) {
+    if (map.getLayer(occlusion.id)) map.removeLayer(occlusion.id);
+    occlusion = undefined;
+  }
+}
+
 map.on('load', () => {
   setTheme(map, theme);
   addLandmarks();
+  addRoofs();
   addTrees();
+  setOcclusion($<HTMLInputElement>('occlusion').checked);
 });
 // A full (non-diffed) style swap drops custom layers: put them back.
 map.on('style.load', () => {
   if (!map.getLayer('landmarks')) addLandmarks();
+  if (roofsUrl && !map.getLayer('roofs')) addRoofs();
   if (!map.getLayer('trees')) addTrees();
   if (occlusion && !map.getLayer(occlusion.id)) map.addLayer(occlusion);
 });
@@ -172,16 +225,8 @@ $<HTMLInputElement>('terrain').onchange = (e) =>
     (e.target as HTMLInputElement).checked ? { source: 'terrain', exaggeration: 1 } : null,
   );
 
-let occlusion: LabelOcclusion | undefined;
-$<HTMLInputElement>('occlusion').onchange = (e) => {
-  if ((e.target as HTMLInputElement).checked) {
-    occlusion = new LabelOcclusion();
-    map.addLayer(occlusion);
-  } else if (occlusion) {
-    map.removeLayer(occlusion.id);
-    occlusion = undefined;
-  }
-};
+$<HTMLInputElement>('occlusion').onchange = (e) =>
+  setOcclusion((e.target as HTMLInputElement).checked);
 
 setInterval(() => {
   const s = trees?.getStats();
@@ -199,34 +244,3 @@ setInterval(() => {
     return trees;
   },
 };
-
-// Optional: an Overture-schema building tileset (see scripts/buildings) with real roofs.
-const roofsUrl = import.meta.env.VITE_ROOFS_PMTILES as string | undefined;
-if (roofsUrl) {
-  map.on('load', () => {
-    map.addSource('roof-buildings', { type: 'vector', url: `pmtiles://${roofsUrl}` });
-    map.addLayer(
-      {
-        id: 'roof-buildings-3d',
-        type: 'fill-extrusion',
-        source: 'roof-buildings',
-        'source-layer': 'building',
-        minzoom: 14,
-        paint: {
-          'fill-extrusion-color': '#d9d4ce',
-          'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
-          'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
-        },
-      },
-      map.getStyle().layers.find((l) => l.type === 'symbol')?.id,
-    );
-    map.addLayer(
-      new RoofsLayer({
-        id: 'roofs',
-        source: 'roof-buildings',
-        sourceLayer: 'building',
-        extrusionLayer: 'roof-buildings-3d',
-      }),
-    );
-  });
-}
