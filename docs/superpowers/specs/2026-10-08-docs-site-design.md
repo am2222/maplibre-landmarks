@@ -153,3 +153,11 @@ README: shortened to a description, the install line, a minimal example, links t
 - Workflows validated with `actionlint` locally if available; otherwise by the first run.
 - Visual check: `docs:preview` serves the site; open the home page, a guide page, the embedded
   gallery and the full-screen demo.
+
+## Revision: trusted publishing only (2026-10-08)
+
+No `NPM_TOKEN` at all. npm can only add a trusted publisher to a package that exists, so the
+maintainer publishes 0.1.0 once by hand, then links `release-please.yml` as the trusted
+publisher. The publish job skips a version already on npm (the hand-published 0.1.0) and
+publishes later versions over OIDC; provenance is generated automatically (public repository
+required), so `publishConfig.provenance` is dropped (it would break the manual publish).

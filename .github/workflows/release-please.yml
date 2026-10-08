@@ -36,11 +36,19 @@ jobs:
           registry-url: https://registry.npmjs.org
       # Trusted publishing (OIDC) needs npm 11.5.1 or newer; Node 22 ships npm 10.
       - run: npm install -g npm@latest
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
-      # NPM_TOKEN only for the first release of a new package; then use trusted publishing
-      # (npmjs.com → package settings) and delete the secret.
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # The first version is published by hand (a trusted publisher can only be added to a
+      # package that exists): skip a version that is already on npm.
+      - id: published
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "maplibre-landmarks@$version" version >/dev/null 2>&1; then
+            echo "maplibre-landmarks@$version is already on npm: skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.published.outputs.skip != 'true'
+        run: npm ci
+      - if: steps.published.outputs.skip != 'true'
+        run: npm test
+      # Trusted publishing (OIDC): no token; provenance is generated automatically.
+      - if: steps.published.outputs.skip != 'true'
+        run: npm publish --access public

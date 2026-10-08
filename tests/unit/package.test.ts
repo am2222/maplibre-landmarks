@@ -14,8 +14,10 @@ describe('package.json (npm release)', () => {
     expect(pkg.keywords).toEqual(expect.arrayContaining(['maplibre', 'threejs', 'roofs']));
   });
 
-  it('publishes the build publicly with provenance, built before publishing', () => {
-    expect(pkg.publishConfig).toEqual({ access: 'public', provenance: true });
+  it('publishes the build publicly, built before publishing', () => {
+    // No provenance flag: trusted publishing adds provenance on CI, and the one manual first
+    // publish (from a laptop) cannot generate it.
+    expect(pkg.publishConfig).toEqual({ access: 'public' });
     expect(pkg.files).toEqual(['dist', 'LICENSE']);
     expect(pkg.scripts.prepublishOnly).toBe('npm run build');
   });

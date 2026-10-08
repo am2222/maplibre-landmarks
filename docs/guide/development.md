@@ -40,9 +40,15 @@ For the workflows in `.github/workflows` to run:
   `https://am2222.github.io` in the key's origins on protomaps.com.
 - **Release pull requests:** Settings → Actions → General → enable **Allow GitHub Actions to
   create and approve pull requests** (release-please opens its PR with the workflow token).
-- **npm:** for the first release only, add an `NPM_TOKEN` secret (an npm automation token).
-  After that release, add this repository as a trusted publisher in the package settings on
-  npmjs.com and delete the secret.
+- **npm (trusted publishing, no tokens):** npm can only trust a workflow for a package that
+  exists, so publish the first version by hand, then link the workflow:
+  1. On `main` at version 0.1.0: `npm login`, `npm pack --dry-run` (check the files), then
+     `npm publish` (builds first through `prepublishOnly`).
+  2. On npmjs.com → the package → Settings → Trusted publisher → GitHub Actions: owner
+     `am2222`, repository `maplibre-landmarks`, workflow `release-please.yml`.
+  3. Merge the "release 0.1.0" pull request: the publish job sees 0.1.0 on npm and skips it.
+     Every later release is published by the workflow over OIDC, with provenance (the
+     repository must be public for provenance).
 
 Under `npm run docs:dev` the embedded demo frames show a 404: the demo is only built by
 `npm run docs:build`; use `npm run docs:preview` to see them.
