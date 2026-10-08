@@ -35,8 +35,10 @@ const WATER = {
 };
 
 async function start(page: Page) {
+  // Fixed local scene: CI must not depend on the Open Landmarks API (rate limits, outages).
+  await page.route('https://open-landmarks.benmaps.fr/**', (r) => r.abort());
   await page.goto('/e2e.html');
-  await page.evaluate((t) => window.__start(t as never), TARGET);
+  await page.evaluate((t) => window.__start(t as never, { landmarks: false }), TARGET);
   await page.waitForFunction(() => window.__map?.loaded(), null, { timeout: 20_000 });
   await page.evaluate(
     // Zoom 18: the 400 m lake fills the view.

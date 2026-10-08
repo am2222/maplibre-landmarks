@@ -30,3 +30,20 @@ version.
 `npm run docs:dev` serves this guide; `npm run docs:build` builds the guide and the demo into
 `docs/.vitepress/dist` (the demo needs `VITE_PROTOMAPS_KEY` for its basemap); `npm run
 docs:preview` serves the result. Pushes to `main` deploy it to GitHub Pages.
+
+## One-time repository setup
+
+For the workflows in `.github/workflows` to run:
+
+- **Pages:** Settings → Pages → Source: **GitHub Actions**.
+- **Basemap key:** add a `PROTOMAPS_KEY` repository secret, and allow
+  `https://am2222.github.io` in the key's origins on protomaps.com.
+- **Release pull requests:** Settings → Actions → General → enable **Allow GitHub Actions to
+  create and approve pull requests** (release-please opens its PR with the workflow token).
+- **npm:** for the first release only, add an `NPM_TOKEN` secret (an npm automation token).
+  After that release, add this repository as a trusted publisher in the package settings on
+  npmjs.com and delete the secret.
+
+Under `npm run docs:dev` the embedded demo frames show a 404: the demo is only built by
+`npm run docs:build`; use `npm run docs:preview` to see them.
+

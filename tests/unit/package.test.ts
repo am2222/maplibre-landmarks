@@ -37,8 +37,10 @@ describe('release-please', () => {
   });
 
   it('proposes 0.1.0 as the first release', () => {
-    // No release yet: from 0.0.0 the first feat: commit proposes 0.1.0 (the current version).
+    // release-please treats manifest 0.0.0 as "never released" and proposes the package's
+    // initial version, which defaults to 1.0.0: pin it to the current version.
     expect(manifest['.']).toBe('0.0.0');
+    expect(config.packages['.']['initial-version']).toBe('0.1.0');
     expect(pkg.version).toBe('0.1.0');
   });
 });

@@ -21,7 +21,8 @@ interface Target {
 
 declare global {
   interface Window {
-    __start(t: Target): Promise<void>;
+    /** Start the fixed scene; `landmarks: false` skips the Open Landmarks layer (no API calls). */
+    __start(t: Target, options?: { landmarks?: boolean }): Promise<void>;
     /** Replace the style (new background colour); resolves after `style.load`. */
     __setStyle(background: string, diff: boolean): Promise<void>;
     /** Add icon labels at the given points, plus label occlusion. */
@@ -79,7 +80,7 @@ function styleFor({ footprint, neighbour }: Target, background: string): StyleSp
   };
 }
 
-window.__start = async (t) => {
+window.__start = async (t, options = {}) => {
   target = t;
   const map = new MlMap({
     container: 'map',
@@ -92,6 +93,7 @@ window.__start = async (t) => {
   window.__map = map;
   map.on('error', (e) => window.__state.errors.push(String(e.error?.message ?? e)));
   await map.once('load');
+  if (options.landmarks === false) return;
   map.addLayer(
     new LandmarksLayer({
       id: 'landmarks',

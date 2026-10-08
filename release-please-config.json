@@ -5,7 +5,8 @@
       "release-type": "node",
       "package-name": "maplibre-landmarks",
       "bump-minor-pre-major": true,
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
     }
   }
 }

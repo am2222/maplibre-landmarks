@@ -29,7 +29,7 @@ const TARGET = {
 
 async function start(page: Page) {
   await page.goto('/e2e.html');
-  await page.evaluate((t) => window.__start(t as never), TARGET);
+  await page.evaluate((t) => window.__start(t as never, { landmarks: false }), TARGET);
   await page.waitForFunction(() => window.__map?.loaded(), null, { timeout: 20_000 });
   await page.waitForTimeout(500);
 }

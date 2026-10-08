@@ -165,8 +165,7 @@ wall colour; sloped faces take the roof colour.
 
 Each Overture release publishes worldwide building tiles (PMTiles, zooms 5–14) with exactly the
 attributes above and numeric feature ids, buildings and building parts in separate source layers
-(`building`, `building_part`): give `RoofsLayer` one wall layer per source layer (see the
-README). For your own hosting, cut a region with
+(`building`, `building_part`): give `RoofsLayer` one wall layer per source layer (see [Roof shapes](./roofs)). For your own hosting, cut a region with
 [`pmtiles extract`](https://docs.protomaps.com/pmtiles/cli):
 
 ```sh
