@@ -39,7 +39,8 @@ export function collectMapped(
   return [...out.values()];
 }
 
-const pieceKey = (p: PolygonCoords) =>
+/** Identity of one tile piece of a polygon (ring size + first two vertices). */
+export const pieceKey = (p: PolygonCoords) =>
   `${p[0]?.length ?? 0}:${p[0]?.[0]?.join(',')}:${p[0]?.[1]?.join(',')}`;
 
 /** Green polygons of the given kinds, grouped by feature id (tiles split them into pieces). */

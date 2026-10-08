@@ -3,6 +3,7 @@ import { hashString, hashValues, seededRand } from '../../src/trees/hash';
 import {
   pointInPolygon,
   polygonAreaM2,
+  scatterPiece,
   scatterPolygon,
   shouldScatter,
 } from '../../src/trees/scatter';
@@ -120,5 +121,41 @@ describe('shouldScatter', () => {
     expect(shouldScatter([[SQ]], 1 / 400, 24, 0.25)).toBe(true);
     expect(shouldScatter([[SQ]], 1 / 400, 25, 0.25)).toBe(false);
     expect(shouldScatter([[SQ]], 1 / 400, 30, 0.25)).toBe(false);
+  });
+});
+
+/** A rectangle ring with ~400 vertices (densified edges), like a clipped tile piece of a forest. */
+function denseRect(w: number, s: number, e: number, n: number, perEdge = 100): number[][] {
+  const pts: number[][] = [];
+  for (let i = 0; i < perEdge; i++) pts.push([w + ((e - w) * i) / perEdge, s]);
+  for (let i = 0; i < perEdge; i++) pts.push([e, s + ((n - s) * i) / perEdge]);
+  for (let i = 0; i < perEdge; i++) pts.push([e - ((e - w) * i) / perEdge, n]);
+  for (let i = 0; i < perEdge; i++) pts.push([w, n - ((n - s) * i) / perEdge]);
+  pts.push([w, s]);
+  return pts;
+}
+
+describe('scatter performance (review #1)', () => {
+  it('scatters a 3.3 x 2.6 km forest split into 12 dense tile pieces quickly', () => {
+    const lat = 48.85;
+    const dLng = 3300 / (M * Math.cos((lat * Math.PI) / 180)) / 4;
+    const dLat = 2600 / M / 3;
+    const pieces = [];
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 3; j++) {
+        const w = 2.2 + i * dLng;
+        const s = lat + j * dLat;
+        pieces.push([denseRect(w, s, w + dLng, s + dLat)]);
+      }
+    }
+    const t0 = performance.now();
+    const pts = scatterPolygon('forest', pieces, 1 / 60);
+    const ms = performance.now() - t0;
+    expect(pts.length / ((3300 * 2600) / 60)).toBeGreaterThan(0.85);
+    expect(ms).toBeLessThan(400); // was ~3.2 s before the row-edge filter
+  });
+
+  it('scatterPiece matches scatterPolygon for a single piece', () => {
+    expect(scatterPiece('park', [SQ], 1 / 100)).toEqual(scatterPolygon('park', [[SQ]], 1 / 100));
   });
 });

@@ -119,7 +119,11 @@ export class LandmarksModule implements LayerModule {
 
   onAdd(ctx: ModuleContext): void {
     this.ctx = ctx;
-    if (this.themeOption) ctx.core.setTheme(this.themeOption);
+    // Apply the option once: on re-add, the map-wide theme (setTheme(map, …)) wins.
+    if (this.themeOption) {
+      ctx.core.setTheme(this.themeOption);
+      this.themeOption = undefined;
+    }
     this.parser = new GlbParser(this.opts, ctx.core.renderer);
     ctx.map.on('terrain', this.onTerrain);
     ctx.map.on('sourcedata', this.onTerrainData);
@@ -184,8 +188,9 @@ export class LandmarksModule implements LayerModule {
   }
 
   setTheme(theme: Theme): void {
-    this.themeOption = theme;
-    this.ctx?.core.setTheme(theme);
+    // Detached: remember it for the next add. Attached: apply map-wide now (nothing to replay).
+    if (this.ctx) this.ctx.core.setTheme(theme);
+    else this.themeOption = theme;
   }
 
   getVisibleModels(): LandmarkInfo[] {

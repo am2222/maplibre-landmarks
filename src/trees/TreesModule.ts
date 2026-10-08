@@ -7,7 +7,7 @@ import { TreeBatches } from './batches';
 import {
   collectMapped,
   collectPolygons,
-  piecesHash,
+  pieceKey,
   PointIndex,
   type MappedTree,
   type PolygonGroup,
@@ -16,7 +16,7 @@ import { createTreeMaterial } from './material';
 import { disposePrepared, prepareModel, type PreparedModel } from './models/prepare';
 import { birch, conifer, deciduous } from './models/procedural';
 import type { TreeModel } from './models/types';
-import { scatterPolygon, shouldScatter, type ScatterPoint } from './scatter';
+import { scatterPiece, shouldScatter, type ScatterPoint } from './scatter';
 import { selectTrees, type PlacedTree } from './select';
 
 export interface TreesWind {
@@ -51,11 +51,14 @@ export interface TreeStats {
   updateMs: number;
   polygonsFilled: number;
   polygonsSkipped: number;
+  /** Tile pieces scattered in the last update (cache misses). */
+  piecesScattered: number;
 }
 
 const DEFAULT_WEIGHTS: Record<string, number> = { deciduous: 0.6, conifer: 0.2, birch: 0.2 };
 const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 60, wood: 1 / 60, park: 1 / 400 };
-const SCATTER_CACHE_LIMIT = 512;
+/** Cached scattered tile pieces (each ≤ one basemap tile). */
+const PIECE_CACHE_LIMIT = 2048;
 const SOURCE_DEBOUNCE_MS = 200;
 
 const inBounds = ([lng, lat]: LngLat, [w, s, e, n]: Bounds) =>
@@ -68,7 +71,7 @@ export class TreesModule implements LayerModule {
   private models: { model: TreeModel; prepared: PreparedModel }[] = [];
   private lastView?: ViewState;
   private anchor: LngLat = [0, 0];
-  private readonly scatterCache = new Map<string, { hash: string; points: ScatterPoint[] }>();
+  private readonly pieceCache = new Map<string, ScatterPoint[]>();
   private stats: TreeStats = {
     mapped: 0,
     scattered: 0,
@@ -78,6 +81,7 @@ export class TreesModule implements LayerModule {
     updateMs: 0,
     polygonsFilled: 0,
     polygonsSkipped: 0,
+    piecesScattered: 0,
   };
   private wind: Required<TreesWind>;
   private themeOption?: Theme;
@@ -97,11 +101,16 @@ export class TreesModule implements LayerModule {
   onAdd(ctx: ModuleContext): void {
     this.ctx = ctx;
     this.disposed = false;
-    if (this.themeOption) ctx.core.setTheme(this.themeOption);
+    // Apply the option once: on re-add, the map-wide theme (setTheme(map, …)) wins.
+    if (this.themeOption) {
+      ctx.core.setTheme(this.themeOption);
+      this.themeOption = undefined;
+    }
     this.look.setTheme(ctx.core.theme);
     this.batches = new TreeBatches(this.look.material, this.opts.maxTrees ?? 4000);
     ctx.scene.add(this.batches.group);
     ctx.map.on('sourcedata', this.onSourceData);
+    ctx.map.on('terrain', this.onTerrain);
     void this.loadModels();
   }
 
@@ -136,23 +145,39 @@ export class TreesModule implements LayerModule {
     const scattered = new Map<string, ScatterPoint>();
     let filled = 0;
     let skipped = 0;
+    let piecesScattered = 0;
+    let usedPieces = 0;
     for (const g of polygons) {
       const density = scatter[g.kind]!;
       const inside = index.countInside(g.pieces);
-      const hash = `${piecesHash(g.pieces)}|${inside}`;
-      let hit = this.scatterCache.get(g.id);
-      if (!hit || hit.hash !== hash) {
-        const fill = shouldScatter(g.pieces, density, inside, this.opts.scatterSkipRatio ?? 0.25);
-        hit = { hash, points: fill ? scatterPolygon(g.kind, g.pieces, density) : [] };
+      const fill = shouldScatter(g.pieces, density, inside, this.opts.scatterSkipRatio ?? 0.25);
+      let added = 0;
+      if (fill) {
+        // Cache per tile piece: a newly loaded tile only scatters its own piece.
+        for (const piece of g.pieces) {
+          const key = `${g.kind}|${density}|${pieceKey(piece)}`;
+          let points = this.pieceCache.get(key);
+          if (!points) {
+            points = scatterPiece(g.kind, piece, density);
+            piecesScattered++;
+          }
+          this.pieceCache.delete(key); // LRU: re-insert as most recent
+          this.pieceCache.set(key, points);
+          usedPieces++;
+          for (const p of points) {
+            scattered.set(p.key, p);
+            added++;
+          }
+        }
       }
-      this.scatterCache.delete(g.id); // LRU: re-insert as most recent
-      this.scatterCache.set(g.id, hit);
-      if (this.scatterCache.size > SCATTER_CACHE_LIMIT) {
-        this.scatterCache.delete(this.scatterCache.keys().next().value as string);
-      }
-      if (hit.points.length) filled++;
+      if (added) filled++;
       else skipped++;
-      for (const p of hit.points) scattered.set(p.key, p);
+    }
+    // Evict after the loop so pieces in use this update are never thrown out mid-way.
+    const limit = Math.max(PIECE_CACHE_LIMIT, usedPieces);
+    for (const key of this.pieceCache.keys()) {
+      if (this.pieceCache.size <= limit) break;
+      this.pieceCache.delete(key);
     }
 
     const padded = padBounds(view.bounds, padMetres(view.pitch, 30));
@@ -172,6 +197,7 @@ export class TreesModule implements LayerModule {
       scattered: scattered.size,
       polygonsFilled: filled,
       polygonsSkipped: skipped,
+      piecesScattered,
       updateMs: performance.now() - t0,
     };
   }
@@ -201,20 +227,22 @@ export class TreesModule implements LayerModule {
     clearTimeout(this.timer);
     const ctx = this.ctx;
     ctx?.map.off('sourcedata', this.onSourceData);
+    ctx?.map.off('terrain', this.onTerrain);
     if (this.batches) {
       ctx?.scene.remove(this.batches.group);
       this.batches.dispose(); // disposes every prepared geometry it holds
     }
     this.look.material.dispose();
     this.models = [];
-    this.scatterCache.clear();
+    this.pieceCache.clear();
     this.batches = undefined;
     this.ctx = undefined;
   }
 
   setTheme(theme: Theme): void {
-    this.themeOption = theme;
-    this.ctx?.core.setTheme(theme);
+    // Detached: remember it for the next add. Attached: apply map-wide now (nothing to replay).
+    if (this.ctx) this.ctx.core.setTheme(theme);
+    else this.themeOption = theme;
   }
 
   setWind(wind: TreesWind): void {
@@ -257,8 +285,17 @@ export class TreesModule implements LayerModule {
     ctx.requestRepaint();
   }
 
+  /** Terrain switched on/off or changed: re-plant at the new ground height. */
+  private readonly onTerrain = (): void => {
+    if (this.lastView) this.update(this.lastView);
+  };
+
+  /** Our source's tiles, or the terrain's elevation tiles, arrived: refresh (debounced). */
   private readonly onSourceData = (e: { sourceId?: string }): void => {
-    if (e.sourceId !== this.opts.source || !this.lastView) return;
+    const terrainSource = this.ctx?.map.getTerrain()?.source;
+    const relevant =
+      e.sourceId === this.opts.source || (!!terrainSource && e.sourceId === terrainSource);
+    if (!relevant || !this.lastView) return;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       if (this.lastView) this.update(this.lastView);

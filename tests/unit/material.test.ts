@@ -27,6 +27,8 @@ describe('createTreeMaterial', () => {
     expect(shader.vertexShader).toContain('mvPosition = instanceMatrix * mvPosition');
     expect(shader.vertexShader).toContain('uWindDir');
     expect(shader.vertexShader).toContain('attribute float aTint');
+    expect(shader.vertexShader).toContain('attribute float aPhase');
+    expect(shader.vertexShader).not.toContain('dot( treeOrigin.xz');
     expect(shader.fragmentShader).toContain('mix(uTrunk, foliageCol, vPart)');
     expect(shader.uniforms.uTime).toBe(uniforms.uTime);
     expect(material.customProgramCacheKey()).toBe('trees-v1');

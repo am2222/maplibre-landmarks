@@ -21,6 +21,7 @@ attribute float aPart;
 attribute float aShade;
 attribute float aHeight;
 attribute float aTint;
+attribute float aPhase;
 varying float vPart;
 varying float vShade;
 varying float vTint;
@@ -38,7 +39,7 @@ vec4 mvPosition = vec4( transformed, 1.0 );
   vec3 treeOrigin = vec3( 0.0 );
 #endif
 float treeY = max( mvPosition.y - treeOrigin.y, 0.0 );
-float phase = dot( treeOrigin.xz, vec2( 0.13, 0.07 ) );
+float phase = aPhase; // absolute-position phase from the CPU: stable across pans
 float sway = ( sin( uTime * 1.1 + phase ) * 0.6 + sin( uTime * 2.3 + phase * 1.7 ) * 0.4 ) * uWindStrength;
 mvPosition.xz += uWindDir * ( sway * 0.05 * aHeight * treeY + 0.15 * uWindStrength * aHeight );
 mvPosition.xz += aPart * 0.05 * uWindStrength * vec2(

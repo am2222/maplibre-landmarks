@@ -87,6 +87,8 @@ test('draws mapped and scattered trees, animates wind and follows the theme', as
   await idleWithin(page, 3000);
   const night = await sample(page);
   expect(night.lum).toBeLessThan(day.lum * 0.8);
+  // Still readable at night (review #2): tree pixels must not collapse to near-black.
+  expect(night.lum).toBeGreaterThan(35);
 
   expect(await page.evaluate(() => window.__errors)).toEqual([]);
   expect(consoleErrors).toEqual([]);

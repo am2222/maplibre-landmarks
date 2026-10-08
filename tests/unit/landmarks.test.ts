@@ -114,7 +114,7 @@ function setup(opts: Partial<LandmarksOptions> = {}, fetchRoutes = routes()) {
   const requestRepaint = vi.fn();
   const ctx = { map, core, scene, requestRepaint } as unknown as ModuleContext;
   module.onAdd(ctx);
-  return { module, f, loads, onError, onModelsChanged, map, scene, core, requestRepaint };
+  return { module, f, loads, onError, onModelsChanged, map, scene, core, requestRepaint, ctx };
 }
 
 async function loadEiffel(s: ReturnType<typeof setup>, object: Object3D = new Group()) {
@@ -136,6 +136,13 @@ describe('LandmarksModule', () => {
   it('applies the theme option on add', () => {
     const s = setup({ theme: 'night' });
     expect(s.core.setTheme).toHaveBeenCalledWith('night');
+  });
+
+  it('applies the theme option only on the first add (review #5)', () => {
+    const s = setup({ theme: 'night' });
+    s.module.onRemove();
+    s.module.onAdd(s.ctx);
+    expect(s.core.setTheme).toHaveBeenCalledTimes(1);
   });
 
   it('leaves the map theme alone without a theme option', () => {

@@ -92,7 +92,12 @@ export class ModuleLayer implements CustomLayerInterface {
   /** setStyle never calls onRemove on custom layers: re-sync, or tear down if the layer is gone. */
   private readonly onStyleLoad = (): void => {
     if (!this.map) return;
-    const attached = !!this.map.getLayer(this.id);
+    // Attached only if the style's layer with our id is *this* instance: after a full swap the app
+    // may already have added a new layer under the same id (MapLibre's CustomStyleLayer exposes
+    // the wrapped object as `implementation`).
+    const styleLayer = this.map.getLayer(this.id) as { implementation?: unknown } | undefined;
+    const attached =
+      !!styleLayer && (!('implementation' in styleLayer) || styleLayer.implementation === this);
     this.module.styleChanged?.(attached);
     if (!attached) this.onRemove();
   };

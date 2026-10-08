@@ -335,4 +335,19 @@ describe('ModuleLayer', () => {
     setTheme(asMap(map), 'day');
     expect(mod.themeChanged).toHaveBeenCalledTimes(1);
   });
+
+  it('tears down when a full setStyle re-adds a new layer under the same id (review #6)', () => {
+    const map = fakeMap();
+    const r = fakeRenderer();
+    const mod = moduleSpy();
+    const layer = new ModuleLayer('dup', mod, { rendererFactory: () => r });
+    layer.onAdd(map as unknown as MlMap, gl);
+    // The app's own style.load handler already added a *different* layer instance as 'dup'.
+    const other = new ModuleLayer('dup', moduleSpy(), { rendererFactory: () => fakeRenderer() });
+    (map as unknown as { getLayer: (id: string) => unknown }).getLayer = (id: string) =>
+      id === 'dup' ? { id, implementation: other } : undefined;
+    map.handlers.get('style.load')!();
+    expect(mod.styleChanged).toHaveBeenCalledWith(false);
+    expect(mod.onRemove).toHaveBeenCalledTimes(1);
+  });
 });

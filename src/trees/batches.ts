@@ -7,9 +7,22 @@ import {
   Vector3,
   type Material,
 } from 'three';
-import { localPosition, originAt } from '../core/mercator';
+import { EARTH_RADIUS_M, localPosition, mercatorX, mercatorY, originAt } from '../core/mercator';
 import type { PreparedModel } from './models/prepare';
 import type { PlacedTree } from './select';
+
+const EARTH_CIRCUMFERENCE_M = 2 * Math.PI * EARTH_RADIUS_M;
+
+/**
+ * Sway phase from the tree's absolute position (float64 on the CPU), so it never changes when the
+ * batch anchor moves and neighbouring trees stay coherent.
+ */
+function swayPhase([lng, lat]: [number, number]): number {
+  const x = mercatorX(lng) * EARTH_CIRCUMFERENCE_M;
+  const y = mercatorY(lat) * EARTH_CIRCUMFERENCE_M;
+  const p = (x * 0.13 + y * 0.07) % (2 * Math.PI);
+  return p < 0 ? p + 2 * Math.PI : p;
+}
 
 /** Instanced meshes for every (model × variant) plus one impostor mesh per model. */
 export class TreeBatches {
@@ -58,6 +71,10 @@ export class TreeBatches {
       m.compose(pos.set(x, y, z), q.setFromAxisAngle(up, t.rotation), scale.setScalar(t.scale));
       mesh.setMatrixAt(i, m);
       (mesh.geometry.getAttribute('aTint') as InstancedBufferAttribute).setX(i, t.tint);
+      (mesh.geometry.getAttribute('aPhase') as InstancedBufferAttribute).setX(
+        i,
+        swayPhase(t.lngLat),
+      );
       mesh.count = i + 1;
       if (t.far) far++;
       else near++;
@@ -65,6 +82,7 @@ export class TreeBatches {
     for (const mesh of all) {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.geometry.getAttribute('aTint').needsUpdate = true;
+      mesh.geometry.getAttribute('aPhase').needsUpdate = true;
     }
     this.total = near + far;
     return { near, far, drawn: this.total };
@@ -77,6 +95,10 @@ export class TreeBatches {
   private mesh(geometry: InstancedMesh['geometry']): InstancedMesh {
     geometry.setAttribute(
       'aTint',
+      new InstancedBufferAttribute(new Float32Array(this.capacity), 1),
+    );
+    geometry.setAttribute(
+      'aPhase',
       new InstancedBufferAttribute(new Float32Array(this.capacity), 1),
     );
     const mesh = new InstancedMesh(geometry, this.material, this.capacity);

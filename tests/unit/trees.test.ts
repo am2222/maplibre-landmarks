@@ -52,8 +52,11 @@ function setup(
     features,
     handlers,
     getSource: (id: string) => (id === 'src' ? {} : undefined),
-    getTerrain: () => null,
-    queryTerrainElevation: () => 0,
+    terrain: null as { source: string } | null,
+    getTerrain(): { source: string } | null {
+      return this.terrain;
+    },
+    queryTerrainElevation: vi.fn(() => 35),
     querySourceFeatures: vi.fn((_s: string, o: { filter: unknown[] }) =>
       o.filter[0] === '==' ? features.points : features.polygons,
     ),
@@ -65,8 +68,9 @@ function setup(
   const requestRepaint = vi.fn();
   const onError = vi.fn();
   const module = new TreesModule({ source: 'src', models: [box], minZoom: 15, onError, ...over });
-  module.onAdd({ map, core, scene, requestRepaint } as unknown as ModuleContext);
-  return { module, map, scene, core, requestRepaint, onError };
+  const ctx = { map, core, scene, requestRepaint } as unknown as ModuleContext;
+  module.onAdd(ctx);
+  return { module, map, scene, core, requestRepaint, onError, ctx };
 }
 
 const uniformsOf = (scene: Scene) =>
@@ -208,5 +212,49 @@ describe('TreesModule', () => {
     expect(s.scene.children).toHaveLength(0);
     expect(s.map.handlers.has('sourcedata')).toBe(false);
     expect(s.onError).not.toHaveBeenCalled();
+  });
+
+  it('scatters only newly loaded pieces of a polygon (review #1)', async () => {
+    const westHalf = [at(50, -40), at(90, -40), at(90, 40), at(50, 40), at(50, -40)];
+    const eastHalf = [at(90, -40), at(130, -40), at(130, 40), at(90, 40), at(90, -40)];
+    const s = setup({}, { points: [], polygons: [polygon(1, 'park', westHalf)] });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    expect(s.module.getStats().piecesScattered).toBe(1);
+    s.map.features.polygons = [polygon(1, 'park', westHalf), polygon(1, 'park', eastHalf)];
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(s.module.getStats().piecesScattered).toBe(1);
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(s.module.getStats().piecesScattered).toBe(0);
+  });
+
+  it('replants trees when terrain is toggled (review #4)', async () => {
+    const s = setup();
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    expect(s.map.queryTerrainElevation).not.toHaveBeenCalled();
+    s.map.terrain = { source: 'dem' };
+    s.map.handlers.get('terrain')!({});
+    expect(s.map.queryTerrainElevation).toHaveBeenCalled();
+  });
+
+  it('replants trees when elevation tiles arrive (review #4)', async () => {
+    const s = setup();
+    s.map.terrain = { source: 'dem' };
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    vi.useFakeTimers();
+    s.map.queryTerrainElevation.mockClear();
+    s.map.handlers.get('sourcedata')!({ sourceId: 'dem' });
+    vi.advanceTimersByTime(250);
+    expect(s.map.queryTerrainElevation).toHaveBeenCalled();
+  });
+
+  it('applies the theme option only on the first add (review #5)', async () => {
+    const s = setup({ theme: 'dusk' });
+    s.module.onRemove();
+    s.module.onAdd(s.ctx);
+    await flush();
+    expect(s.core.setTheme).toHaveBeenCalledTimes(1);
   });
 });

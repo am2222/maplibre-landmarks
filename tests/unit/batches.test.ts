@@ -80,4 +80,17 @@ describe('TreeBatches', () => {
     expect(spy).toHaveBeenCalled();
     expect(b.group.children).toHaveLength(0);
   });
+
+  it('writes a sway phase that does not change when the anchor moves (review #3)', () => {
+    const b = new TreeBatches(new MeshBasicMaterial(), 4);
+    b.setModels([model('a', 1)]);
+    const t = tree({ key: 'p', lngLat: [C[0] + 30 / kx, C[1]] });
+    const mesh = b.group.children[0] as InstancedMesh;
+    b.write([t], C);
+    const first = mesh.geometry.getAttribute('aPhase').getX(0);
+    b.write([t], [C[0] + 500 / kx, C[1] + 0.002]);
+    expect(mesh.geometry.getAttribute('aPhase').getX(0)).toBeCloseTo(first, 6);
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(first).toBeLessThan(2 * Math.PI);
+  });
 });
