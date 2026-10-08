@@ -56,6 +56,7 @@ function fakeMap() {
       states.set(f.id, { ...states.get(f.id), ...s }),
     ),
     removeFeatureState: vi.fn((f: { id: unknown }) => states.delete(f.id)),
+    getFeatureState: (f: { id: unknown }) => states.get(f.id) ?? {},
     getTerrain: () => map.terrain,
     queryTerrainElevation: vi.fn((ll: [number, number]) => (ll[0] > 2.2946 ? 10 : 0)),
   };

@@ -2,6 +2,7 @@ import {
   Map as MlMap,
   addProtocol,
   setWorkerUrl,
+  type FillExtrusionLayerSpecification,
   type LayerSpecification,
   type StyleSpecification,
 } from 'maplibre-gl';
@@ -30,13 +31,22 @@ if (!key && !pmtilesUrl) {
     '<p class="missing">Set <code>VITE_PROTOMAPS_KEY</code> or <code>VITE_PMTILES_URL</code> in <code>.env.local</code> (see <code>.env.example</code>).</p>';
   throw new Error('No basemap tiles configured');
 }
-// Optional: an Overture-schema building tileset (scripts/buildings) drawn with real roofs.
-// `?roofs=/roofs-osm.pmtiles` overrides it for one visit (paths resolve against the page).
+// Roof data: Overture's official building tiles (worldwide, nothing to build; buildings and
+// building parts in separate layers), or an optional local tileset from scripts/buildings
+// (`?roofs=/roofs-osm.pmtiles` overrides it for one visit; paths resolve against the page).
+const OVERTURE_BUILDINGS =
+  'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
 const roofsParam = new URLSearchParams(location.search).get('roofs');
-const roofsUrl = roofsParam
+const localRoofsUrl = roofsParam
   ? new URL(roofsParam, location.href).href
   : (import.meta.env.VITE_ROOFS_PMTILES as string | undefined);
-if (pmtilesUrl || roofsUrl) addProtocol('pmtiles', new Protocol().tile);
+let roofData: 'overture' | 'local' | 'none' = 'overture';
+const overtureRoofs = () => roofData === 'overture' || (roofData === 'local' && !localRoofsUrl);
+const roofsUrl = () => (overtureRoofs() ? OVERTURE_BUILDINGS : localRoofsUrl!);
+/** Wall layers under the roofs: Overture's tiles keep building parts in their own layer. */
+const roofWalls = () =>
+  overtureRoofs() ? ['roof-buildings-3d', 'roof-parts-3d'] : ['roof-buildings-3d'];
+addProtocol('pmtiles', new Protocol().tile);
 
 /** Basemap flavour that matches each plugin theme. */
 const FLAVOR: Record<Theme, 'light' | 'dark'> = {
@@ -55,24 +65,37 @@ function withExtrudedBuildings(styleLayers: LayerSpecification[]): LayerSpecific
   const flat = styleLayers.find((l) => l.id === 'buildings' && l.type === 'fill');
   if (!flat || flat.type !== 'fill') return styleLayers;
   const firstLabel = styleLayers.findIndex((l) => l.type === 'symbol');
-  if (roofsUrl) {
+  if (roofData !== 'none') {
     // Overture buildings (with roof attributes) replace Protomaps' extrusions; the flat
     // Protomaps footprints stay underneath. Outlines drawn by their parts are skipped.
-    const walls: LayerSpecification = {
-      id: 'roof-buildings-3d',
-      type: 'fill-extrusion',
-      source: 'roof-buildings',
-      'source-layer': 'building',
-      minzoom: 14,
-      filter: ['!=', ['get', 'has_parts'], true],
-      paint: {
-        'fill-extrusion-color': flat.paint?.['fill-color'] ?? '#d9d4ce',
-        'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
-        'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+    const paint = (): FillExtrusionLayerSpecification['paint'] => ({
+      'fill-extrusion-color': flat.paint?.['fill-color'] ?? '#d9d4ce',
+      'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
+      'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+    });
+    const walls: LayerSpecification[] = [
+      {
+        id: 'roof-buildings-3d',
+        type: 'fill-extrusion',
+        source: 'roof-buildings',
+        'source-layer': 'building',
+        minzoom: 14,
+        filter: ['!=', ['get', 'has_parts'], true],
+        paint: paint(),
       },
-    };
+    ];
+    // Overture's official tiles: parts in their own layer (the local recipe merges them).
+    if (overtureRoofs())
+      walls.push({
+        id: 'roof-parts-3d',
+        type: 'fill-extrusion',
+        source: 'roof-buildings',
+        'source-layer': 'building_part',
+        minzoom: 14,
+        paint: paint(),
+      });
     const at = firstLabel === -1 ? styleLayers.length : firstLabel;
-    return [...styleLayers.slice(0, at), walls, ...styleLayers.slice(at)];
+    return [...styleLayers.slice(0, at), ...walls, ...styleLayers.slice(at)];
   }
   const extruded: LayerSpecification = {
     id: flat.id,
@@ -136,8 +159,8 @@ function styleFor(theme: Theme): StyleSpecification {
         attribution:
           '<a href="https://protomaps.com">Protomaps</a> © <a href="https://openstreetmap.org">OpenStreetMap</a>',
       },
-      ...(roofsUrl
-        ? { 'roof-buildings': { type: 'vector' as const, url: `pmtiles://${roofsUrl}` } }
+      ...(roofData !== 'none'
+        ? { 'roof-buildings': { type: 'vector' as const, url: `pmtiles://${roofsUrl()}` } }
         : {}),
       terrain: DEM,
       // Hillshading gets its own copy of the DEM (MapLibre warns when terrain shares one).
@@ -186,7 +209,7 @@ function addLandmarks() {
   layer = new LandmarksLayer({
     id: 'landmarks',
     channel,
-    replaceBuildings: roofsUrl ? ['buildings', 'roof-buildings-3d'] : ['buildings'],
+    replaceBuildings: roofData !== 'none' ? ['buildings', ...roofWalls()] : ['buildings'],
     onModelsChanged: renderList,
     onError: (err, ctx) => console.warn('[landmarks]', ctx, err),
   });
@@ -205,13 +228,13 @@ function addTrees() {
 }
 
 function addRoofs() {
-  if (!roofsUrl) return;
+  if (roofData === 'none') return;
   if (roofs && map.getLayer(roofs.id)) map.removeLayer(roofs.id);
   roofs = new RoofsLayer({
     id: 'roofs',
     source: 'roof-buildings',
     sourceLayer: 'building',
-    extrusionLayer: 'roof-buildings-3d',
+    extrusionLayer: roofWalls(),
     onError: (err) => console.warn('[roofs]', err),
   });
   map.addLayer(roofs, before3D());
@@ -228,8 +251,22 @@ function setOcclusion(on: boolean) {
 }
 
 const isOn = (id: string) => $<HTMLInputElement>(id).checked;
-// Without a roofs tileset there is nothing to toggle.
-if (!roofsUrl) $<HTMLInputElement>('show-roofs').parentElement!.hidden = true;
+// Without a local tileset, "Local file" has nothing to load.
+if (!localRoofsUrl)
+  $<HTMLSelectElement>('roof-data').querySelector<HTMLOptionElement>('[value=local]')!.disabled =
+    true;
+$<HTMLSelectElement>('roof-data').onchange = (e) => {
+  roofData = (e.target as HTMLSelectElement).value as typeof roofData;
+  // New source and wall layers (a diffed swap, like the theme). The diff keeps custom layers:
+  // drop the roofs (configured for the old walls) first, and rebuild both after the swap.
+  remove('roofs');
+  map.setStyle(styleFor(theme));
+  setTheme(map, theme);
+  map.once('style.load', () => {
+    if (roofData !== 'none' && isOn('show-roofs')) addRoofs();
+    if (isOn('show-landmarks')) addLandmarks();
+  });
+};
 
 map.on('load', () => {
   setTheme(map, theme);
@@ -241,7 +278,7 @@ map.on('load', () => {
 // A full (non-diffed) style swap drops custom layers: put back the ones switched on.
 map.on('style.load', () => {
   if (isOn('show-landmarks') && !map.getLayer('landmarks')) addLandmarks();
-  if (isOn('show-roofs') && roofsUrl && !map.getLayer('roofs')) addRoofs();
+  if (isOn('show-roofs') && roofData !== 'none' && !map.getLayer('roofs')) addRoofs();
   if (isOn('show-trees') && !map.getLayer('trees')) addTrees();
   if (occlusion && !map.getLayer(occlusion.id)) map.addLayer(occlusion);
 });

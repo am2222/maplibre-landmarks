@@ -28,9 +28,14 @@ import { ROOF_STATE, wallRules } from './walls';
 export interface RoofsOptions {
   /** Vector source with Overture-schema building attributes and feature ids. */
   source: string;
+  /** Source layer when an extrusion layer does not name one (GeoJSON sources need none). */
   sourceLayer?: string;
-  /** The app's fill-extrusion layer drawing the walls of the same buildings. */
-  extrusionLayer: string;
+  /**
+   * The app's fill-extrusion layer(s) drawing the walls of the same buildings. Each layer's own
+   * `source-layer` is read, so buildings and building parts in separate layers (Overture's
+   * official tiles) both get roofs.
+   */
+  extrusionLayer: string | string[];
   fields?: Partial<Fields>;
   minZoom?: number;
   maxBuildings?: number;
@@ -42,6 +47,8 @@ export interface RoofsOptions {
 const REBUILD_DEBOUNCE_MS = 150;
 
 interface Drawn {
+  /** Source layer the footprint came from (ids repeat across layers). */
+  sourceLayer: string | undefined;
   footprint: Footprint;
   props: RoofProps;
   built: BuiltRoof;
@@ -50,17 +57,18 @@ interface Drawn {
 /** Real roof shapes on top of an app's fill-extrusion buildings. */
 export class RoofsModule implements LayerModule {
   private ctx?: ModuleContext;
-  private walls?: OwnedPaint;
+  /** Our paint wrappers, by extrusion layer id. */
+  private readonly walls = new Map<string, OwnedPaint>();
+  private readonly extrusionLayers: string[];
   private mesh?: Mesh<BufferGeometry, MeshStandardMaterial>;
   private anchor?: LngLat;
   private anchorElevation = 0;
   private view?: ViewState;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly fields: Fields;
-  private readonly footprints = new FootprintIndex(undefined, (key, err) =>
-    this.report(`union:${key}`, err),
-  );
-  /** Built roofs by footprint key, rebuilt when the footprint's pieces change. */
+  /** Footprints per source layer ('' when there is none). */
+  private readonly footprints = new Map<string, FootprintIndex>();
+  /** Built roofs by layer-qualified footprint key, rebuilt when the footprint's pieces change. */
   private roofs = new Map<string, { signature: string; built: BuiltRoof | null }>();
   /** Roofs currently drawn, with the feature-state written for each. */
   private drawn = new Map<string, Drawn>();
@@ -69,6 +77,7 @@ export class RoofsModule implements LayerModule {
 
   constructor(private readonly options: RoofsOptions) {
     this.fields = resolveFields(options.fields);
+    this.extrusionLayers = [options.extrusionLayer].flat();
   }
 
   onAdd(ctx: ModuleContext): void {
@@ -81,12 +90,16 @@ export class RoofsModule implements LayerModule {
     });
     this.mesh = new Mesh(geometry, material);
     ctx.scene.add(this.mesh);
-    this.walls = new OwnedPaint(
-      ctx.map,
-      this.options.extrusionLayer,
-      wallRules(this.fields, this.options.wallColors ?? false),
-      (message) => this.report('legacy', new Error(message)),
-    );
+    for (const id of this.extrusionLayers)
+      this.walls.set(
+        id,
+        new OwnedPaint(
+          ctx.map,
+          id,
+          wallRules(this.fields, this.options.wallColors ?? false),
+          (message) => this.report(`legacy:${id}`, new Error(message)),
+        ),
+      );
     this.wrapWalls();
     ctx.map.on('sourcedata', this.onSourceData);
     ctx.map.on('terrain', this.onTerrain);
@@ -105,11 +118,11 @@ export class RoofsModule implements LayerModule {
   }
 
   styleChanged(attached: boolean): void {
-    this.walls?.reset();
+    for (const walls of this.walls.values()) walls.reset();
     const map = this.ctx?.map;
     // A diffed swap keeps sources and their feature-state: clear ours, then rebuild cleanly.
-    for (const { footprint } of this.drawn.values()) {
-      this.safely(() => map?.removeFeatureState(this.featureOf(footprint), ROOF_STATE));
+    for (const d of this.drawn.values()) {
+      if (map) this.unsetState(map, d);
     }
     this.drawn.clear();
     if (attached) this.rebuild();
@@ -122,11 +135,11 @@ export class RoofsModule implements LayerModule {
     ctx.map.off('sourcedata', this.onSourceData);
     ctx.map.off('terrain', this.onTerrain);
     offExemptionsChanged(ctx.map, this.schedule);
-    for (const { footprint } of this.drawn.values()) {
-      this.safely(() => ctx.map.removeFeatureState(this.featureOf(footprint), ROOF_STATE));
+    for (const d of this.drawn.values()) {
+      this.unsetState(ctx.map, d);
     }
     this.drawn.clear();
-    this.walls?.restore();
+    for (const walls of this.walls.values()) walls.restore();
     if (this.mesh) {
       ctx.scene.remove(this.mesh);
       this.mesh.geometry.dispose();
@@ -159,16 +172,27 @@ export class RoofsModule implements LayerModule {
     this.schedule();
   };
 
-  /** True when the walls carry our height wrapper, so roofs can sit on shortened walls. */
-  private wrapWalls(): boolean {
-    if (!this.walls?.wrap()) {
-      this.report(
-        'extrusion',
-        new Error(`extrusion layer "${this.options.extrusionLayer}" not found`),
-      );
-      return false;
+  /**
+   * Source layers whose walls carry our height wrapper, so their roofs can sit on shortened
+   * walls (`undefined` for a source without layers).
+   */
+  private wrapWalls(): (string | undefined)[] {
+    const ready = new Set<string | undefined>();
+    for (const [id, walls] of this.walls) {
+      if (!walls.wrap()) {
+        this.report(`extrusion:${id}`, new Error(`extrusion layer "${id}" not found`));
+        continue;
+      }
+      if (walls.isApplied('fill-extrusion-height')) ready.add(this.sourceLayerOf(id));
     }
-    return this.walls.isApplied('fill-extrusion-height');
+    return [...ready];
+  }
+
+  /** The source layer an extrusion layer draws (its own, else the `sourceLayer` option). */
+  private sourceLayerOf(extrusionLayer: string): string | undefined {
+    const layer = this.ctx?.map.getLayer(extrusionLayer) as
+      { sourceLayer?: string; 'source-layer'?: string } | undefined;
+    return layer?.sourceLayer ?? layer?.['source-layer'] ?? this.options.sourceLayer;
   }
 
   private rebuild(): void {
@@ -176,12 +200,12 @@ export class RoofsModule implements LayerModule {
     const view = this.view;
     if (!ctx || !view) return;
     const map = ctx.map;
-    const wallsReady = this.wrapWalls();
+    const ready = this.wrapWalls();
     let next = new Map<string, Drawn>();
     if (!map.getSource(this.options.source)) {
       this.report('source', new Error(`source "${this.options.source}" not found`));
-    } else if (wallsReady && view.zoom >= (this.options.minZoom ?? 15)) {
-      next = this.collect(map, view);
+    } else if (ready.length && view.zoom >= (this.options.minZoom ?? 15)) {
+      next = this.collect(map, view, ready);
     }
     this.writeStates(map, next);
     this.drawn = next;
@@ -189,54 +213,76 @@ export class RoofsModule implements LayerModule {
     ctx.requestRepaint();
   }
 
-  private collect(map: MlMap, view: ViewState): Map<string, Drawn> {
+  private collect(
+    map: MlMap,
+    view: ViewState,
+    sourceLayers: (string | undefined)[],
+  ): Map<string, Drawn> {
     const gable = this.options.gableColor ?? '#d9d4ce';
     const layerIds = (map.getSource(this.options.source) as { vectorLayerIds?: string[] })
       .vectorLayerIds;
-    if (this.options.sourceLayer && layerIds && !layerIds.includes(this.options.sourceLayer)) {
-      this.report(
-        'sourceLayer',
-        new Error(`source "${this.options.source}" has no layer "${this.options.sourceLayer}"`),
-      );
-    }
     // Only roofed buildings: MapLibre skips building GeoJSON for everything else.
     const filter = [
       'in',
       ['downcase', ['to-string', ['get', this.fields.roof_shape]]],
       ['literal', ROOF_SHAPE_VALUES],
     ];
-    const features = map.querySourceFeatures(this.options.source, {
-      ...(this.options.sourceLayer ? { sourceLayer: this.options.sourceLayer } : {}),
-      filter: filter as never,
-    }) as unknown as SourceFeatureLike[];
-    const footprints = this.footprints.update(
-      features,
-      (p) => readRoofProps(p, this.fields, gable) !== null,
-    );
-    if (this.footprints.missingIds) {
-      this.report('ids', new Error(`source "${this.options.source}" has buildings without ids`));
+    const found: { sourceLayer: string | undefined; key: string; f: Footprint }[] = [];
+    for (const sourceLayer of sourceLayers) {
+      if (sourceLayer && layerIds && !layerIds.includes(sourceLayer)) {
+        this.report(
+          `sourceLayer:${sourceLayer}`,
+          new Error(`source "${this.options.source}" has no layer "${sourceLayer}"`),
+        );
+        continue;
+      }
+      const features = map.querySourceFeatures(this.options.source, {
+        ...(sourceLayer ? { sourceLayer } : {}),
+        filter: filter as never,
+      }) as unknown as SourceFeatureLike[];
+      const index = this.indexFor(sourceLayer ?? '');
+      const footprints = index.update(
+        features,
+        (p) => readRoofProps(p, this.fields, gable) !== null,
+      );
+      if (index.missingIds) {
+        this.report('ids', new Error(`source "${this.options.source}" has buildings without ids`));
+      }
+      for (const f of footprints.values())
+        found.push({ sourceLayer, key: `${sourceLayer ?? ''}|${f.key}`, f });
     }
     const exempt = exemptionsFor(map);
     const [cx, cy] = view.center;
     const k = Math.cos((cy * Math.PI) / 180);
-    const nearest = [...footprints.values()]
-      .filter((f) => !pointInPolygons(f.centroid, exempt))
-      .map((f) => ({ f, d: Math.hypot((f.centroid[0] - cx) * k, f.centroid[1] - cy) }))
+    const nearest = found
+      .filter(({ f }) => !pointInPolygons(f.centroid, exempt))
+      .map((e) => ({ ...e, d: Math.hypot((e.f.centroid[0] - cx) * k, e.f.centroid[1] - cy) }))
       .sort((a, b) => a.d - b.d)
       .slice(0, this.options.maxBuildings ?? 2000);
     const roofs = new Map<string, { signature: string; built: BuiltRoof | null }>();
     const next = new Map<string, Drawn>();
-    for (const { f } of nearest) {
+    for (const { sourceLayer, key, f } of nearest) {
       const props = readRoofProps(f.properties, this.fields, gable)!;
-      let entry = this.roofs.get(f.key);
+      let entry = this.roofs.get(key);
       if (!entry || entry.signature !== f.signature) {
         entry = { signature: f.signature, built: this.build(f, props) };
       }
-      roofs.set(f.key, entry);
-      if (entry.built) next.set(f.key, { footprint: f, props, built: entry.built });
+      roofs.set(key, entry);
+      if (entry.built) next.set(key, { sourceLayer, footprint: f, props, built: entry.built });
     }
     this.roofs = roofs;
     return next;
+  }
+
+  private indexFor(sourceLayer: string): FootprintIndex {
+    let index = this.footprints.get(sourceLayer);
+    if (!index) {
+      index = new FootprintIndex(undefined, (key, err) =>
+        this.report(`union:${sourceLayer}|${key}`, err),
+      );
+      this.footprints.set(sourceLayer, index);
+    }
+    return index;
   }
 
   private build(f: Footprint, props: RoofProps): BuiltRoof | null {
@@ -258,14 +304,13 @@ export class RoofsModule implements LayerModule {
   }
 
   private writeStates(map: MlMap, next: Map<string, Drawn>): void {
-    for (const [key, { footprint }] of this.drawn) {
-      if (!next.has(key))
-        this.safely(() => map.removeFeatureState(this.featureOf(footprint), ROOF_STATE));
+    for (const [key, d] of this.drawn) {
+      if (!next.has(key)) this.unsetState(map, d);
     }
     for (const [key, d] of next) {
       if (this.drawn.get(key)?.built.roofHeight === d.built.roofHeight) continue;
       this.safely(() =>
-        map.setFeatureState(this.featureOf(d.footprint), { [ROOF_STATE]: d.built.roofHeight }),
+        map.setFeatureState(this.featureOf(d), { [ROOF_STATE]: d.built.roofHeight }),
       );
     }
   }
@@ -282,12 +327,12 @@ export class RoofsModule implements LayerModule {
     if (this.anchor) {
       const anchorOrigin = originAt(this.anchor);
       this.anchorElevation = this.elevation(map, 'anchor', this.anchor);
-      for (const { footprint, props, built } of drawn) {
+      for (const { sourceLayer, footprint, props, built } of drawn) {
         const [ox, , oz] = localPosition(anchorOrigin, footprint.centroid);
         const lift =
           props.height -
           built.roofHeight +
-          this.elevation(map, footprint.key, footprint.terrainPoint) -
+          this.elevation(map, `${sourceLayer ?? ''}|${footprint.key}`, footprint.terrainPoint) -
           this.anchorElevation;
         const p = built.mesh.positions;
         for (let i = 0; i < p.length; i += 3)
@@ -315,8 +360,22 @@ export class RoofsModule implements LayerModule {
     return e;
   }
 
-  private featureOf(f: Footprint): FeatureIdentifier {
-    return { source: this.options.source, sourceLayer: this.options.sourceLayer, id: f.id };
+  /**
+   * Clear a drawn roof's feature-state, only where the map still holds it. A style swap can
+   * remove the source (MapLibre reports an error event per call) or replace it with an empty
+   * state store, where removing a key breaks MapLibre's next render.
+   */
+  private unsetState(map: MlMap, d: Drawn): void {
+    if (!map.getSource(this.options.source)) return;
+    const feature = this.featureOf(d);
+    this.safely(() => {
+      if (map.getFeatureState(feature)?.[ROOF_STATE] !== undefined)
+        map.removeFeatureState(feature, ROOF_STATE);
+    });
+  }
+
+  private featureOf(d: Drawn): FeatureIdentifier {
+    return { source: this.options.source, sourceLayer: d.sourceLayer, id: d.footprint.id };
   }
 
   private report(key: string, err: unknown): void {

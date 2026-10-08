@@ -114,6 +114,10 @@ map.addLayer(
 );
 ```
 
+`extrusionLayer` also takes several layers (e.g. buildings and building parts in separate
+source layers): each layer's own `source-layer` is read, and every one gets roofs and
+shortened walls. `sourceLayer` is then only needed for layers without one.
+
 | Attribute                            | Meaning                                                                                                                                                                                                                                 |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `height`, `min_height`               | Building / part top (incl. roof) and bottom, metres                                                                                                                                                                                     |
@@ -132,7 +136,53 @@ Other sources map their names with `fields`, e.g. `fields: { roof_shape: 'roof:s
 Buildings without a roof shape keep their flat extrusion. Options: `minZoom` (15),
 `maxBuildings` (2000), `wallColors` (false), `gableColor` (`#d9d4ce`), `onError`.
 
-**Data.** Two scripts build a tileset for a bounding box, both writing the attributes above:
+**Overture's official tiles (no build step).** Each Overture release publishes worldwide
+building tiles (PMTiles, z5–14) with these attributes and numeric feature ids, buildings and
+building parts in separate layers. Most roof tags sit on parts, so give both wall layers:
+
+```ts
+import { addProtocol, type FillExtrusionLayerSpecification } from 'maplibre-gl';
+import { Protocol } from 'pmtiles';
+addProtocol('pmtiles', new Protocol().tile);
+
+map.addSource('overture-buildings', {
+  type: 'vector',
+  url: 'pmtiles://https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles',
+});
+const walls = {
+  type: 'fill-extrusion',
+  source: 'overture-buildings',
+  minzoom: 14,
+  paint: {
+    'fill-extrusion-color': '#d9d4ce',
+    'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
+    'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+  },
+} satisfies Omit<FillExtrusionLayerSpecification, 'id' | 'source-layer'>;
+map.addLayer({
+  ...walls,
+  id: 'buildings-3d',
+  'source-layer': 'building',
+  filter: ['!=', ['get', 'has_parts'], true],
+}); // outlines drawn by their parts are skipped
+map.addLayer({ ...walls, id: 'building-parts-3d', 'source-layer': 'building_part' });
+map.addLayer(
+  new RoofsLayer({
+    id: 'roofs',
+    source: 'overture-buildings',
+    extrusionLayer: ['buildings-3d', 'building-parts-3d'],
+  }),
+);
+```
+
+Tiles are large in dense cities (about 1.6 MB for a z14 tile of central Paris) and served from
+Overture's US-West bucket; for production, cut your region with `pmtiles extract` and serve it
+from your own CDN. Replace the release (`2026-09-23.1`) with a current one from
+[Overture's docs](https://docs.overturemaps.org/examples/overture-tiles/). Data © Overture Maps
+Foundation and OpenStreetMap contributors (ODbL).
+
+**Building your own tileset.** Two scripts build a tileset for a bounding box, both writing the
+attributes above:
 
 - `scripts/buildings/overture-to-pmtiles.sh <west> <south> <east> <north> out.pmtiles` reads
   Overture (DuckDB + tippecanoe). Overture keeps only 14 roof shapes (e.g. it folds
