@@ -152,7 +152,9 @@ describe('scatter performance (review #1)', () => {
     const pts = scatterPolygon('forest', pieces, 1 / 60);
     const ms = performance.now() - t0;
     expect(pts.length / ((3300 * 2600) / 60)).toBeGreaterThan(0.85);
-    expect(ms).toBeLessThan(400); // was ~3.2 s before the row-edge filter
+    // Shared CI runners are several times slower than a laptop; the regression this guards
+    // against took ~3.2 s.
+    expect(ms).toBeLessThan(process.env.CI ? 1500 : 400); // was ~3.2 s before the row-edge filter
   });
 
   it('scatterPiece matches scatterPolygon for a single piece', () => {

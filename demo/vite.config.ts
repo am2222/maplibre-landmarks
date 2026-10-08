@@ -1,9 +1,15 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 
+// DEMO_SITE=1: the demo and roof gallery for the documentation site (GitHub Pages), served
+// under /maplibre-landmarks/demo/ next to the VitePress build. The e2e pages are not published.
+const site = process.env.DEMO_SITE === '1';
+const page = (name: string) => resolve(import.meta.dirname, name);
+
 export default defineConfig({
   root: resolve(import.meta.dirname),
   envDir: resolve(import.meta.dirname, '..'),
+  base: site ? '/maplibre-landmarks/demo/' : '/',
   server: {
     port: 5179,
     strictPort: true,
@@ -18,15 +24,19 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: resolve(import.meta.dirname, '../dist-demo'),
+    outDir: site
+      ? resolve(import.meta.dirname, '../docs/.vitepress/dist/demo')
+      : resolve(import.meta.dirname, '../dist-demo'),
     emptyOutDir: true,
     rollupOptions: {
-      input: {
-        main: resolve(import.meta.dirname, 'index.html'),
-        e2e: resolve(import.meta.dirname, 'e2e.html'),
-        trees: resolve(import.meta.dirname, 'e2e-trees.html'),
-        roofs: resolve(import.meta.dirname, 'roofs-gallery.html'),
-      },
+      input: site
+        ? { main: page('index.html'), roofs: page('roofs-gallery.html') }
+        : {
+            main: page('index.html'),
+            e2e: page('e2e.html'),
+            trees: page('e2e-trees.html'),
+            roofs: page('roofs-gallery.html'),
+          },
     },
   },
 });

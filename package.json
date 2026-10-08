@@ -4,8 +4,34 @@
   "description": "Open Landmarks 3D models for MapLibre GL JS, rendered with Three.js",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/am2222/maplibre-landmarks.git"
+  },
+  "homepage": "https://am2222.github.io/maplibre-landmarks/",
+  "bugs": {
+    "url": "https://github.com/am2222/maplibre-landmarks/issues"
+  },
+  "keywords": [
+    "maplibre",
+    "maplibre-gl",
+    "threejs",
+    "three",
+    "3d",
+    "landmarks",
+    "buildings",
+    "roofs",
+    "trees",
+    "fog",
+    "water"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "module": "./dist/maplibre-landmarks.js",
   "types": "./dist/index.d.ts",
@@ -25,11 +51,16 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",
-    "lint": "eslint . && prettier --check ."
+    "lint": "eslint . && prettier --check .",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs && DEMO_SITE=1 vite build --config demo/vite.config.ts",
+    "docs:preview": "vitepress preview docs",
+    "docs:check": "node scripts/check-site.mjs",
+    "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "maplibre-gl": ">=6.0.0",
-    "three": ">=0.170.0"
+    "maplibre-gl": ">=6.13.0",
+    "three": ">=0.186.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -46,6 +77,7 @@
     "typescript-eslint": "^8.71.1",
     "vite": "^8.3.3",
     "vite-plugin-dts": "^5.1.2",
+    "vitepress": "^1.6.4",
     "vitest": "^5.0.3"
   },
   "dependencies": {

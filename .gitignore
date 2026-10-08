@@ -6,4 +6,5 @@ playwright-report
 .env.local
 demo/public/*.pmtiles
 *.log
-.playwright-mcp/*
+.playwright-mcp/*docs/.vitepress/cache
+docs/.vitepress/dist

@@ -1,4 +1,4 @@
-# Roofs: tileset attributes and roof shapes
+# Roof attributes and shapes
 
 `RoofsLayer` draws real 3D roofs (gabled, hipped, domes, …) on top of your own `fill-extrusion`
 buildings and shortens each building's walls by the roof it draws. It reads plain attributes from
