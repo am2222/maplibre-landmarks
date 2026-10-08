@@ -307,4 +307,16 @@ describe('BuildingReplacement (feature-state)', () => {
     r.restore();
     expect(map.paint['fill-opacity']).toBe(0.25);
   });
+
+  it('never stacks its wrapper on a style that still carries it (re-added or reset)', () => {
+    const { map, target } = fakeStyle('fill');
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    r.update([full(landmark())]);
+    r.reset(); // style.load / re-add: our wrapper is still in the paint
+    r.update([full(landmark())]);
+    expect(map.paint['fill-opacity']).toEqual(['*', 0.5, KEEP]);
+    const again = new BuildingReplacement(target, ['buildings'], 1.5);
+    again.update([full(landmark())]);
+    expect(map.paint['fill-opacity']).toEqual(['*', 0.5, KEEP]);
+  });
 });

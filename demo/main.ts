@@ -192,24 +192,57 @@ function setOcclusion(on: boolean) {
   }
 }
 
+const isOn = (id: string) => $<HTMLInputElement>(id).checked;
+// Without a roofs tileset there is nothing to toggle.
+if (!roofsUrl) $<HTMLInputElement>('show-roofs').parentElement!.hidden = true;
+
 map.on('load', () => {
   setTheme(map, theme);
-  addLandmarks();
-  addRoofs();
-  addTrees();
-  setOcclusion($<HTMLInputElement>('occlusion').checked);
+  if (isOn('show-landmarks')) addLandmarks();
+  if (isOn('show-roofs')) addRoofs();
+  if (isOn('show-trees')) addTrees();
+  setOcclusion(isOn('occlusion'));
 });
-// A full (non-diffed) style swap drops custom layers: put them back.
+// A full (non-diffed) style swap drops custom layers: put back the ones switched on.
 map.on('style.load', () => {
-  if (!map.getLayer('landmarks')) addLandmarks();
-  if (roofsUrl && !map.getLayer('roofs')) addRoofs();
-  if (!map.getLayer('trees')) addTrees();
+  if (isOn('show-landmarks') && !map.getLayer('landmarks')) addLandmarks();
+  if (isOn('show-roofs') && roofsUrl && !map.getLayer('roofs')) addRoofs();
+  if (isOn('show-trees') && !map.getLayer('trees')) addTrees();
   if (occlusion && !map.getLayer(occlusion.id)) map.addLayer(occlusion);
 });
 
+/** Removing a layer restores what it changed (hidden buildings, shortened walls). */
+function remove(id: string) {
+  if (map.getLayer(id)) map.removeLayer(id);
+}
+
+$<HTMLInputElement>('show-landmarks').onchange = () => {
+  if (isOn('show-landmarks')) addLandmarks();
+  else {
+    remove('landmarks');
+    layer = undefined;
+    renderList([]);
+  }
+};
+$<HTMLInputElement>('show-roofs').onchange = () => {
+  if (isOn('show-roofs')) addRoofs();
+  else {
+    remove('roofs');
+    roofs = undefined;
+  }
+};
+$<HTMLInputElement>('show-trees').onchange = () => {
+  if (isOn('show-trees')) addTrees();
+  else {
+    remove('trees');
+    trees = undefined;
+    $('stats').textContent = '';
+  }
+};
+
 $<HTMLSelectElement>('channel').onchange = (e) => {
   channel = (e.target as HTMLSelectElement).value as 'latest' | 'preview';
-  addLandmarks();
+  if (isOn('show-landmarks')) addLandmarks();
 };
 $<HTMLSelectElement>('theme').onchange = (e) => {
   theme = (e.target as HTMLSelectElement).value as Theme;

@@ -1,4 +1,4 @@
-import { mapOutputs, sameValue } from '../core/expressions';
+import { mapOutputs, sameValue, stripWrappers } from '../core/expressions';
 import type { PaintRule } from '../core/ownedPaint';
 import { materialPairs } from './colors';
 import type { Fields } from './schema';
@@ -10,16 +10,9 @@ const ROOF = ['coalesce', ['feature-state', ROOF_STATE], 0];
 const wrappable = (v: unknown) =>
   Array.isArray(v) || typeof v === 'number' || typeof v === 'string';
 
-/** `value` with every wrapper `match` recognises removed, at any depth (others may wrap ours). */
-function strip(value: unknown, match: (v: unknown) => unknown): unknown {
-  const inner = match(value);
-  if (inner !== undefined) return strip(inner, match);
-  return Array.isArray(value) ? value.map((v) => strip(v, match)) : value;
-}
-
 /** Unwrap for OwnedPaint: the stripped value, or undefined when none of ours was found. */
 const peel = (match: (v: unknown) => unknown) => (value: unknown) => {
-  const stripped = strip(value, match);
+  const stripped = stripWrappers(value, match);
   return sameValue(stripped, value) ? undefined : stripped;
 };
 

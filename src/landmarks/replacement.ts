@@ -1,5 +1,5 @@
 import type { FeatureIdentifier, Map as MlMap } from 'maplibre-gl';
-import { sameValue, scaleBy } from '../core/expressions';
+import { sameValue, scaleBy, stripWrappers } from '../core/expressions';
 import { pointInPolygons, type Ring } from '../core/geometry';
 import { EARTH_RADIUS_M } from '../core/mercator';
 import type { LandmarkEntry } from './catalogue';
@@ -24,6 +24,8 @@ export type ReplacementTarget = Pick<
  */
 export const FADE_STATE = 'landmarks:fade';
 const KEEP = ['-', 1, ['coalesce', ['feature-state', FADE_STATE], 0]];
+const ourScale = (v: unknown) =>
+  Array.isArray(v) && v.length === 3 && v[0] === '*' && sameValue(v[2], KEEP) ? v[1] : undefined;
 const RESCAN_DEBOUNCE_MS = 100;
 type PaintProperty = Parameters<MlMap['getPaintProperty']>[1];
 type PaintValue = Parameters<MlMap['setPaintProperty']>[2];
@@ -230,7 +232,8 @@ export class BuildingReplacement {
     if (this.originals.has(layerId)) return;
     const props = new Map<PaintProperty, { original: unknown; applied: unknown }>();
     for (const [prop, fallback] of HIDING_PAINT[type]!) {
-      const original = this.map.getPaintProperty(layerId, prop);
+      // A wrapper of ours may still be in the style (re-added layer, style reset): peel it.
+      const original = stripWrappers(this.map.getPaintProperty(layerId, prop), ourScale);
       const scaled = scaleBy(original ?? fallback, KEEP);
       if (scaled === undefined) {
         console.warn(`[maplibre-landmarks] cannot wrap legacy function ${layerId}/${prop}`);

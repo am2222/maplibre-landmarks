@@ -53,3 +53,13 @@ export function unscaleBy(value: unknown, factor: unknown): unknown {
       : undefined,
   );
 }
+
+/**
+ * `value` with every wrapper `match` recognises removed, at any depth: other wrappers may sit
+ * on top of ours (two plugins wrapping one paint property), and ours may survive a re-add.
+ */
+export function stripWrappers(value: unknown, match: (v: unknown) => unknown): unknown {
+  const inner = match(value);
+  if (inner !== undefined) return stripWrappers(inner, match);
+  return Array.isArray(value) ? value.map((v) => stripWrappers(v, match)) : value;
+}
