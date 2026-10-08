@@ -10,6 +10,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { layers, namedFlavor } from '@protomaps/basemaps';
 import { Protocol } from 'pmtiles';
 import {
+  FogLayer,
   LabelOcclusion,
   LandmarksLayer,
   RoofsLayer,
@@ -92,6 +93,33 @@ function withExtrudedBuildings(styleLayers: LayerSpecification[]): LayerSpecific
   return [...rest.slice(0, at), extruded, ...rest.slice(at)];
 }
 
+const DEM = {
+  type: 'raster-dem' as const,
+  tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
+  encoding: 'terrarium' as const,
+  tileSize: 256,
+  maxzoom: 15,
+};
+let terrainOn = false;
+
+/** Hillshading under the roads, shown only with terrain so mountains read as mountains. */
+function withHillshade(styleLayers: LayerSpecification[], flavor: string): LayerSpecification[] {
+  const at = styleLayers.findIndex((l) => l.id.startsWith('roads'));
+  const hillshade: LayerSpecification = {
+    id: 'hillshade',
+    type: 'hillshade',
+    source: 'hillshade-dem',
+    layout: { visibility: terrainOn ? 'visible' : 'none' },
+    paint: {
+      'hillshade-exaggeration': 0.6,
+      'hillshade-shadow-color': flavor === 'dark' ? '#000000' : '#5a5348',
+      'hillshade-highlight-color': flavor === 'dark' ? '#3a3f4a' : '#ffffff',
+    },
+  };
+  const i = at === -1 ? styleLayers.length : at;
+  return [...styleLayers.slice(0, i), hillshade, ...styleLayers.slice(i)];
+}
+
 function styleFor(theme: Theme): StyleSpecification {
   const flavor = FLAVOR[theme];
   return {
@@ -110,15 +138,14 @@ function styleFor(theme: Theme): StyleSpecification {
       ...(roofsUrl
         ? { 'roof-buildings': { type: 'vector' as const, url: `pmtiles://${roofsUrl}` } }
         : {}),
-      terrain: {
-        type: 'raster-dem',
-        tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
-        encoding: 'terrarium',
-        tileSize: 256,
-        maxzoom: 15,
-      },
+      terrain: DEM,
+      // Hillshading gets its own copy of the DEM (MapLibre warns when terrain shares one).
+      'hillshade-dem': DEM,
     },
-    layers: withExtrudedBuildings(layers('protomaps', namedFlavor(flavor), { lang: 'en' })),
+    layers: withHillshade(
+      withExtrudedBuildings(layers('protomaps', namedFlavor(flavor), { lang: 'en' })),
+      flavor,
+    ),
   };
 }
 
@@ -133,6 +160,7 @@ const map = new MlMap({
   pitch: 60,
   bearing: -20,
   hash: true,
+  maxPitch: 85,
 });
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -149,6 +177,8 @@ function renderList(models: LandmarkInfo[]) {
 }
 
 const firstSymbol = () => map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+/** 3D layers go under the fog (it blends over them), or under the labels without fog. */
+const before3D = () => (map.getLayer('fog') ? 'fog' : firstSymbol());
 
 function addLandmarks() {
   if (layer && map.getLayer(layer.id)) map.removeLayer(layer.id);
@@ -159,7 +189,7 @@ function addLandmarks() {
     onModelsChanged: renderList,
     onError: (err, ctx) => console.warn('[landmarks]', ctx, err),
   });
-  map.addLayer(layer, firstSymbol());
+  map.addLayer(layer, before3D());
 }
 
 function addTrees() {
@@ -170,7 +200,7 @@ function addTrees() {
     wind: { strength: wind },
     onError: (err, ctx) => console.warn('[trees]', ctx, err),
   });
-  map.addLayer(trees, firstSymbol());
+  map.addLayer(trees, before3D());
 }
 
 function addRoofs() {
@@ -183,7 +213,7 @@ function addRoofs() {
     extrusionLayer: 'roof-buildings-3d',
     onError: (err) => console.warn('[roofs]', err),
   });
-  map.addLayer(roofs, firstSymbol());
+  map.addLayer(roofs, before3D());
 }
 
 function setOcclusion(on: boolean) {
@@ -257,10 +287,15 @@ $<HTMLInputElement>('wind').oninput = (e) => {
   wind = Number((e.target as HTMLInputElement).value);
   trees?.setWind({ strength: wind });
 };
+function setTerrainOn(on: boolean) {
+  terrainOn = on;
+  $<HTMLInputElement>('terrain').checked = on;
+  map.setTerrain(on ? { source: 'terrain', exaggeration: 1 } : null);
+  if (map.getLayer('hillshade'))
+    map.setLayoutProperty('hillshade', 'visibility', on ? 'visible' : 'none');
+}
 $<HTMLInputElement>('terrain').onchange = (e) =>
-  map.setTerrain(
-    (e.target as HTMLInputElement).checked ? { source: 'terrain', exaggeration: 1 } : null,
-  );
+  setTerrainOn((e.target as HTMLInputElement).checked);
 
 $<HTMLInputElement>('occlusion').onchange = (e) =>
   setOcclusion((e.target as HTMLInputElement).checked);
@@ -281,3 +316,44 @@ setInterval(() => {
     return trees;
   },
 };
+
+let fog: FogLayer | undefined;
+let fogHeight = 40;
+function addFog() {
+  if (fog && map.getLayer(fog.id)) map.removeLayer(fog.id);
+  fog = new FogLayer({
+    id: 'fog',
+    height: fogHeight,
+    density: Number($<HTMLInputElement>('fog-density').value),
+  });
+  map.addLayer(fog, firstSymbol());
+}
+
+/** Preset views: city ground fog, and valley fog among the Alps. */
+function showView(view: 'paris' | 'chamonix') {
+  const alps = view === 'chamonix';
+  setTerrainOn(alps);
+  fogHeight = alps ? 350 : 40;
+  $<HTMLInputElement>('show-fog').checked = true;
+  if (fog && map.getLayer(fog.id)) fog.setHeight(fogHeight);
+  else addFog();
+  map.jumpTo(
+    alps
+      ? { center: [6.8694, 45.9237], zoom: 12.8, bearing: 160, pitch: 70 }
+      : { center: [2.2945, 48.8584], zoom: 16, bearing: -20, pitch: 65 },
+  );
+}
+$('view-paris').onclick = () => showView('paris');
+$('view-chamonix').onclick = () => showView('chamonix');
+$<HTMLInputElement>('show-fog').onchange = () => {
+  if (isOn('show-fog')) addFog();
+  else {
+    remove('fog');
+    fog = undefined;
+  }
+};
+$<HTMLInputElement>('fog-density').oninput = (e) =>
+  fog?.setDensity(Number((e.target as HTMLInputElement).value));
+map.on('style.load', () => {
+  if (isOn('show-fog') && !map.getLayer('fog')) addFog();
+});

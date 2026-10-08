@@ -30,7 +30,15 @@
       <label><input type="checkbox" id="show-landmarks" checked /> Landmarks</label>
       <label><input type="checkbox" id="show-roofs" checked /> Roofs</label>
       <label><input type="checkbox" id="show-trees" checked /> Trees</label>
+      <label><input type="checkbox" id="show-fog" /> Fog</label>
+      <label
+        >Fog density <input id="fog-density" type="range" min="0" max="2" step="0.05" value="0.6"
+      /></label>
       <label><input type="checkbox" id="terrain" /> Terrain</label>
+      <p class="views">
+        <button id="view-paris">Paris</button>
+        <button id="view-chamonix">Chamonix</button>
+      </p>
       <label><input type="checkbox" id="occlusion" checked /> Hide labels behind 3D</label>
       <p id="stats"></p>
       <h2>Loaded models</h2>

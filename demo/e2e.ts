@@ -2,7 +2,13 @@ import { Map as MlMap, setWorkerUrl, type StyleSpecification } from 'maplibre-gl
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Geometry } from 'geojson';
-import { LabelOcclusion, LandmarksLayer, RoofsLayer, type LandmarkInfo } from '../src/index';
+import {
+  FogLayer,
+  LabelOcclusion,
+  LandmarksLayer,
+  RoofsLayer,
+  type LandmarkInfo,
+} from '../src/index';
 
 setWorkerUrl(workerUrl);
 
@@ -19,6 +25,8 @@ declare global {
     __setStyle(background: string, diff: boolean): Promise<void>;
     /** Add icon labels at the given points, plus label occlusion. */
     __addLabels(points: [number, number][]): void;
+    /** Add a fog layer (test options). */
+    __addFog(options: object): void;
     /** Add one gabled test building (GeoJSON, id 1) with roofs. */
     __addRoofs(polygon: number[][][]): RoofsLayer;
     __state: { models: LandmarkInfo[]; errors: string[] };
@@ -157,4 +165,8 @@ window.__addRoofs = (polygon) => {
   });
   map.addLayer(roofs);
   return roofs;
+};
+
+window.__addFog = (options) => {
+  window.__map!.addLayer(new FogLayer({ id: 'fog', minZoom: 0, ...options }));
 };
