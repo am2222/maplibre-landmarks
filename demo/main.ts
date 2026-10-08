@@ -16,6 +16,7 @@ import {
   RoofsLayer,
   setTheme,
   TreesLayer,
+  WaterLayer,
   type LandmarkInfo,
   type Theme,
 } from '../src/index';
@@ -271,6 +272,37 @@ $<HTMLInputElement>('show-trees').onchange = () => {
     remove('trees');
     trees = undefined;
     $('stats').textContent = '';
+  }
+};
+
+let water: WaterLayer | undefined;
+/**
+ * Right above the basemap's water fill and its river/stream lines (they would draw over the
+ * water): roads, bridges and labels still draw on top.
+ */
+function addWater() {
+  if (map.getLayer('water-3d')) map.removeLayer('water-3d');
+  water = new WaterLayer({ id: 'water-3d', source: 'protomaps', sourceLayer: 'water' });
+  const layers = map.getStyle().layers;
+  let i = layers.findIndex((l) => l.id === 'water');
+  while (i !== -1 && i + 1 < layers.length) {
+    const next = layers[i + 1] as { 'source-layer'?: string; type: string };
+    if (next['source-layer'] !== 'water' || next.type === 'symbol') break;
+    i++;
+  }
+  map.addLayer(water, i === -1 ? undefined : layers[i + 1]?.id);
+}
+map.on('load', () => {
+  if (isOn('show-water')) addWater();
+});
+map.on('style.load', () => {
+  if (isOn('show-water') && !map.getLayer('water-3d')) addWater();
+});
+$<HTMLInputElement>('show-water').onchange = () => {
+  if (isOn('show-water')) addWater();
+  else {
+    remove('water-3d');
+    water = undefined;
   }
 };
 

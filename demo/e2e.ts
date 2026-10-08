@@ -7,6 +7,7 @@ import {
   LabelOcclusion,
   LandmarksLayer,
   RoofsLayer,
+  WaterLayer,
   type LandmarkInfo,
 } from '../src/index';
 
@@ -27,6 +28,8 @@ declare global {
     __addLabels(points: [number, number][]): void;
     /** Add a fog layer (test options). */
     __addFog(options: object): void;
+    /** Add a GeoJSON water source, a magenta fill and an animated water layer over it. */
+    __addWater(data: object): void;
     /** Add one gabled test building (GeoJSON, id 1) with roofs. */
     __addRoofs(polygon: number[][][]): RoofsLayer;
     __state: { models: LandmarkInfo[]; errors: string[] };
@@ -169,4 +172,18 @@ window.__addRoofs = (polygon) => {
 
 window.__addFog = (options) => {
   window.__map!.addLayer(new FogLayer({ id: 'fog', minZoom: 0, ...options }));
+};
+
+window.__addWater = (data) => {
+  const map = window.__map!;
+  map.addSource('w', { type: 'geojson', data: data as never });
+  map.addLayer({ id: 'water', type: 'fill', source: 'w', paint: { 'fill-color': '#ff00ff' } });
+  map.addLayer(
+    new WaterLayer({
+      id: 'water-3d',
+      source: 'w',
+      minZoom: 0,
+      onError: (e) => window.__state.errors.push(String(e)),
+    }),
+  );
 };
