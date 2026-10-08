@@ -1,0 +1,236 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Scene, type Mesh, type BufferGeometry } from 'three';
+import type { ModuleContext } from '../../src/core/LayerModule';
+import { setExemptionSource } from '../../src/labels/exemptions';
+import { RoofsModule } from '../../src/roofs/RoofsModule';
+import { ROOF_STATE } from '../../src/roofs/walls';
+import { view } from './helpers';
+
+const TAN_30 = Math.tan(Math.PI / 6);
+// Degrees per metre in the mercator metres `localPosition` uses (exact near the view centre).
+const DEG_PER_M = 360 / (2 * Math.PI * 6371008.8);
+const M_LNG = DEG_PER_M / Math.cos((48.8584 * Math.PI) / 180);
+const M_LAT = DEG_PER_M;
+
+/** w × d metre rectangle whose south-west corner is (east, north) metres from the view centre. */
+function rectAt(east: number, north: number, w: number, d: number) {
+  const [lng, lat] = [2.2945 + east * M_LNG, 48.8584 + north * M_LAT];
+  const [e, n] = [lng + w * M_LNG, lat + d * M_LAT];
+  return [
+    [
+      [lng, lat],
+      [e, lat],
+      [e, n],
+      [lng, n],
+      [lng, lat],
+    ],
+  ];
+}
+const feature = (id: number | undefined, coordinates: number[][][], properties: object) => ({
+  id,
+  geometry: { type: 'Polygon', coordinates },
+  properties,
+});
+
+function fakeMap() {
+  const handlers = new Map<string, (e?: unknown) => void>();
+  const paint: Record<string, unknown> = { 'fill-extrusion-height': ['get', 'height'] };
+  const states = new Map<unknown, Record<string, unknown>>();
+  let layer = true;
+  const map = {
+    handlers,
+    paint,
+    states,
+    features: [] as ReturnType<typeof feature>[],
+    setLayer: (on: boolean) => (layer = on),
+    terrain: null as object | null,
+    on: vi.fn((t: string, fn: (e?: unknown) => void) => handlers.set(t, fn)),
+    off: vi.fn((t: string) => handlers.delete(t)),
+    getSource: (id: string) => (id === 'b' ? {} : undefined),
+    querySourceFeatures: vi.fn(() => map.features),
+    getLayer: (id: string) => (id === 'b3d' && layer ? { id } : undefined),
+    getPaintProperty: (_id: string, p: string) => paint[p],
+    setPaintProperty: vi.fn((_id: string, p: string, v: unknown) => (paint[p] = v)),
+    setFeatureState: vi.fn((f: { id: unknown }, s: Record<string, unknown>) =>
+      states.set(f.id, { ...states.get(f.id), ...s }),
+    ),
+    removeFeatureState: vi.fn((f: { id: unknown }) => states.delete(f.id)),
+    getTerrain: () => map.terrain,
+    queryTerrainElevation: vi.fn((ll: [number, number]) => (ll[0] > 2.2946 ? 10 : 0)),
+  };
+  return map;
+}
+
+function setup(over: object = {}) {
+  const map = fakeMap();
+  const scene = new Scene();
+  const requestRepaint = vi.fn();
+  const onError = vi.fn();
+  const module = new RoofsModule({ source: 'b', extrusionLayer: 'b3d', onError, ...over });
+  module.onAdd({ map, scene, core: {}, requestRepaint } as unknown as ModuleContext);
+  return { map, scene, module, onError, requestRepaint };
+}
+const roofMesh = (scene: Scene) => scene.children[0] as Mesh<BufferGeometry>;
+const stateOf = (m: ReturnType<typeof fakeMap>, id: number) =>
+  m.states.get(id)?.[ROOF_STATE] as number | undefined;
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+describe('RoofsModule', () => {
+  it('roofs tagged buildings, writes their roof height and shortens their walls', () => {
+    const { map, scene, module } = setup();
+    map.features = [
+      feature(1, rectAt(0, 0, 40, 20), { height: 20, roof_shape: 'gabled' }),
+      feature(2, rectAt(100, 0, 10, 10), { height: 20 }),
+    ];
+    module.update(view());
+    expect(stateOf(map, 1)).toBeCloseTo(10 * TAN_30, 1);
+    expect(map.states.has(2)).toBe(false);
+    expect(map.paint['fill-extrusion-height']).toEqual([
+      'max',
+      0,
+      ['-', ['get', 'height'], ['coalesce', ['feature-state', ROOF_STATE], 0]],
+    ]);
+    expect(module.getStats().buildings).toBe(1);
+    expect(roofMesh(scene).geometry.getAttribute('position').count).toBeGreaterThan(0);
+  });
+
+  it('merges tile pieces before sizing the roof', () => {
+    const { map, module } = setup();
+    // 40 × 30 m building cut in two 20 × 30 m pieces (overlapping slightly, like tile buffers).
+    map.features = [
+      feature(1, rectAt(0, 0, 20.5, 30), { height: 30, roof_shape: 'gabled' }),
+      feature(1, rectAt(19.5, 0, 20.5, 30), { height: 30, roof_shape: 'gabled' }),
+    ];
+    module.update(view());
+    expect(stateOf(map, 1)).toBeCloseTo(15 * TAN_30, 1); // whole: W = 15; a piece alone: W = 10
+  });
+
+  it('skips outlines with parts and buildings under a landmark', () => {
+    const { map, module } = setup();
+    map.features = [
+      feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'hipped', has_parts: true }),
+      feature(2, rectAt(200, 0, 20, 20), { height: 20, roof_shape: 'hipped' }),
+    ];
+    const [lng, lat] = [2.2945 + 210 * M_LNG, 48.8584 + 10 * M_LAT];
+    setExemptionSource(map, 'landmarks', () => [
+      [
+        [
+          [lng - 0.001, lat - 0.001],
+          [lng + 0.001, lat - 0.001],
+          [lng + 0.001, lat + 0.001],
+          [lng - 0.001, lat + 0.001],
+          [lng - 0.001, lat - 0.001],
+        ],
+      ],
+    ]);
+    module.update(view());
+    expect(module.getStats().buildings).toBe(0);
+    setExemptionSource(map, 'landmarks', null);
+    vi.advanceTimersByTime(200); // exemption change → rebuild
+    expect(module.getStats().buildings).toBe(1);
+  });
+
+  it('draws only the nearest maxBuildings', () => {
+    const { map, module } = setup({ maxBuildings: 1 });
+    map.features = [
+      feature(1, rectAt(300, 0, 20, 20), { height: 20, roof_shape: 'pyramidal' }),
+      feature(2, rectAt(10, 0, 20, 20), { height: 20, roof_shape: 'pyramidal' }),
+    ];
+    module.update(view());
+    expect(map.states.has(1)).toBe(false);
+    expect(stateOf(map, 2)).toBeGreaterThan(0);
+  });
+
+  it('rebuilds when its source tiles arrive, without a camera move', () => {
+    const { map, module } = setup();
+    module.update(view());
+    expect(module.getStats().buildings).toBe(0);
+    map.features = [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })];
+    map.handlers.get('sourcedata')!({ sourceId: 'other' });
+    vi.advanceTimersByTime(200);
+    expect(module.getStats().buildings).toBe(0);
+    map.handlers.get('sourcedata')!({ sourceId: 'b' });
+    vi.advanceTimersByTime(200);
+    expect(module.getStats().buildings).toBe(1);
+  });
+
+  it('reports a missing extrusion layer once and wraps it once it appears', () => {
+    const { map, module, onError } = setup();
+    map.setLayer(false);
+    map.paint['fill-extrusion-height'] = ['get', 'height'];
+    module.styleChanged(true);
+    module.update(view());
+    module.update(view());
+    expect(onError).toHaveBeenCalledTimes(1);
+    map.setLayer(true);
+    module.update(view());
+    expect(map.paint['fill-extrusion-height']).toEqual([
+      'max',
+      0,
+      ['-', ['get', 'height'], ['coalesce', ['feature-state', ROOF_STATE], 0]],
+    ]);
+  });
+
+  it('reports buildings without ids once', () => {
+    const { map, module, onError } = setup();
+    map.features = [feature(undefined, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })];
+    module.update(view());
+    module.update(view());
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(module.getStats().buildings).toBe(0);
+  });
+
+  it('bakes terrain height differences into the batch', () => {
+    const { map, scene, module } = setup();
+    map.terrain = {};
+    map.features = [
+      feature(1, rectAt(0, 0, 10, 10), { height: 10, roof_shape: 'pyramidal', roof_height: 2 }),
+      feature(2, rectAt(100, 0, 10, 10), { height: 10, roof_shape: 'pyramidal', roof_height: 2 }),
+    ];
+    module.update(view());
+    const ys = Array.from(roofMesh(scene).geometry.getAttribute('position').array).filter(
+      (_, i) => i % 3 === 1,
+    );
+    // Building 1 sits at ground 0 (walls to 8, apex 10); building 2 at ground 10 (apex 20).
+    expect(Math.min(...ys)).toBeCloseTo(8, 6);
+    expect(Math.max(...ys)).toBeCloseTo(20, 6);
+  });
+
+  it('removal clears feature-state, restores the walls and frees the mesh', () => {
+    const { map, scene, module } = setup();
+    map.features = [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })];
+    module.update(view());
+    module.onRemove();
+    expect(map.states.size).toBe(0);
+    expect(map.paint['fill-extrusion-height']).toEqual(['get', 'height']);
+    expect(scene.children).toHaveLength(0);
+    expect(map.handlers.size).toBe(0);
+  });
+
+  it('draws no roofs when the wall height cannot be wrapped (legacy function)', () => {
+    const map0 = fakeMap();
+    map0.paint['fill-extrusion-height'] = { stops: [[15, 0]] };
+    const scene = new Scene();
+    const onError = vi.fn();
+    const module = new RoofsModule({ source: 'b', extrusionLayer: 'b3d', onError });
+    module.onAdd({
+      map: map0,
+      scene,
+      core: {},
+      requestRepaint: vi.fn(),
+    } as unknown as ModuleContext);
+    map0.features = [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })];
+    module.update(view());
+    expect(module.getStats().buildings).toBe(0);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('colours walls from facade attributes when asked', () => {
+    const { map } = setup({ wallColors: true });
+    const color = map.paint['fill-extrusion-color'] as unknown[];
+    expect(color[0]).toBe('to-color');
+    expect(color[1]).toEqual(['get', 'facade_color']);
+  });
+});

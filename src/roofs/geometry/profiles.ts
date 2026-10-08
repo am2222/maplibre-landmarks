@@ -1,0 +1,209 @@
+import { ShapeUtils, Vector2 } from 'three';
+import type { ProfileShape } from '../schema';
+import { fromFrame, toFrame, type RoofFrame, type Vec2 } from './frame';
+import { MeshBuilder, type RGB, type RoofMesh, type Vec3 } from './mesh';
+
+/** A plane over the roof frame: h = a·u + b·v + c. */
+export type Plane = [a: number, b: number, c: number];
+
+const EPS = 1e-9;
+
+/** The planes whose minimum is the roof surface (spec section 5.2). */
+export function profilePlanes(shape: ProfileShape, H: number, L: number, W: number): Plane[] {
+  const gable: Plane[] = [
+    [0, -H / W, H],
+    [0, H / W, H],
+  ];
+  // Gambrel/mansard sides: steep lower third (to 0.6 H), shallower upper part (to H).
+  const sides = (s: number): Plane[] => [
+    [0, (-s * 1.8 * H) / W, 1.8 * H],
+    [0, (-s * 0.6 * H) / W, H],
+  ];
+  switch (shape) {
+    case 'gabled':
+      return gable;
+    case 'saltbox': {
+      const r = W / 3;
+      return [
+        [0, -H / (W - r), (H * W) / (W - r)],
+        [0, H / (W + r), (H * W) / (W + r)],
+      ];
+    }
+    case 'hipped':
+      return [...gable, [-H / W, 0, (H * L) / W], [H / W, 0, (H * L) / W]];
+    case 'half_hipped':
+      return [...gable, [-H / W, 0, H / 2 + (H * L) / W], [H / W, 0, H / 2 + (H * L) / W]];
+    case 'gambrel':
+      return [...sides(1), ...sides(-1)];
+    case 'mansard': {
+      // End slopes with the side pitches, measured from the end eaves (u = ±L).
+      const ends = (s: number): Plane[] => [
+        [(-s * 1.8 * H) / W, 0, (1.8 * H * L) / W],
+        [(-s * 0.6 * H) / W, 0, 0.4 * H + (0.6 * H * L) / W],
+      ];
+      return [...sides(1), ...sides(-1), ...ends(1), ...ends(-1)];
+    }
+    case 'skillion':
+      return [[0, -H / (2 * W), H / 2]];
+    case 'round': {
+      const n = 8;
+      const arc = (v: number) => H * Math.sqrt(Math.max(0, 1 - (v / W) ** 2));
+      const planes: Plane[] = [];
+      for (let k = 0; k < n; k++) {
+        const v0 = -W + (2 * W * k) / n;
+        const v1 = -W + (2 * W * (k + 1)) / n;
+        const slope = (arc(v1) - arc(v0)) / (v1 - v0);
+        planes.push([0, slope, arc(v0) - slope * v0]);
+      }
+      return planes;
+    }
+  }
+}
+
+const heightAt = (planes: Plane[], u: number, v: number) =>
+  Math.max(0, Math.min(...planes.map(([a, b, c]) => a * u + b * v + c)));
+
+/**
+ * Lines where two planes are equal (normalised a·u + b·v + c = 0), deduplicated, keeping only
+ * lines that cross `box` = [minU, minV, maxU, maxV].
+ */
+export function creaseLines(planes: Plane[], box: [number, number, number, number]): Plane[] {
+  const out: Plane[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < planes.length; i++) {
+    for (let j = i + 1; j < planes.length; j++) {
+      let a = planes[i]![0] - planes[j]![0];
+      let b = planes[i]![1] - planes[j]![1];
+      let c = planes[i]![2] - planes[j]![2];
+      const n = Math.hypot(a, b);
+      if (n < EPS) continue;
+      a /= n;
+      b /= n;
+      c /= n;
+      if (a < -EPS || (Math.abs(a) <= EPS && b < 0)) {
+        a = -a;
+        b = -b;
+        c = -c;
+      }
+      const key = [a, b, c].map((x) => x.toFixed(6)).join();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const s = [
+        [box[0], box[1]],
+        [box[2], box[1]],
+        [box[2], box[3]],
+        [box[0], box[3]],
+      ].map(([u, v]) => a * u! + b * v! + c);
+      if (s.every((x) => x > EPS) || s.every((x) => x < -EPS)) continue;
+      out.push([a, b, c]);
+    }
+  }
+  return out;
+}
+
+/** The part of convex polygon `piece` on the `side` (±1) of line a·u + b·v + c = 0. */
+function cutConvex(piece: Vec2[], [a, b, c]: Plane, side: number): Vec2[] {
+  const out: Vec2[] = [];
+  const sd = (p: Vec2) => side * (a * p[0] + b * p[1] + c);
+  for (let i = 0; i < piece.length; i++) {
+    const p = piece[i]!;
+    const q = piece[(i + 1) % piece.length]!;
+    const sp = sd(p);
+    const sq = sd(q);
+    if (sp >= 0) out.push(p);
+    if ((sp > 0 && sq < 0) || (sp < 0 && sq > 0)) {
+      const t = sp / (sp - sq);
+      out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+    }
+  }
+  return out;
+}
+
+const close = (ring: Vec2[]): Vec2[] => {
+  const [f, l] = [ring[0]!, ring.at(-1)!];
+  return f[0] === l[0] && f[1] === l[1] ? ring : [...ring, f];
+};
+const open = (ring: Vec2[]): Vec2[] => {
+  const [f, l] = [ring[0]!, ring.at(-1)!];
+  return ring.length > 1 && f[0] === l[0] && f[1] === l[1] ? ring.slice(0, -1) : ring;
+};
+
+/**
+ * Roof over `polygons` (local metres, rings in any orientation, holes allowed): the footprint is
+ * split along every crease line so each piece lies under a single plane, each piece is
+ * triangulated and lifted, and vertical faces close it down to y = 0.
+ */
+export function buildProfileRoof(
+  polygons: Vec2[][][],
+  frame: RoofFrame,
+  planes: Plane[],
+  roof: RGB,
+  wall: RGB,
+): RoofMesh {
+  const framed: Vec2[][][] = polygons.map((rings) =>
+    rings.map((ring) => close(ring.map((p) => toFrame(frame, p)))),
+  );
+  const all = framed.flat(2);
+  const box: [number, number, number, number] = [
+    Math.min(...all.map((p) => p[0])),
+    Math.min(...all.map((p) => p[1])),
+    Math.max(...all.map((p) => p[0])),
+    Math.max(...all.map((p) => p[1])),
+  ];
+  const lines = creaseLines(planes, box);
+  const b = new MeshBuilder();
+  const lift = ([u, v]: Vec2): Vec3 => {
+    const [x, z] = fromFrame(frame, [u, v]);
+    return [x, heightAt(planes, u, v), z];
+  };
+  const ground = ([u, v]: Vec2): Vec3 => {
+    const [x, z] = fromFrame(frame, [u, v]);
+    return [x, 0, z];
+  };
+
+  // Triangulate the footprint once (holes and concave outlines included), then cut every
+  // triangle along every crease line. Cutting convex polygons by a line is exact and robust,
+  // unlike general polygon clipping, which breaks where many creases meet at one point.
+  let pieces: Vec2[][] = [];
+  for (const rings of framed) {
+    const [outer, ...holes] = rings.map(open);
+    if (!outer || outer.length < 3) continue;
+    const vertices = [outer, ...holes].flat();
+    const faces = ShapeUtils.triangulateShape(
+      outer.map(([u, v]) => new Vector2(u, v)),
+      holes.map((h) => h.map(([u, v]) => new Vector2(u, v))),
+    );
+    for (const [i, j, k] of faces) pieces.push([vertices[i!]!, vertices[j!]!, vertices[k!]!]);
+  }
+  for (const line of lines) {
+    pieces = pieces.flatMap((piece) => [cutConvex(piece, line, 1), cutConvex(piece, line, -1)]);
+    pieces = pieces.filter((piece) => piece.length >= 3);
+  }
+  for (const piece of pieces) {
+    for (let i = 1; i + 1 < piece.length; i++) {
+      b.triangle(lift(piece[0]!), lift(piece[i]!), lift(piece[i + 1]!), roof, true);
+    }
+  }
+
+  for (const ring of framed.flat()) {
+    for (let i = 0; i + 1 < ring.length; i++) {
+      const p = ring[i]!;
+      const q = ring[i + 1]!;
+      const ts = [0, 1];
+      for (const [a, bb, c] of lines) {
+        const sp = a * p[0] + bb * p[1] + c;
+        const sq = a * q[0] + bb * q[1] + c;
+        if (sp * sq < 0) ts.push(sp / (sp - sq));
+      }
+      ts.sort((x, y) => x - y);
+      for (let k = 0; k + 1 < ts.length; k++) {
+        const at = (t: number): Vec2 => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+        const pa = at(ts[k]!);
+        const pb = at(ts[k + 1]!);
+        if (heightAt(planes, ...pa) < 1e-6 && heightAt(planes, ...pb) < 1e-6) continue;
+        b.quad(ground(pa), ground(pb), lift(pb), lift(pa), wall);
+      }
+    }
+  }
+  return b.build();
+}

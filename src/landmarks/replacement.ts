@@ -1,5 +1,5 @@
 import type { FeatureIdentifier, Map as MlMap } from 'maplibre-gl';
-import { scaleBy } from '../core/expressions';
+import { sameValue, scaleBy } from '../core/expressions';
 import { pointInPolygons, type Ring } from '../core/geometry';
 import { EARTH_RADIUS_M } from '../core/mercator';
 import type { LandmarkEntry } from './catalogue';
@@ -125,7 +125,10 @@ interface Claimed {
  * re-parse). Each target layer's paint is wrapped once so a feature's fade scales it away.
  */
 export class BuildingReplacement {
-  private readonly originals = new Map<string, Map<PaintProperty, unknown>>();
+  private readonly originals = new Map<
+    string,
+    Map<PaintProperty, { original: unknown; applied: unknown }>
+  >();
   /** Features under the current landmarks, by `source/layer/id`. */
   private claimed = new Map<string, Claimed>();
   /** Fade value last written to each feature. */
@@ -179,10 +182,15 @@ export class BuildingReplacement {
     this.applied.clear();
     this.claimed.clear();
     for (const [layerId, props] of this.originals) {
-      for (const [prop, value] of props) {
+      for (const [prop, { original, applied }] of props) {
         this.safely(() => {
-          if (this.map.getLayer(layerId))
-            this.map.setPaintProperty(layerId, prop, value as PaintValue);
+          // Another wrapper (e.g. roofs) may sit on top of ours now: leave it in place.
+          if (
+            this.map.getLayer(layerId) &&
+            sameValue(this.map.getPaintProperty(layerId, prop), applied)
+          ) {
+            this.map.setPaintProperty(layerId, prop, original as PaintValue);
+          }
         });
       }
     }
@@ -220,7 +228,7 @@ export class BuildingReplacement {
 
   private wrapPaint(layerId: string, type: string): void {
     if (this.originals.has(layerId)) return;
-    const props = new Map<PaintProperty, unknown>();
+    const props = new Map<PaintProperty, { original: unknown; applied: unknown }>();
     for (const [prop, fallback] of HIDING_PAINT[type]!) {
       const original = this.map.getPaintProperty(layerId, prop);
       const scaled = scaleBy(original ?? fallback, KEEP);
@@ -228,7 +236,7 @@ export class BuildingReplacement {
         console.warn(`[maplibre-landmarks] cannot wrap legacy function ${layerId}/${prop}`);
         continue;
       }
-      props.set(prop, original);
+      props.set(prop, { original, applied: scaled });
       this.map.setPaintProperty(layerId, prop, scaled as PaintValue);
     }
     this.originals.set(layerId, props);

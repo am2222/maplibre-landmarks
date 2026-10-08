@@ -298,4 +298,13 @@ describe('BuildingReplacement (feature-state)', () => {
     });
     expect(() => r.restore()).not.toThrow();
   });
+
+  it('restore leaves the paint alone when someone else replaced its wrapper', () => {
+    const { map, target } = fakeStyle('fill');
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    r.update([full(landmark())]);
+    map.paint['fill-opacity'] = 0.25;
+    r.restore();
+    expect(map.paint['fill-opacity']).toBe(0.25);
+  });
 });

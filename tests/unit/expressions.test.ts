@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scaleBy, unscaleBy } from '../../src/core/expressions';
+import { mapOutputs, scaleBy, unmapOutputs, unscaleBy } from '../../src/core/expressions';
 
 describe('scaleBy', () => {
   const k = ['k'];
@@ -47,5 +47,40 @@ describe('scaleBy', () => {
 
   it('cannot wrap legacy function objects', () => {
     expect(scaleBy({ stops: [[15, 0]] }, k)).toBeUndefined();
+  });
+
+  it('mapOutputs applies to each zoom-curve output, or to the value itself', () => {
+    const f = (o: unknown) => ['f', o];
+    expect(mapOutputs(['step', ['zoom'], 1, 15, 2], f)).toEqual([
+      'step',
+      ['zoom'],
+      ['f', 1],
+      15,
+      ['f', 2],
+    ]);
+    expect(mapOutputs(['interpolate', ['linear'], ['zoom'], 14, 0, 15, 3], f)).toEqual([
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      14,
+      ['f', 0],
+      15,
+      ['f', 3],
+    ]);
+    expect(mapOutputs(5, f)).toEqual(['f', 5]);
+  });
+
+  it('unmapOutputs inverts recognised wrappers only', () => {
+    const unf = (o: unknown) => (Array.isArray(o) && o[0] === 'f' ? o[1] : undefined);
+    expect(unmapOutputs(['f', 5], unf)).toBe(5);
+    expect(unmapOutputs(['step', ['zoom'], ['f', 1], 15, ['f', 2]], unf)).toEqual([
+      'step',
+      ['zoom'],
+      1,
+      15,
+      2,
+    ]);
+    expect(unmapOutputs(['step', ['zoom'], ['f', 1], 15, 2], unf)).toBeUndefined();
+    expect(unmapOutputs(5, unf)).toBeUndefined();
   });
 });

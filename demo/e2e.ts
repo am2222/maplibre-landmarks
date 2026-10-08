@@ -2,7 +2,7 @@ import { Map as MlMap, setWorkerUrl, type StyleSpecification } from 'maplibre-gl
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Geometry } from 'geojson';
-import { LabelOcclusion, LandmarksLayer, type LandmarkInfo } from '../src/index';
+import { LabelOcclusion, LandmarksLayer, RoofsLayer, type LandmarkInfo } from '../src/index';
 
 setWorkerUrl(workerUrl);
 
@@ -19,6 +19,8 @@ declare global {
     __setStyle(background: string, diff: boolean): Promise<void>;
     /** Add icon labels at the given points, plus label occlusion. */
     __addLabels(points: [number, number][]): void;
+    /** Add one gabled test building (GeoJSON, id 1) with roofs. */
+    __addRoofs(polygon: number[][][]): RoofsLayer;
     __state: { models: LandmarkInfo[]; errors: string[] };
     __map?: MlMap;
   }
@@ -128,4 +130,31 @@ window.__addLabels = (points) => {
       onError: (err) => window.__state.errors.push(`labels: ${String(err)}`),
     }),
   );
+};
+
+window.__addRoofs = (polygon) => {
+  const map = window.__map!;
+  map.addSource('rb', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      id: 1,
+      properties: { height: 30, roof_shape: 'gabled' },
+      geometry: { type: 'Polygon', coordinates: polygon },
+    },
+  });
+  map.addLayer({
+    id: 'rb-3d',
+    type: 'fill-extrusion',
+    source: 'rb',
+    paint: { 'fill-extrusion-color': '#cccccc', 'fill-extrusion-height': ['get', 'height'] },
+  });
+  const roofs = new RoofsLayer({
+    id: 'roofs',
+    source: 'rb',
+    extrusionLayer: 'rb-3d',
+    onError: (err) => window.__state.errors.push(`roofs: ${String(err)}`),
+  });
+  map.addLayer(roofs);
+  return roofs;
 };

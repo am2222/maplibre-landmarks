@@ -1,0 +1,80 @@
+import { toRGB } from '../colors';
+import type { ProfileShape, RoofProps } from '../schema';
+import { roofFrame, type RoofFrame, type Vec2 } from './frame';
+import { MeshBuilder, type RoofMesh } from './mesh';
+import { buildProfileRoof, profilePlanes } from './profiles';
+import { coneRoof, domeRoof, onionRoof, pyramidRoof } from './radial';
+
+export interface BuiltRoof {
+  mesh: RoofMesh;
+  /** Height of the roof drawn; the walls are shortened by exactly this. */
+  roofHeight: number;
+}
+
+const TAN_30 = Math.tan(Math.PI / 6);
+const ROUNDED = new Set(['dome', 'onion', 'round']);
+const MIN_DEFAULT_M = 0.5;
+
+/** Spec section 3: explicit heights fill up to the span; defaults are capped at half of it. */
+export function resolveRoofHeight(
+  props: RoofProps,
+  frame: Pick<RoofFrame, 'L' | 'W'>,
+): number | null {
+  const span = props.height - props.minHeight;
+  if (props.roofHeight !== undefined) return Math.min(props.roofHeight, span);
+  const half = Math.min(frame.L, frame.W);
+  const fallback = ROUNDED.has(props.shape) ? half : half * TAN_30;
+  const capped = Math.min(fallback, span / 2);
+  return capped >= MIN_DEFAULT_M ? capped : null;
+}
+
+const open = (ring: Vec2[]): Vec2[] => {
+  const [f, l] = [ring[0]!, ring.at(-1)!];
+  return ring.length > 1 && f[0] === l[0] && f[1] === l[1] ? ring.slice(0, -1) : ring;
+};
+
+function area(ring: Vec2[]): number {
+  let a = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i]!;
+    const q = ring[(i + 1) % ring.length]!;
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return Math.abs(a) / 2;
+}
+
+/** The roof for one building (local metres, base at y = 0), or null when it gets none. */
+export function buildRoof(props: RoofProps, polygons: Vec2[][][]): BuiltRoof | null {
+  const outers = polygons.map((rings) => open(rings[0] ?? []));
+  const outer = outers.reduce((best, r) => (area(r) > area(best) ? r : best), outers[0] ?? []);
+  if (outer.length < 3 || area(outer) < 1e-6) return null;
+  const frame = roofFrame(outer, props.direction, props.orientation);
+  if (frame.L < 0.25 || frame.W < 0.25) return null;
+  const H = resolveRoofHeight(props, frame);
+  if (H === null || !(H > 0)) return null;
+  const roof = toRGB(props.roofColor);
+  const radius = Math.min(frame.L, frame.W);
+  const b = new MeshBuilder();
+  switch (props.shape) {
+    case 'pyramidal':
+      pyramidRoof(b, outer, frame.origin, H, roof);
+      return { mesh: b.build(), roofHeight: H };
+    case 'cone':
+      coneRoof(b, frame.origin, radius, H, roof);
+      return { mesh: b.build(), roofHeight: H };
+    case 'dome':
+      domeRoof(b, frame.origin, radius, H, roof);
+      return { mesh: b.build(), roofHeight: H };
+    case 'onion':
+      onionRoof(b, frame.origin, radius, H, roof);
+      return { mesh: b.build(), roofHeight: H };
+    default: {
+      const shape = props.shape as ProfileShape;
+      const planes = profilePlanes(shape, H, frame.L, frame.W);
+      return {
+        mesh: buildProfileRoof(polygons, frame, planes, roof, toRGB(props.wallColor)),
+        roofHeight: H,
+      };
+    }
+  }
+}

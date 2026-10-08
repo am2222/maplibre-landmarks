@@ -43,3 +43,7 @@ export {
 export { birch, conifer, deciduous, defaultImpostor } from './trees/models/procedural';
 export { treeModelFromGLB, type GlbTreeOptions } from './trees/models/glb';
 export type { TreeModel, TreeParts } from './trees/models/types';
+export { RoofsLayer, type RoofsLayerOptions } from './roofs/RoofsLayer';
+export { RoofsModule, type RoofsOptions } from './roofs/RoofsModule';
+export { ROOF_STATE } from './roofs/walls';
+export { DEFAULT_FIELDS, type Fields } from './roofs/schema';

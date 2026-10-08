@@ -25,8 +25,11 @@ producer of that schema.
 - **Untagged buildings stay flat.** No guessed roofs.
 - **Split footprints.** Vector tiles cut buildings at tile edges; the module merges the pieces
   of each building (by feature id) back into one footprint before generating its roof.
-- **Geometry.** Port OSMBuildings' roof generators (BSD-2-Clause, Copyright (c) 2018 Jan
-  Marsch, OSM Buildings), with attribution in `LICENSE` and the README.
+- **Geometry.** Our own profile engine for ridge-style roofs (section 5), because
+  OSMBuildings draws hipped, half-hipped, gambrel and mansard as plain gables, needs a
+  direction for gabled and skillion, and leaves `round` flat. Its radial shapes (dome, onion,
+  cone, pyramid) are ported (BSD-2-Clause, Copyright (c) 2018 Jan Marsch, OSM Buildings),
+  with attribution in `LICENSE` and the README.
 
 ### Data facts (Paris, OSM via Overpass, 2026-10-08)
 
@@ -44,10 +47,17 @@ double_saltbox 336; pyramidal 319; mansard 302; round 189; dome 168; many 132;
 quadruple_saltbox 122; saltbox 59; cone 49; side_hipped 45; half-hipped 18; onion 7; rarer
 others under 10 each.
 
+Overture (release 2026-09-23.1, Paris bounding box) uses the shapes `flat`, `gabled`,
+`gambrel`, `saltbox`, `hipped`, `mansard`, `skillion`, `pyramidal`, `round`, `dome`,
+`half_hipped`, `onion` and `sawtooth`; OSM's `double_saltbox` / `quadruple_saltbox` appear as
+`saltbox` (643 buildings). Parts mostly carry `roof_height` (e.g. 512 of 692 gabled parts);
+outline buildings almost never do. `roof_direction` is rare except on skillion parts (543 of
+666). Outline buildings that have parts are flagged `has_parts`.
+
 Consequences: building **parts** carry most of the detail and must be first-class input;
-39% of tagged roofs have no height, so a default is needed; Overture's `roof_shape` enumeration
-(to be confirmed in the plan's first task) lacks the saltbox variants common in Paris, so OSM
-values outside it are accepted too.
+many roofs have no height, so a default is needed; most have no direction, so the ridge must
+follow the footprint; outlines with parts must not get a roof of their own (it would sit on top
+of the parts' roofs).
 
 ### Non-goals
 
@@ -72,6 +82,7 @@ map.addLayer(
     minZoom: 15,
     maxBuildings: 2000, // nearest roofed buildings drawn at once
     wallColors: false, // true: colour walls from facade_color / facade_material
+    gableColor: '#d9d4ce', // vertical roof faces without a facade colour
     onError: console.warn,
   }),
 );
@@ -96,23 +107,26 @@ Names follow Overture's building schema. Units are metres and degrees.
 | `roof_material`   | Material name (colour table, section 5)                                     |
 | `facade_color`    | CSS colour (walls, only with `wallColors`)                                  |
 | `facade_material` | Material name (walls, only with `wallColors`)                               |
+| `has_parts`       | Outline of a building drawn by its parts: never gets a roof                 |
 
 **Feature ids are required** (numeric ids in the tiles, or `promoteId` on the source). Features
 without an id get no roof; one warning is reported per source.
 
-**Shape values.** Lower-cased, `-` read as `_`. Drawn shapes: `gabled`, `hipped`, `half_hipped`,
-`pyramidal`, `cone`, `dome`, `onion`, `round`, `skillion`, `gambrel`, `mansard`. Mapped:
-`saltbox` → `gabled`; `double_saltbox`, `quadruple_saltbox` → `mansard`; `side_hipped` →
-`hipped`; `pyramid` → `pyramidal`. Anything else, including `flat`, is flat (no roof drawn,
-walls untouched).
+**Shape values.** Lower-cased, `-` read as `_`. Drawn shapes: `gabled`, `saltbox`, `hipped`,
+`half_hipped`, `gambrel`, `mansard`, `skillion`, `round` (section 5 profiles) and `pyramidal`,
+`cone`, `dome`, `onion` (radial). Mapped: `double_saltbox`, `quadruple_saltbox` → `mansard`;
+`side_hipped` → `hipped`; `pyramid` → `pyramidal`. Anything else, including `flat` and
+`sawtooth`, is flat (no roof drawn, walls untouched).
 
 **Roof height default** when `roof_height` is missing or not positive:
 
-- pitched shapes (`gabled`, `hipped`, `half_hipped`, `skillion`, `gambrel`, `mansard`,
-  `pyramidal`, `cone`): half the footprint's shorter oriented side × tan 30°;
+- pitched shapes (`gabled`, `saltbox`, `hipped`, `half_hipped`, `skillion`, `gambrel`,
+  `mansard`, `pyramidal`, `cone`): half the footprint's shorter oriented side × tan 30°;
 - `dome`, `onion`, `round`: the footprint's radius (half the shorter side);
-- always capped at half of `height − min_height`, and at least 0.5 m; a roof that cannot fit
-  is skipped (flat).
+- defaults are capped at half of `height − min_height`, and a default under 0.5 m means no
+  roof (flat);
+- an explicit `roof_height` is used as given, limited to `height − min_height` (a part that is
+  all roof, like many dome parts, keeps its full roof).
 
 ## 4. Footprints
 
@@ -129,18 +143,65 @@ walls untouched).
 
 ## 5. Roof geometry
 
-- Port `src/triangulate/roofs/index.js`, `src/triangulate/roofs/Tools.js` and
-  `src/triangulate/split.js` from OSMBuildings into `src/roofs/geometry/` as pure TypeScript
-  functions. Input: footprint rings in local metres (centred on the footprint centroid, X east,
-  Z south, glTF axes like the landmarks), wall-top height, roof height, shape, direction,
-  orientation, colour. Output: `{ positions, normals, colors }` triangle arrays.
-- Ridge shapes (`gabled`, `hipped`, `half_hipped`, `gambrel`, `mansard`, `skillion`) need a
-  single ring: footprints with holes or several polygons fall back to a flat roof at the wall
-  top (as OSMBuildings does). Degenerate input (fewer than 3 distinct points, zero area)
-  yields no roof.
-- **Colour:** `roof_color` if it parses; otherwise the material table (ported from
+Pure functions in `src/roofs/geometry/`. Input: footprint polygon(s) in local metres (centred
+on the footprint centroid, X east, Z south, glTF axes like the landmarks), the shape, roof
+height `H`, direction, orientation and colours. Output: `{ positions, normals, colors }`
+triangle arrays with the roof base at y = 0 (the module lifts it to the wall top).
+
+### 5.1 Roof frame
+
+- The oriented bounding box of the outer ring (convex hull + rotating calipers, minimum
+  area) gives a frame: origin at the box centre, `u` along the ridge, `v` across it, with
+  half-extents `L` (along `u`) and `W` (along `v`).
+- Ridge axis: with `roof_direction` (the bearing the roof faces), `v` points toward that
+  bearing and `u` is perpendicular to it; otherwise `roof_orientation: across` puts `u` on the
+  box's short side, and `along` or nothing puts it on the long side.
+
+### 5.2 Profile shapes (`gabled`, `saltbox`, `hipped`, `half_hipped`, `gambrel`, `mansard`, `skillion`, `round`)
+
+Each is a height function `h(u, v) = min_k P_k(u, v)` over a few planes `P_k`:
+
+| Shape         | Planes (H = roof height)                                                          |
+| ------------- | --------------------------------------------------------------------------------- |
+| `gabled`      | `H(1 − v/W)`, `H(1 + v/W)`                                                         |
+| `saltbox`     | ridge at `v = W/3`: `H(W − v)/(W − W/3)`, `H(W + v)/(W + W/3)`                    |
+| `hipped`      | the two gable planes and `H(L − u)/W`, `H(L + u)/W` (45° hips in plan)            |
+| `half_hipped` | the two gable planes and `H/2 + H(L − u)/W`, `H/2 + H(L + u)/W`                   |
+| `gambrel`     | per side: lower `0.6H(W ∓ v)/(W/3)`, upper `0.6H + 0.4H(2W/3 ∓ v)/(2W/3)`          |
+| `mansard`     | the gambrel planes on all four sides, the end slopes with the same pitches as the sides (break `W/3` in from each eave) |
+| `skillion`    | `H(W − v)/(2W)`: high at `v = −W`, low toward the bearing it faces                |
+| `round`       | 8 chords of the half-circle `H·sqrt(1 − (v/W)²)` across `v`                       |
+
+Construction, the same for every profile:
+
+1. Crease lines are where two planes are equal (`P_i = P_j`), for every pair.
+2. The footprint (outer ring and holes) is triangulated once (three's
+   `ShapeUtils.triangulateShape`, i.e. earcut), and every triangle is cut along every crease
+   line (convex clipping, exact and robust). Each resulting convex piece lies under a single
+   plane, so it is flat.
+3. Each piece is fan-triangulated and each vertex lifted to `h(u, v)` (never below 0).
+4. Vertical faces close the roof to its base: every footprint edge, subdivided where crease
+   lines cross it, gets a quad from y = 0 up to `h` wherever `h > 0` (gable ends, and inner
+   corners of concave footprints). They use the wall colour.
+
+This works for any footprint shape, including holes and concave outlines.
+
+### 5.3 Radial shapes (`pyramidal`, `cone`, `dome`, `onion`)
+
+Ported from OSMBuildings' `src/triangulate/split.js` and `roofs/index.js` (commit `55e22a6`):
+`pyramid` (every outer edge sloping to an apex above the centroid), `cylinder` (cone), `dome`
+and the onion ring profile, centred on the footprint centroid with radius half the shorter
+oriented side. Holes are ignored.
+
+### 5.4 Colours and failure
+
+- Roof colour: `roof_color` if it parses; otherwise the material table (ported from
   OSMBuildings: `roof_tiles` `#f08060`, `slate` `#666666`, `metal` `#aaaaaa`, `copper`
   `#a0e0d0`, …, with its aliases); otherwise `#b9a99a`.
+- Wall colour (gable and vertical faces): `facade_color`, then the facade material, then the
+  `gableColor` option (default `#d9d4ce`).
+- Degenerate input (fewer than 3 distinct points, zero area) or any exception yields no roof
+  (the building stays flat with full walls).
 
 ## 6. Rendering (`RoofsModule`)
 

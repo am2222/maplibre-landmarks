@@ -1,61 +1,55 @@
 const isZoom = (e: unknown) => Array.isArray(e) && e.length === 1 && e[0] === 'zoom';
+const isInterpolate = (op: unknown) =>
+  op === 'interpolate' || op === 'interpolate-hcl' || op === 'interpolate-lab';
+
+/** Structural equality for style values (JSON-shaped). */
+export const sameValue = (a: unknown, b: unknown): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * `value × factor` as a style expression. A zoom curve must stay the top-level expression, so
- * its outputs are scaled instead. Returns undefined for legacy function objects (not wrappable).
+ * Apply `fn` to each output of a zoom curve, keeping the curve top-level (MapLibre rejects a
+ * `["zoom"]` curve nested in another expression), or to the value itself.
  */
-export function scaleBy(value: unknown, factor: unknown): unknown {
+export function mapOutputs(value: unknown, fn: (output: unknown) => unknown): unknown {
   if (Array.isArray(value)) {
     const [op] = value as unknown[];
-    if (
-      (op === 'interpolate' || op === 'interpolate-hcl' || op === 'interpolate-lab') &&
-      isZoom(value[2])
-    ) {
+    if (isInterpolate(op) && isZoom(value[2])) {
       const [, interp, input, ...stops] = value as unknown[];
-      return [op, interp, input, ...stops.map((v, i) => (i % 2 ? ['*', v, factor] : v))];
+      return [op, interp, input, ...stops.map((v, i) => (i % 2 ? fn(v) : v))];
     }
     if (op === 'step' && isZoom(value[1])) {
       const [, input, first, ...stops] = value as unknown[];
-      return [
-        op,
-        input,
-        ['*', first, factor],
-        ...stops.map((v, i) => (i % 2 ? ['*', v, factor] : v)),
-      ];
+      return [op, input, fn(first), ...stops.map((v, i) => (i % 2 ? fn(v) : v))];
     }
-    return ['*', value, factor];
   }
-  if (typeof value === 'number') return ['*', value, factor];
-  return undefined;
+  return fn(value);
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-const FAIL = Symbol('not wrapped');
-const unwrap = (v: unknown, factor: unknown): unknown =>
-  Array.isArray(v) && v.length === 3 && v[0] === '*' && same(v[2], factor) ? v[1] : FAIL;
+/** Inverse of `mapOutputs`: undefined unless `unwrap` recognises every output. */
+export function unmapOutputs(value: unknown, unwrap: (output: unknown) => unknown): unknown {
+  let ok = true;
+  const result = mapOutputs(value, (o) => {
+    const u = unwrap(o);
+    if (u === undefined) ok = false;
+    return u;
+  });
+  return ok ? result : undefined;
+}
+
+/**
+ * `value × factor` as a style expression. Returns undefined for legacy function objects and
+ * other values that cannot be wrapped.
+ */
+export function scaleBy(value: unknown, factor: unknown): unknown {
+  if (!Array.isArray(value) && typeof value !== 'number') return undefined;
+  return mapOutputs(value, (v) => ['*', v, factor]);
+}
 
 /** Inverse of `scaleBy`: the original value, or undefined when `value` is not its output. */
 export function unscaleBy(value: unknown, factor: unknown): unknown {
-  if (!Array.isArray(value)) return undefined;
-  const [op] = value as unknown[];
-  let parts: unknown[] | undefined;
-  if (
-    (op === 'interpolate' || op === 'interpolate-hcl' || op === 'interpolate-lab') &&
-    isZoom(value[2])
-  ) {
-    const [, interp, input, ...stops] = value as unknown[];
-    parts = [op, interp, input, ...stops.map((v, i) => (i % 2 ? unwrap(v, factor) : v))];
-  } else if (op === 'step' && isZoom(value[1])) {
-    const [, input, first, ...stops] = value as unknown[];
-    parts = [
-      op,
-      input,
-      unwrap(first, factor),
-      ...stops.map((v, i) => (i % 2 ? unwrap(v, factor) : v)),
-    ];
-  } else {
-    const v = unwrap(value, factor);
-    return v === FAIL ? undefined : v;
-  }
-  return parts.includes(FAIL) ? undefined : parts;
+  return unmapOutputs(value, (v) =>
+    Array.isArray(v) && v.length === 3 && v[0] === '*' && sameValue(v[2], factor)
+      ? v[1]
+      : undefined,
+  );
 }
