@@ -1,0 +1,7 @@
+dist
+dist-demo
+docs
+tests/fixtures
+package-lock.json
+test-results
+playwright-report
