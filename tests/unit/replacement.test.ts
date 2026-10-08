@@ -196,6 +196,29 @@ describe('BuildingReplacement (feature-state)', () => {
     expect(map.states.has(6)).toBe(false);
   });
 
+  it('rescans thousands of far-away buildings quickly (dense tiles, detailed footprints)', () => {
+    const { map, target } = fakeStyle();
+    // 40,000 buildings across a few kilometres, none near the landmark; a 2,000-point outline.
+    const far = Array.from({ length: 40_000 }, (_, i) =>
+      building(100 + i, 2.31 + (i % 200) * 0.0004, 48.87 + Math.floor(i / 200) * 0.0004),
+    );
+    const outline = Array.from({ length: 2000 }, (_, k) => {
+      const a = (k / 2000) * 2 * Math.PI;
+      return [2.2945 + 0.0006 * Math.cos(a), 48.8584 + 0.0004 * Math.sin(a)];
+    });
+    outline.push(outline[0]!);
+    const detailed = (id: string) =>
+      entry(id, { replacementFootprint: { type: 'Polygon', coordinates: [outline] } });
+    map.features.splice(0, map.features.length, ...far);
+    const t0 = performance.now();
+    new BuildingReplacement(target, ['buildings'], 1.5).update(
+      ['a', 'b', 'c', 'd', 'e'].map((id) => full(detailed(id))),
+    );
+    // Before the bounds check this ran every centre through every outline (~2 s).
+    expect(performance.now() - t0).toBeLessThan(250);
+    expect(map.states.size).toBe(0);
+  });
+
   it('tells exemption listeners (roofs) when the set of hidden buildings changes', () => {
     const { map, target } = fakeStyle();
     const listener = vi.fn();

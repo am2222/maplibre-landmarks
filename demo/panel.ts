@@ -45,3 +45,22 @@ export function range(
     },
   };
 }
+
+/** Mark the tabs of layers that are on (a dot), from their switches. */
+export function syncTabDots(): void {
+  for (const tab of document.querySelectorAll<HTMLElement>('[data-tab]')) {
+    const input = document.querySelector<HTMLInputElement>(`[data-toggle="${tab.dataset.tab}"]`);
+    tab.classList.toggle('on', !!input?.checked);
+  }
+}
+
+/** The header button folds the panel down to its title bar. */
+export function initCollapse(): void {
+  const button = $('collapse');
+  const panel = $('panel');
+  button.addEventListener('click', () => {
+    const collapsed = panel.classList.toggle('collapsed');
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.title = collapsed ? 'Expand panel' : 'Collapse panel';
+  });
+}

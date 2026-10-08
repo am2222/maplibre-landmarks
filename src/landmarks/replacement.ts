@@ -345,16 +345,16 @@ export class BuildingReplacement {
         const geometry = f.geometry as { type: string; coordinates: unknown };
         const centre = centreOf(geometry);
         if (!centre) continue;
-        let polygons: number[][][][] | undefined;
+        // Dense tiles hold thousands of buildings, nearly all far from any landmark: reject
+        // them by their bounds before the outline tests.
+        const polygons = polygonsOf(geometry);
+        const box = bboxOf(polygons);
         for (const r of this.regions) {
-          let inside = pointInPolygons(centre, r.footprints);
-          if (!inside) {
-            // ...or mostly inside it (parts straddling the outline).
-            polygons ??= polygonsOf(geometry);
-            inside =
-              overlaps(bboxOf(polygons), r.bbox) &&
-              shareInside(polygons, r.footprints) >= MOSTLY_INSIDE;
-          }
+          if (!overlaps(box, r.bbox)) continue;
+          // ...or mostly inside it (parts straddling the outline).
+          const inside =
+            pointInPolygons(centre, r.footprints) ||
+            shareInside(polygons, r.footprints) >= MOSTLY_INSIDE;
           if (inside) claim(`${sourceKey}/${f.id}`, at(f.id), r.key);
         }
       }

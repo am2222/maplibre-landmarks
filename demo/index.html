@@ -12,164 +12,155 @@
       <header>
         <h1>maplibre-landmarks</h1>
         <nav>
-          <a href="./roofs-gallery.html" target="_blank">Roof gallery</a>
+          <a href="./roofs-gallery.html" target="_blank">Gallery</a>
           <a href="https://am2222.github.io/maplibre-landmarks/" target="_blank">Docs</a>
+          <button id="collapse" aria-expanded="true" title="Collapse panel">▾</button>
         </nav>
       </header>
+      <div id="panel-body">
+        <nav class="tabs">
+          <button data-tab="map">Map</button>
+          <button data-tab="landmarks">Landmarks</button>
+          <button data-tab="roofs">Roofs</button>
+          <button data-tab="trees">Trees</button>
+          <button data-tab="water">Water</button>
+          <button data-tab="fog">Fog</button>
+          <button data-tab="labels">Labels</button>
+        </nav>
 
-      <section class="group">
-        <h2>Map</h2>
-        <div class="row">
+        <section class="controls" data-controls="map">
+          <div class="places">
+            <button data-place="paris">Paris</button>
+            <button data-place="chamonix">Chamonix</button>
+            <button data-place="alps">Alps · satellite</button>
+            <button data-place="globe">Globe</button>
+          </div>
+          <div class="row">
+            <label
+              >Theme
+              <select id="theme">
+                <option>day</option>
+                <option>dawn</option>
+                <option>dusk</option>
+                <option>night</option>
+              </select>
+            </label>
+            <label
+              >Basemap
+              <select id="basemap">
+                <option value="streets">Streets</option>
+                <option value="satellite">Satellite</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label
+              >Projection
+              <select id="projection">
+                <option value="mercator">Flat</option>
+                <option value="globe">Globe</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="terrain" /> Terrain</label>
+          </div>
+        </section>
+
+        <section class="controls" data-controls="landmarks">
+          <label class="switch"
+            ><input type="checkbox" data-toggle="landmarks" checked /> Show landmarks</label
+          >
           <label
-            >Theme
-            <select id="theme">
-              <option>day</option>
-              <option>dawn</option>
-              <option>dusk</option>
-              <option>night</option>
+            >Channel
+            <select id="channel">
+              <option value="latest">latest (approved)</option>
+              <option value="preview">preview (drafts)</option>
             </select>
           </label>
+          <p class="stats" id="landmark-stats"></p>
+          <ul id="models"></ul>
+        </section>
+
+        <section class="controls" data-controls="roofs">
+          <label class="switch"
+            ><input type="checkbox" data-toggle="roofs" checked /> Show roofs</label
+          >
           <label
-            >Basemap
-            <select id="basemap">
-              <option value="streets">Streets</option>
-              <option value="satellite">Satellite</option>
+            >Roof data
+            <select id="roof-data">
+              <option value="overture">Overture tiles</option>
+              <option value="local">Local file</option>
+              <option value="none">None (Protomaps buildings)</option>
             </select>
           </label>
-        </div>
-        <div class="row">
+          <label class="check"><input type="checkbox" id="wall-colors" /> Facade colours</label>
+          <p class="stats" id="roof-stats"></p>
+        </section>
+
+        <section class="controls" data-controls="trees">
+          <label class="switch"
+            ><input type="checkbox" data-toggle="trees" checked /> Show trees</label
+          >
           <label
-            >Projection
-            <select id="projection">
-              <option value="mercator">Flat</option>
-              <option value="globe">Globe</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" id="terrain" /> Terrain</label>
-        </div>
-        <div class="places">
-          <button data-place="paris">Paris</button>
-          <button data-place="chamonix">Chamonix</button>
-          <button data-place="alps">Alps · satellite</button>
-          <button data-place="globe">Globe</button>
-        </div>
-      </section>
+            >Wind <output></output>
+            <input id="tree-wind" type="range" min="0" max="2" step="0.1" value="1"
+          /></label>
+          <label
+            >Wind from <output></output>
+            <input id="tree-wind-dir" type="range" min="0" max="359" step="1" value="270"
+          /></label>
+          <p class="stats" id="tree-stats"></p>
+        </section>
 
-      <section class="group">
-        <h2>Layers</h2>
-        <ul class="layers">
-          <li>
-            <input type="checkbox" data-toggle="landmarks" checked aria-label="Show landmarks" />
-            <button data-tab="landmarks">Landmarks</button>
-          </li>
-          <li>
-            <input type="checkbox" data-toggle="roofs" checked aria-label="Show roofs" />
-            <button data-tab="roofs">Roofs</button>
-          </li>
-          <li>
-            <input type="checkbox" data-toggle="trees" checked aria-label="Show trees" />
-            <button data-tab="trees">Trees</button>
-          </li>
-          <li>
-            <input type="checkbox" data-toggle="water" checked aria-label="Show water" />
-            <button data-tab="water">Water</button>
-          </li>
-          <li>
-            <input type="checkbox" data-toggle="fog" aria-label="Show fog" />
-            <button data-tab="fog">Fog</button>
-          </li>
-          <li>
-            <input
-              type="checkbox"
-              data-toggle="labels"
-              checked
-              aria-label="Hide labels behind 3D"
-            />
-            <button data-tab="labels">Labels behind 3D</button>
-          </li>
-        </ul>
-      </section>
+        <section class="controls" data-controls="water">
+          <label class="switch"
+            ><input type="checkbox" data-toggle="water" checked /> Show water</label
+          >
+          <label
+            >Waves <output></output>
+            <input id="water-waves" type="range" min="0" max="2" step="0.05" value="1"
+          /></label>
+          <p class="stats" id="water-stats"></p>
+        </section>
 
-      <section class="group controls" data-controls="landmarks">
-        <h2>Landmarks</h2>
-        <label
-          >Channel
-          <select id="channel">
-            <option value="latest">latest (approved)</option>
-            <option value="preview">preview (drafts)</option>
-          </select>
-        </label>
-        <p class="stats" id="landmark-stats"></p>
-        <ul id="models"></ul>
-      </section>
+        <section class="controls" data-controls="fog">
+          <label class="switch"><input type="checkbox" data-toggle="fog" /> Show fog</label>
+          <div class="row">
+            <label
+              >Density <output></output>
+              <input id="fog-density" type="range" min="0" max="2" step="0.05" value="0.6"
+            /></label>
+            <label
+              >Height <output></output>
+              <input id="fog-height" type="range" min="10" max="800" step="10" value="40"
+            /></label>
+          </div>
+          <div class="row">
+            <label
+              >Coverage <output></output>
+              <input id="fog-coverage" type="range" min="0" max="1" step="0.05" value="0.65"
+            /></label>
+            <label
+              >Wind <output></output>
+              <input id="fog-wind" type="range" min="0" max="10" step="0.5" value="2"
+            /></label>
+          </div>
+          <label
+            >Drifting toward <output></output>
+            <input id="fog-wind-dir" type="range" min="0" max="359" step="1" value="270"
+          /></label>
+          <p class="hint">With terrain, the height is above the valley floor.</p>
+        </section>
 
-      <section class="group controls" data-controls="roofs">
-        <h2>Roofs</h2>
-        <label
-          >Roof data
-          <select id="roof-data">
-            <option value="overture">Overture tiles</option>
-            <option value="local">Local file</option>
-            <option value="none">None (Protomaps buildings)</option>
-          </select>
-        </label>
-        <label class="check"><input type="checkbox" id="wall-colors" /> Facade colours</label>
-        <p class="stats" id="roof-stats"></p>
-      </section>
-
-      <section class="group controls" data-controls="trees">
-        <h2>Trees</h2>
-        <label
-          >Wind <output></output>
-          <input id="tree-wind" type="range" min="0" max="2" step="0.1" value="1"
-        /></label>
-        <label
-          >Wind from <output></output>
-          <input id="tree-wind-dir" type="range" min="0" max="359" step="1" value="270"
-        /></label>
-        <p class="stats" id="tree-stats"></p>
-      </section>
-
-      <section class="group controls" data-controls="water">
-        <h2>Water</h2>
-        <label
-          >Waves <output></output>
-          <input id="water-waves" type="range" min="0" max="2" step="0.05" value="1"
-        /></label>
-        <p class="stats" id="water-stats"></p>
-      </section>
-
-      <section class="group controls" data-controls="fog">
-        <h2>Fog</h2>
-        <label
-          >Density <output></output>
-          <input id="fog-density" type="range" min="0" max="2" step="0.05" value="0.6"
-        /></label>
-        <label
-          >Height <output></output>
-          <input id="fog-height" type="range" min="10" max="800" step="10" value="40"
-        /></label>
-        <label
-          >Coverage <output></output>
-          <input id="fog-coverage" type="range" min="0" max="1" step="0.05" value="0.65"
-        /></label>
-        <label
-          >Wind <output></output>
-          <input id="fog-wind" type="range" min="0" max="10" step="0.5" value="2"
-        /></label>
-        <label
-          >Drifting toward <output></output>
-          <input id="fog-wind-dir" type="range" min="0" max="359" step="1" value="270"
-        /></label>
-        <p class="hint">With terrain, the height is above the valley floor.</p>
-      </section>
-
-      <section class="group controls" data-controls="labels">
-        <h2>Labels behind 3D</h2>
-        <p class="hint">
-          Hides map labels that sit behind landmarks, roofs and trees, using GPU occlusion queries.
-        </p>
-      </section>
+        <section class="controls" data-controls="labels">
+          <label class="switch"
+            ><input type="checkbox" data-toggle="labels" checked /> Hide labels behind 3D</label
+          >
+          <p class="hint">
+            Hides map labels that sit behind landmarks, roofs and trees, using GPU occlusion
+            queries.
+          </p>
+        </section>
+      </div>
     </aside>
     <script type="module" src="./main.ts"></script>
   </body>

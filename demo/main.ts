@@ -13,7 +13,7 @@ import {
   type LandmarkInfo,
   type Theme,
 } from '../src/index';
-import { $, initTabs, range, toggle } from './panel';
+import { $, initCollapse, initTabs, range, syncTabDots, toggle } from './panel';
 import { roofWalls, styleFor, type Basemap, type Projection, type RoofData } from './style';
 
 setWorkerUrl(workerUrl);
@@ -183,6 +183,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
 
 function setLayer(name: string, on: boolean) {
   toggle(name).checked = on;
+  syncTabDots();
   if (on) LAYERS[name]!.add();
   else {
     const id = LAYERS[name]!.id();
@@ -201,9 +202,11 @@ function restoreLayers() {
 
 // ---- Panel --------------------------------------------------------------------------------
 
-initTabs('landmarks');
+initTabs('map');
+initCollapse();
 for (const name of Object.keys(LAYERS))
   toggle(name).addEventListener('change', () => setLayer(name, toggle(name).checked));
+syncTabDots();
 
 const degrees = (v: number) => `${v}°`;
 const treeWind = range('tree-wind', (v) => trees?.setWind({ strength: v }));
