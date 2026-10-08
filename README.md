@@ -143,6 +143,8 @@ Buildings without a roof shape keep their flat extrusion. Options: `minZoom` (15
   `building:part` lies inside the outline. Keep boxes small (a town centre); set `OVERPASS_URL`
   for another server. Data © OpenStreetMap contributors (ODbL).
 
+Full attribute and shape reference: [`docs/roofs.md`](docs/roofs.md).
+
 **OSM aliases.** `_` and `-` spellings are interchangeable. Drawn as the nearest shape:
 `side_hipped` → hipped; `side_half-hipped` → half_hipped; `gabled_height_moved`,
 `gabled_irregular` → saltbox; `double_saltbox`, `quadruple_saltbox` → mansard; `pitched` →

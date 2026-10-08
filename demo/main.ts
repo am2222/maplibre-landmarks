@@ -29,7 +29,11 @@ if (!key && !pmtilesUrl) {
   throw new Error('No basemap tiles configured');
 }
 // Optional: an Overture-schema building tileset (scripts/buildings) drawn with real roofs.
-const roofsUrl = import.meta.env.VITE_ROOFS_PMTILES as string | undefined;
+// `?roofs=/roofs-osm.pmtiles` overrides it for one visit (paths resolve against the page).
+const roofsParam = new URLSearchParams(location.search).get('roofs');
+const roofsUrl = roofsParam
+  ? new URL(roofsParam, location.href).href
+  : (import.meta.env.VITE_ROOFS_PMTILES as string | undefined);
 if (pmtilesUrl || roofsUrl) addProtocol('pmtiles', new Protocol().tile);
 
 /** Basemap flavour that matches each plugin theme. */

@@ -5,3 +5,5 @@ test-results
 playwright-report
 .env.local
 demo/public/*.pmtiles
+*.log
+.playwright-mcp/*
