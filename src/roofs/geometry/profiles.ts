@@ -53,6 +53,14 @@ function sawtooth(H: number, W: number): Profile {
   return { groups, pairs };
 }
 
+/** The lowest of `terms`, each term the highest of its planes, as a profile's groups. */
+function minOfMax(terms: Plane[][]): Plane[][] {
+  return terms.reduce<Plane[][]>(
+    (groups, term) => groups.flatMap((g) => term.map((p) => [...g, p])),
+    [[]],
+  );
+}
+
 /** The surface of a profile roof (spec section 5.2). */
 export function profilePlanes(shape: ProfileShape, H: number, L: number, W: number): Profile {
   const gable: Plane[] = [
@@ -79,6 +87,26 @@ export function profilePlanes(shape: ProfileShape, H: number, L: number, W: numb
       return one([...gable, [-H / W, 0, (H * L) / W], [H / W, 0, (H * L) / W]]);
     case 'half_hipped':
       return one([...gable, [-H / W, 0, H / 2 + (H * L) / W], [H / W, 0, H / 2 + (H * L) / W]]);
+    case 'hipped_and_gabled': {
+      // Hips up to half height, then a small vertical gable at each end up to the ridge.
+      const h0 = H / 2;
+      const u0 = L - W / 2;
+      const K = H / GLAZING_M;
+      return {
+        groups: minOfMax([
+          [gable[0]!],
+          [gable[1]!],
+          [
+            [-H / W, 0, (H * L) / W],
+            [-K, 0, h0 + K * u0],
+          ],
+          [
+            [H / W, 0, (H * L) / W],
+            [K, 0, h0 + K * u0],
+          ],
+        ]),
+      };
+    }
     case 'gambrel':
       return one([...sides(1), ...sides(-1)]);
     case 'mansard': {
@@ -102,6 +130,14 @@ export function profilePlanes(shape: ProfileShape, H: number, L: number, W: numb
         planes.push([0, slope, arc(v0) - slope * v0]);
       }
       return one(planes);
+    }
+    case 'bellcast_gable': {
+      // Each side: steep down to 0.2 H at 70 % of the run, then a shallower flare to the eaves.
+      const side = (s: number): Plane[] => [
+        [0, (-s * 0.8 * H) / (0.7 * W), H],
+        [0, (-s * 0.2 * H) / (0.3 * W), (0.2 * H) / 0.3],
+      ];
+      return { groups: minOfMax([side(1), side(-1)]) };
     }
     case 'butterfly':
       // A V: eaves at H on both long sides, valley at 0 along the middle.

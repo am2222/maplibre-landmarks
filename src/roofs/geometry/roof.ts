@@ -12,18 +12,34 @@ export interface BuiltRoof {
 }
 
 const TAN_30 = Math.tan(Math.PI / 6);
+/** Curved shapes: no single pitch, so `roof_angle` is ignored. */
 const ROUNDED = new Set(['dome', 'onion', 'round']);
 const MIN_DEFAULT_M = 0.5;
 /** Shapes whose end slopes assume the ridge runs along the longer side. */
-const LONG_RIDGE = new Set(['hipped', 'half_hipped', 'mansard']);
+const LONG_RIDGE = new Set(['hipped', 'half_hipped', 'hipped_and_gabled', 'mansard']);
 
-/** Spec section 3: explicit heights fill up to the span; defaults are capped at half of it. */
+/** Horizontal run of the roof faces, for a `roof_angle`. */
+function pitchRun(shape: string, frame: Pick<RoofFrame, 'L' | 'W'>): number {
+  if (shape === 'skillion') return 2 * frame.W;
+  if (shape === 'sawtooth') return sawtoothTeeth(frame.W).width;
+  if (shape === 'pyramidal' || shape === 'cone') return Math.min(frame.L, frame.W);
+  return frame.W;
+}
+
+/**
+ * Spec section 3: explicit heights (or pitches) fill up to the span; defaults are capped at half
+ * of it.
+ */
 export function resolveRoofHeight(
   props: RoofProps,
   frame: Pick<RoofFrame, 'L' | 'W'>,
 ): number | null {
   const span = props.height - props.minHeight;
   if (props.roofHeight !== undefined) return Math.min(props.roofHeight, span);
+  if (props.roofAngle !== undefined && !ROUNDED.has(props.shape)) {
+    const fromAngle = Math.tan((props.roofAngle * Math.PI) / 180) * pitchRun(props.shape, frame);
+    return Math.min(fromAngle, span);
+  }
   // A sawtooth's height is per tooth, so its default pitch is measured over one tooth.
   const half =
     props.shape === 'sawtooth' ? sawtoothTeeth(frame.W).width / 2 : Math.min(frame.L, frame.W);

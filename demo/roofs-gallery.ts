@@ -12,10 +12,12 @@ const SHAPES = [
   'saltbox',
   'hipped',
   'half_hipped',
+  'hipped_and_gabled',
   'gambrel',
   'mansard',
   'skillion',
   'round',
+  'bellcast_gable',
   'butterfly',
   'crosspitched',
   'sawtooth',
@@ -25,7 +27,7 @@ const SHAPES = [
   'onion',
 ];
 const ORIGIN: [number, number] = [2.35, 48.85];
-const COLS = 5;
+const COLS = 6;
 const SPACING_M = 45;
 const M_LAT = 1 / 111_320;
 const M_LNG = M_LAT / Math.cos((ORIGIN[1] * Math.PI) / 180);

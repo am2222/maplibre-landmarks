@@ -35,6 +35,18 @@ describe('resolveRoofHeight', () => {
     expect(resolveRoofHeight(props({ height: 4 }), frame)).toBe(2);
     expect(resolveRoofHeight(props({ height: 0.8 }), frame)).toBeNull();
   });
+
+  it("derives the height from roof_angle over each shape's run; roof_height wins", () => {
+    const tan = (deg: number) => Math.tan((deg * Math.PI) / 180);
+    expect(resolveRoofHeight(props({ roofAngle: 45 }), frame)).toBeCloseTo(10, 9);
+    expect(resolveRoofHeight(props({ shape: 'skillion', roofAngle: 20 }), frame)).toBeCloseTo(
+      20 * tan(20),
+      9,
+    );
+    expect(resolveRoofHeight(props({ roofAngle: 45, roofHeight: 3 }), frame)).toBe(3);
+    expect(resolveRoofHeight(props({ roofAngle: 80 }), frame)).toBe(20);
+    expect(resolveRoofHeight(props({ shape: 'dome', roofAngle: 10 }), frame)).toBe(10);
+  });
 });
 
 describe('buildRoof', () => {

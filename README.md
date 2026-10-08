@@ -114,15 +114,16 @@ map.addLayer(
 );
 ```
 
-| Attribute                            | Meaning                                                                                                                                                                                          |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `height`, `min_height`               | Building / part top (incl. roof) and bottom, metres                                                                                                                                              |
-| `roof_shape`                         | `gabled`, `saltbox`, `hipped`, `half_hipped`, `gambrel`, `mansard`, `skillion`, `round`, `butterfly`, `crosspitched`, `sawtooth`, `pyramidal`, `cone`, `dome`, `onion` (plus OSM aliases, below) |
-| `roof_height`                        | Roof alone; default from a 30° pitch (or the radius for domes)                                                                                                                                   |
-| `roof_direction`, `roof_orientation` | Bearing the roof faces; `along` / `across` the longest side                                                                                                                                      |
-| `roof_color`, `roof_material`        | Roof colour; material picks a colour when no colour is tagged                                                                                                                                    |
-| `facade_color`, `facade_material`    | Walls, with `wallColors: true`                                                                                                                                                                   |
-| `has_parts`                          | Outline drawn by its parts: no roof of its own                                                                                                                                                   |
+| Attribute                            | Meaning                                                                                                                                                                                                                                 |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `height`, `min_height`               | Building / part top (incl. roof) and bottom, metres                                                                                                                                                                                     |
+| `roof_shape`                         | `gabled`, `saltbox`, `hipped`, `half_hipped`, `hipped_and_gabled`, `gambrel`, `mansard`, `skillion`, `round`, `bellcast_gable`, `butterfly`, `crosspitched`, `sawtooth`, `pyramidal`, `cone`, `dome`, `onion` (plus OSM aliases, below) |
+| `roof_height`                        | Roof alone; default from a 30° pitch (or the radius for domes)                                                                                                                                                                          |
+| `roof_angle`                         | Pitch in degrees, used when there is no `roof_height` (OSM `roof:angle`; not in Overture)                                                                                                                                               |
+| `roof_direction`, `roof_orientation` | Bearing the roof faces; `along` / `across` the longest side                                                                                                                                                                             |
+| `roof_color`, `roof_material`        | Roof colour; material picks a colour when no colour is tagged                                                                                                                                                                           |
+| `facade_color`, `facade_material`    | Walls, with `wallColors: true`                                                                                                                                                                                                          |
+| `has_parts`                          | Outline drawn by its parts: no roof of its own                                                                                                                                                                                          |
 
 Draw walls only for outlines without parts, or each outline's box hides its parts' roofs:
 add `filter: ['!=', ['get', 'has_parts'], true]` to your extrusion layer.
@@ -131,16 +132,23 @@ Other sources map their names with `fields`, e.g. `fields: { roof_shape: 'roof:s
 Buildings without a roof shape keep their flat extrusion. Options: `minZoom` (15),
 `maxBuildings` (2000), `wallColors` (false), `gableColor` (`#d9d4ce`), `onError`.
 
-**Data.** `scripts/buildings/overture-to-pmtiles.sh <west> <south> <east> <north> out.pmtiles`
-builds a tileset from Overture (DuckDB + tippecanoe). Overture folds OSM's `double_saltbox` /
-`quadruple_saltbox` into `saltbox`; a Planetiler profile over OSM keeps them (they are drawn as
-`mansard`).
+**Data.** Two scripts build a tileset for a bounding box, both writing the attributes above:
+
+- `scripts/buildings/overture-to-pmtiles.sh <west> <south> <east> <north> out.pmtiles` reads
+  Overture (DuckDB + tippecanoe). Overture keeps only 14 roof shapes (e.g. it folds
+  `double_saltbox` into `saltbox`, has no `side_hipped` or `butterfly`) and no `roof_angle`.
+- `node scripts/buildings/osm-to-pmtiles.mjs <west> <south> <east> <north> out.pmtiles` reads
+  OSM through Overpass (tippecanoe only), keeping every raw `roof:shape` and `roof:angle`. It
+  falls back to 3 m per `building:levels` / `roof:levels`, and sets `has_parts` when a
+  `building:part` lies inside the outline. Keep boxes small (a town centre); set `OVERPASS_URL`
+  for another server. Data © OpenStreetMap contributors (ODbL).
 
 **OSM aliases.** `_` and `-` spellings are interchangeable. Drawn as the nearest shape:
-`side_hipped`, `hipped-and-gabled` → hipped; `side_half-hipped` → half_hipped;
-`gabled_height_moved` → saltbox; `bellcast_gable`, `pitched` → gabled; `lean_to`, `monopitch`,
-`shed` → skillion; `pyramid` → pyramidal. `flat`, `many` and unknown values get no roof.
-`sawtooth` draws ~8 m teeth across the building; `roof_height` is the height of one tooth.
+`side_hipped` → hipped; `side_half-hipped` → half_hipped; `gabled_height_moved`,
+`gabled_irregular` → saltbox; `double_saltbox`, `quadruple_saltbox` → mansard; `pitched` →
+gabled; `lean_to`, `monopitch`, `shed` → skillion; `pyramid` → pyramidal; Overture's
+`spherical` → dome. `flat`, `many` and unknown values get no roof. `sawtooth` draws ~8 m teeth
+across the building; `roof_height` (or `roof_angle`) applies to one tooth.
 
 Roof shapes for dome, onion, cone and pyramid, and the material colours, are derived from
 [OSM Buildings](https://github.com/OSMBuildings/OSMBuildings) (BSD-2-Clause; see `LICENSE`).

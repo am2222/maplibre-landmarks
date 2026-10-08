@@ -106,6 +106,36 @@ describe('profile roofs', () => {
     expect(roofArea(m)).toBeCloseTo(400, 3);
   });
 
+  it('hipped_and_gabled: hips to half height, a vertical gable above them', () => {
+    const m = roof('hipped_and_gabled', [[rect(40, 20)]]);
+    let gable = 0;
+    for (let i = 0; i < m.positions.length; i += 9) {
+      const ny = m.normals[i + 1]!;
+      if (ny <= 1e-6 || ny >= 0.1) continue;
+      gable++;
+      expect(Array.from(m.colors.slice(i, i + 3))).toEqual(GREY);
+      // Above the hips, at the end of the 15 m ridge.
+      for (let k = 0; k < 9; k += 3) {
+        expect(m.positions[i + k + 1]!).toBeGreaterThanOrEqual(2.5 - 1e-9);
+        expect(Math.abs(m.positions[i + k]!)).toBeCloseTo(15, 1);
+      }
+    }
+    expect(gable).toBeGreaterThan(0);
+    // Hips close the ends: no vertical faces from the walls up.
+    expect(verticalFaces(m)).toBe(0);
+  });
+
+  it('bellcast_gable: the slope flattens toward the eaves', () => {
+    const m = roof('bellcast_gable', [[rect(40, 20)]]);
+    const slopes = new Set<number>();
+    for (let i = 0; i < m.normals.length; i += 9) {
+      const [nx, ny, nz] = [m.normals[i]!, m.normals[i + 1]!, m.normals[i + 2]!];
+      if (ny > 1e-6) slopes.add(Math.round((Math.hypot(nx, nz) / ny) * 1000) / 1000);
+    }
+    // Upper part 0.8 H over 0.7 W, flare 0.2 H over 0.3 W (H = 5, W = 10).
+    expect([...slopes].sort()).toEqual([0.333, 0.571]);
+  });
+
   it('butterfly: eaves at H on both long sides, valley at 0 down the middle', () => {
     const m = roof('butterfly', [[rect(40, 20)]]);
     for (let i = 0; i < m.positions.length; i += 3) {

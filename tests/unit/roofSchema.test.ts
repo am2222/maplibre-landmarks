@@ -19,9 +19,11 @@ describe('roof shapes', () => {
     expect(normaliseShape('side_hipped')).toBe('hipped');
     expect(normaliseShape('pyramid')).toBe('pyramidal');
     expect(normaliseShape('side_half-hipped')).toBe('half_hipped');
-    expect(normaliseShape('hipped-and-gabled')).toBe('hipped');
+    expect(normaliseShape('hipped-and-gabled')).toBe('hipped_and_gabled');
     expect(normaliseShape('gabled_height_moved')).toBe('saltbox');
-    expect(normaliseShape('bellcast_gable')).toBe('gabled');
+    expect(normaliseShape('bellcast_gable')).toBe('bellcast_gable');
+    expect(normaliseShape('gabled_irregular')).toBe('saltbox');
+    expect(normaliseShape('spherical')).toBe('dome');
     expect(normaliseShape('pitched')).toBe('gabled');
     expect(normaliseShape('lean_to')).toBe('skillion');
     expect(normaliseShape('monopitch')).toBe('skillion');
@@ -87,6 +89,8 @@ describe('readRoofProps', () => {
       read({ height: 9, roof_shape: 'gabled', roof_direction: 'x' })!.direction,
     ).toBeUndefined();
     expect(read({ height: 9, roof_shape: 'gabled', roof_height: -2 })!.roofHeight).toBeUndefined();
+    expect(read({ height: 9, roof_shape: 'gabled', roof_angle: '35' })!.roofAngle).toBe(35);
+    expect(read({ height: 9, roof_shape: 'gabled', roof_angle: 90 })!.roofAngle).toBeUndefined();
   });
 
   it('takes colours from colour tags, then materials, then defaults', () => {

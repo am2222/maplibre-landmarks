@@ -5,6 +5,7 @@ export type FieldName =
   | 'min_height'
   | 'roof_shape'
   | 'roof_height'
+  | 'roof_angle'
   | 'roof_direction'
   | 'roof_orientation'
   | 'roof_color'
@@ -19,6 +20,7 @@ export const DEFAULT_FIELDS: Fields = {
   min_height: 'min_height',
   roof_shape: 'roof_shape',
   roof_height: 'roof_height',
+  roof_angle: 'roof_angle',
   roof_direction: 'roof_direction',
   roof_orientation: 'roof_orientation',
   roof_color: 'roof_color',
@@ -38,10 +40,12 @@ export type ProfileShape =
   | 'saltbox'
   | 'hipped'
   | 'half_hipped'
+  | 'hipped_and_gabled'
   | 'gambrel'
   | 'mansard'
   | 'skillion'
   | 'round'
+  | 'bellcast_gable'
   | 'butterfly'
   | 'crosspitched'
   | 'sawtooth';
@@ -53,10 +57,12 @@ export const PROFILE_SHAPES: ProfileShape[] = [
   'saltbox',
   'hipped',
   'half_hipped',
+  'hipped_and_gabled',
   'gambrel',
   'mansard',
   'skillion',
   'round',
+  'bellcast_gable',
   'butterfly',
   'crosspitched',
   'sawtooth',
@@ -67,14 +73,15 @@ const ALIASES: Record<string, RoofShape> = {
   quadruple_saltbox: 'mansard',
   side_hipped: 'hipped',
   side_half_hipped: 'half_hipped',
-  hipped_and_gabled: 'hipped',
   gabled_height_moved: 'saltbox',
-  bellcast_gable: 'gabled',
+  gabled_irregular: 'saltbox',
   pitched: 'gabled',
   lean_to: 'skillion',
   monopitch: 'skillion',
   shed: 'skillion',
   pyramid: 'pyramidal',
+  // Overture's name for a dome.
+  spherical: 'dome',
 };
 
 /** Every `_` / `-` spelling of `v` (OSM mixes them, e.g. `side_half-hipped`). */
@@ -102,6 +109,8 @@ export interface RoofProps {
   minHeight: number;
   /** Explicit roof height (positive), if tagged. */
   roofHeight?: number;
+  /** Pitch of the roof faces in degrees (0–90 exclusive), if tagged; `roofHeight` wins. */
+  roofAngle?: number;
   /** Bearing the roof faces, degrees clockwise from north. */
   direction?: number;
   orientation?: 'along' | 'across';
@@ -155,12 +164,14 @@ export function readRoofProps(
   const minHeight = num(p[fields.min_height]) ?? 0;
   if (height === undefined || !(height > minHeight)) return null;
   const roofHeight = num(p[fields.roof_height]);
+  const roofAngle = num(p[fields.roof_angle]);
   const orientation = String(p[fields.roof_orientation] ?? '').toLowerCase();
   return {
     shape,
     height,
     minHeight,
     roofHeight: roofHeight !== undefined && roofHeight > 0 ? roofHeight : undefined,
+    roofAngle: roofAngle !== undefined && roofAngle > 0 && roofAngle < 90 ? roofAngle : undefined,
     direction: direction(p[fields.roof_direction]),
     orientation: orientation === 'along' || orientation === 'across' ? orientation : undefined,
     roofColor:
