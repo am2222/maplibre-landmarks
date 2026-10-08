@@ -3,7 +3,7 @@ import type { ProfileShape, RoofProps } from '../schema';
 import { roofFrame, type RoofFrame, type Vec2 } from './frame';
 import { MeshBuilder, type RoofMesh } from './mesh';
 import { buildProfileRoof, profilePlanes, sawtoothTeeth } from './profiles';
-import { coneRoof, domeRoof, onionRoof, pyramidRoof } from './radial';
+import { domeRoof, onionRoof, pyramidRoof } from './radial';
 
 export interface BuiltRoof {
   mesh: RoofMesh;
@@ -88,10 +88,10 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][]): BuiltRoof | n
   const b = new MeshBuilder();
   switch (props.shape) {
     case 'pyramidal':
-      pyramidRoof(b, outer, frame.origin, H, roof);
-      return { mesh: b.build(), roofHeight: H };
     case 'cone':
-      coneRoof(b, frame.origin, radius, H, roof);
+      // A cone follows the outline up to its apex: a true cone on a round outline, and no flat
+      // ledge left uncovered on any other (a circle inside the box would leave one).
+      pyramidRoof(b, outer, frame.origin, H, roof);
       return { mesh: b.build(), roofHeight: H };
     case 'dome':
       domeRoof(b, frame.origin, radius, H, roof);

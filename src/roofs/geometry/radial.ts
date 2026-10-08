@@ -43,19 +43,6 @@ export function pyramidRoof(b: MeshBuilder, outer: Vec2[], [cx, cz]: Vec2, H: nu
   }
 }
 
-export function coneRoof(b: MeshBuilder, center: Vec2, R: number, H: number, color: RGB) {
-  lathe(
-    b,
-    center,
-    R,
-    [
-      [1, 0],
-      [0, H],
-    ],
-    color,
-  );
-}
-
 export function domeRoof(b: MeshBuilder, center: Vec2, R: number, H: number, color: RGB) {
   const profile: [number, number][] = [];
   for (let i = 0; i <= DOME_STEPS; i++) {

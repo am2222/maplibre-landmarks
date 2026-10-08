@@ -101,8 +101,8 @@ Roofs are laid out on the outline's tight bounding box, with the ridge along one
 | `crosspitched`      | Two crossing gables: gable ends on all four sides, meeting at a central peak                        | no          |
 | `sawtooth`          | Repeated single slopes (~8 m teeth, whole number across the building) with near-vertical glazing   | yes         |
 | `pyramidal`         | Slopes from every outline edge up to a central apex                                                 | yes         |
-| `cone`              | Circular cone over the outline's centre                                                             | no          |
-| `dome`              | Hemisphere-like dome over the outline's centre                                                      | yes         |
+| `cone`              | Slopes from every outline point up to a central apex: a true cone on a round outline, and the whole footprint covered on any other | no          |
+| `dome`              | Hemisphere-like dome on a circle inside the outline (corners of a square outline stay flat)                                                      | yes         |
 | `onion`             | Onion dome (OSM Buildings profile)                                                                  | yes         |
 
 Near-vertical faces (gable ends, the small gables of `hipped_and_gabled`, sawtooth glazing) take the
@@ -235,5 +235,5 @@ no such tag).
 - [OSM wiki: Simple 3D Buildings](https://wiki.openstreetmap.org/wiki/Simple_3D_Buildings)
 - [Overture building schema](https://docs.overturemaps.org/schema/reference/buildings/building/)
 - [Overture `roof_shape` values](https://docs.overturemaps.org/schema/reference/buildings/types/roof_shape/)
-- Dome, onion, cone and pyramid profiles and the material palette:
+- Dome and onion profiles and the material palette:
   [OSM Buildings](https://github.com/OSMBuildings/OSMBuildings) (BSD-2-Clause)

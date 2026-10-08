@@ -152,7 +152,7 @@ gabled; `lean_to`, `monopitch`, `shed` → skillion; `pyramid` → pyramidal; Ov
 `spherical` → dome. `flat`, `many` and unknown values get no roof. `sawtooth` draws ~8 m teeth
 across the building; `roof_height` (or `roof_angle`) applies to one tooth.
 
-Roof shapes for dome, onion, cone and pyramid, and the material colours, are derived from
+Roof shapes for dome and onion, and the material colours, are derived from
 [OSM Buildings](https://github.com/OSMBuildings/OSMBuildings) (BSD-2-Clause; see `LICENSE`).
 
 ## Trees
