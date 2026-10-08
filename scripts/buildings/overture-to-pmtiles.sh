@@ -28,7 +28,7 @@ COPY (
 ) TO '$TMP/buildings.geojsonseq' WITH (FORMAT GDAL, DRIVER 'GeoJSONSeq');
 "
 
-tippecanoe -o "$OUT" --force -l building -Z13 -z15 \
+tippecanoe --quiet -o "$OUT" --force -l building -Z13 -z15 \
   --use-attribute-for-id=fid --no-feature-limit --no-tile-size-limit \
   "$TMP/buildings.geojsonseq"
 echo "wrote $OUT"

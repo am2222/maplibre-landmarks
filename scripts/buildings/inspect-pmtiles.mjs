@@ -1,4 +1,5 @@
 // Usage: node scripts/buildings/inspect-pmtiles.mjs <file.pmtiles> <lng> <lat>
+/* global process, console */
 import { readFile } from 'node:fs/promises';
 import { PbfReader } from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';

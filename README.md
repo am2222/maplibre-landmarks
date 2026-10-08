@@ -96,6 +96,46 @@ MapLibre cannot restore custom layers after a lost WebGL context: re-add `Landma
 replacement and attribution to the new style; with `{ diff: false }` the layer is dropped and cleans
 up after itself (add it again after `style.load`).
 
+### Roof shapes
+
+`RoofsLayer` draws real roofs (gabled, hipped, mansard, dome, …) on top of your own
+`fill-extrusion` buildings, from any vector source that follows Overture's building schema:
+
+```ts
+import { RoofsLayer } from 'maplibre-landmarks';
+
+map.addLayer(
+  new RoofsLayer({
+    id: 'roofs',
+    source: 'buildings', // needs feature ids (numeric ids or promoteId)
+    sourceLayer: 'building',
+    extrusionLayer: 'buildings-3d', // your walls; shortened by the roof drawn on each building
+  }),
+);
+```
+
+| Attribute                            | Meaning                                                                                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `height`, `min_height`               | Building / part top (incl. roof) and bottom, metres                                                                           |
+| `roof_shape`                         | `gabled`, `saltbox`, `hipped`, `half_hipped`, `gambrel`, `mansard`, `skillion`, `round`, `pyramidal`, `cone`, `dome`, `onion` |
+| `roof_height`                        | Roof alone; default from a 30° pitch (or the radius for domes)                                                                |
+| `roof_direction`, `roof_orientation` | Bearing the roof faces; `along` / `across` the longest side                                                                   |
+| `roof_color`, `roof_material`        | Roof colour; material picks a colour when no colour is tagged                                                                 |
+| `facade_color`, `facade_material`    | Walls, with `wallColors: true`                                                                                                |
+| `has_parts`                          | Outline drawn by its parts: no roof of its own                                                                                |
+
+Other sources map their names with `fields`, e.g. `fields: { roof_shape: 'roof:shape' }`.
+Buildings without a roof shape keep their flat extrusion. Options: `minZoom` (15),
+`maxBuildings` (2000), `wallColors` (false), `gableColor` (`#d9d4ce`), `onError`.
+
+**Data.** `scripts/buildings/overture-to-pmtiles.sh <west> <south> <east> <north> out.pmtiles`
+builds a tileset from Overture (DuckDB + tippecanoe). Overture folds OSM's `double_saltbox` /
+`quadruple_saltbox` into `saltbox`; a Planetiler profile over OSM keeps them (they are drawn as
+`mansard`).
+
+Roof shapes for dome, onion, cone and pyramid, and the material colours, are derived from
+[OSM Buildings](https://github.com/OSMBuildings/OSMBuildings) (BSD-2-Clause; see `LICENSE`).
+
 ## Trees
 
 ```ts

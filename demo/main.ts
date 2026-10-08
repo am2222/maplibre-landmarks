@@ -12,6 +12,7 @@ import { Protocol } from 'pmtiles';
 import {
   LabelOcclusion,
   LandmarksLayer,
+  RoofsLayer,
   setTheme,
   TreesLayer,
   type LandmarkInfo,
@@ -27,7 +28,7 @@ if (!key && !pmtilesUrl) {
     '<p class="missing">Set <code>VITE_PROTOMAPS_KEY</code> or <code>VITE_PMTILES_URL</code> in <code>.env.local</code> (see <code>.env.example</code>).</p>';
   throw new Error('No basemap tiles configured');
 }
-if (pmtilesUrl) addProtocol('pmtiles', new Protocol().tile);
+if (pmtilesUrl || import.meta.env.VITE_ROOFS_PMTILES) addProtocol('pmtiles', new Protocol().tile);
 
 /** Basemap flavour that matches each plugin theme. */
 const FLAVOR: Record<Theme, 'light' | 'dark'> = {
@@ -198,3 +199,34 @@ setInterval(() => {
     return trees;
   },
 };
+
+// Optional: an Overture-schema building tileset (see scripts/buildings) with real roofs.
+const roofsUrl = import.meta.env.VITE_ROOFS_PMTILES as string | undefined;
+if (roofsUrl) {
+  map.on('load', () => {
+    map.addSource('roof-buildings', { type: 'vector', url: `pmtiles://${roofsUrl}` });
+    map.addLayer(
+      {
+        id: 'roof-buildings-3d',
+        type: 'fill-extrusion',
+        source: 'roof-buildings',
+        'source-layer': 'building',
+        minzoom: 14,
+        paint: {
+          'fill-extrusion-color': '#d9d4ce',
+          'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
+          'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+        },
+      },
+      map.getStyle().layers.find((l) => l.type === 'symbol')?.id,
+    );
+    map.addLayer(
+      new RoofsLayer({
+        id: 'roofs',
+        source: 'roof-buildings',
+        sourceLayer: 'building',
+        extrusionLayer: 'roof-buildings-3d',
+      }),
+    );
+  });
+}
