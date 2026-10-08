@@ -159,53 +159,25 @@ wall colour; sloped faces take the roof colour.
   identical roofs stay distinguishable. Wall-coloured faces (gable ends, glazing) are left as
   tagged, so they keep matching the extrusion walls.
 
-## Building a tileset
+## Getting roof data
 
-Two scripts build a PMTiles tileset (source layer `building`, zooms 13–15, feature ids set) with
-exactly the attributes above. Both need [tippecanoe](https://github.com/felt/tippecanoe) ≥ 2.17.
+### Overture's official tiles
 
-### From Overture
-
-```sh
-scripts/buildings/overture-to-pmtiles.sh <west> <south> <east> <north> out.pmtiles [release]
-```
-
-Reads Overture's `building` and `building_part` types with DuckDB. Good for large areas. A
-building without `height` gets `num_floors × 3 m` plus its `roof_height` (if any); one without
-`min_height` gets `min_floor × 3 m`. Overture
-limits `roof_shape` to 14 values (`dome`, `flat`, `gabled`, `gambrel`, `half_hipped`, `hipped`,
-`mansard`, `onion`, `pyramidal`, `round`, `saltbox`, `sawtooth`, `skillion`, `spherical`), so
-OSM-only shapes such as `side_hipped`, `butterfly`, `crosspitched` or `hipped-and-gabled` arrive as
-one of these or not at all, and there is no `roof_angle`.
-
-### From OpenStreetMap
+Each Overture release publishes worldwide building tiles (PMTiles, zooms 5–14) with exactly the
+attributes above and numeric feature ids, buildings and building parts in separate source layers
+(`building`, `building_part`): give `RoofsLayer` one wall layer per source layer (see the
+README). For your own hosting, cut a region with
+[`pmtiles extract`](https://docs.protomaps.com/pmtiles/cli):
 
 ```sh
-node scripts/buildings/osm-to-pmtiles.mjs <west> <south> <east> <north> out.pmtiles
+pmtiles extract https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles \
+  paris.pmtiles --bbox=2.25,48.81,2.42,48.91
 ```
 
-Reads OSM through the Overpass API (`building=*` and `building:part=*` ways and multipolygon
-relations). It keeps every raw `roof:shape` value and `roof:angle`. Keep boxes small (a town
-centre); public Overpass servers are often busy, so it retries three servers, and `OVERPASS_URL`
-picks another. Data © OpenStreetMap contributors, ODbL.
-
-How OSM tags become attributes:
-
-| Attribute          | From                                                                                                                                  |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `height`           | `height` (metres; `ft` and `'` converted). Else `building:levels × 3 m` plus the roof height                                          |
-| `min_height`       | `min_height`, else `building:min_level × 3 m`                                                                                         |
-| `roof_shape`       | `roof:shape`, trimmed and lower-cased (aliases resolved when drawn)                                                                   |
-| `roof_height`      | `roof:height`, else `roof:levels × 3 m`                                                                                               |
-| `roof_angle`       | `roof:angle`                                                                                                                          |
-| `roof_direction`   | `roof:direction` (degrees or compass, as tagged)                                                                                      |
-| `roof_orientation` | `roof:orientation`                                                                                                                    |
-| `roof_color`       | `roof:colour`                                                                                                                         |
-| `roof_material`    | `roof:material`                                                                                                                       |
-| `facade_color`     | `building:colour`                                                                                                                     |
-| `facade_material`  | `building:material`                                                                                                                   |
-| `has_parts`        | `true` on an outline when a `building:part` (its centroid) lies inside it                                                             |
-| feature id         | way id × 2, relation id × 2 + 1                                                                                                       |
+Overture limits `roof_shape` to 14 values (`dome`, `flat`, `gabled`, `gambrel`, `half_hipped`,
+`hipped`, `mansard`, `onion`, `pyramidal`, `round`, `saltbox`, `sawtooth`, `skillion`,
+`spherical`), so OSM-only shapes such as `side_hipped`, `butterfly`, `crosspitched` or
+`hipped-and-gabled` arrive as one of these or not at all, and there is no `roof_angle`.
 
 ### Your own source
 

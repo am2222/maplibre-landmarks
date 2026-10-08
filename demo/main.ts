@@ -32,8 +32,8 @@ if (!key && !pmtilesUrl) {
   throw new Error('No basemap tiles configured');
 }
 // Roof data: Overture's official building tiles (worldwide, nothing to build; buildings and
-// building parts in separate layers), or an optional local tileset from scripts/buildings
-// (`?roofs=/roofs-osm.pmtiles` overrides it for one visit; paths resolve against the page).
+// building parts in separate layers), or an optional local tileset (`VITE_ROOFS_PMTILES`;
+// `?roofs=/my-roofs.pmtiles` overrides it for one visit; paths resolve against the page).
 const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
 const roofsParam = new URLSearchParams(location.search).get('roofs');

@@ -181,17 +181,10 @@ from your own CDN. Replace the release (`2026-09-23.1`) with a current one from
 [Overture's docs](https://docs.overturemaps.org/examples/overture-tiles/). Data © Overture Maps
 Foundation and OpenStreetMap contributors (ODbL).
 
-**Building your own tileset.** Two scripts build a tileset for a bounding box, both writing the
-attributes above:
-
-- `scripts/buildings/overture-to-pmtiles.sh <west> <south> <east> <north> out.pmtiles` reads
-  Overture (DuckDB + tippecanoe). Overture keeps only 14 roof shapes (e.g. it folds
-  `double_saltbox` into `saltbox`, has no `side_hipped` or `butterfly`) and no `roof_angle`.
-- `node scripts/buildings/osm-to-pmtiles.mjs <west> <south> <east> <north> out.pmtiles` reads
-  OSM through Overpass (tippecanoe only), keeping every raw `roof:shape` and `roof:angle`. It
-  falls back to 3 m per `building:levels` / `roof:levels`, and sets `has_parts` when a
-  `building:part` lies inside the outline. Keep boxes small (a town centre); set `OVERPASS_URL`
-  for another server. Data © OpenStreetMap contributors (ODbL).
+**Your own tiles.** Any vector source with these attributes (or its own names mapped with
+`fields`) and feature ids works; Overture keeps only 14 roof shapes and no `roof_angle`, so a
+source built from raw OSM tags can draw more. See
+[`docs/roofs.md`](docs/roofs.md#getting-roof-data).
 
 Full attribute and shape reference: [`docs/roofs.md`](docs/roofs.md).
 
