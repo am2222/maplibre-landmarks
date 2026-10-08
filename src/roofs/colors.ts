@@ -1,4 +1,4 @@
-import { Color } from 'three';
+import { Color, SRGBColorSpace } from 'three';
 
 export const DEFAULT_ROOF_COLOR = '#b9a99a';
 
@@ -83,5 +83,26 @@ export function parseColor(value: unknown): string | undefined {
 /** Linear RGB (three's working colour space) for vertex colours. */
 export function toRGB(hex: string): [number, number, number] {
   const c = new Color(hex);
+  return [c.r, c.g, c.b];
+}
+
+/** OSM Buildings tones tagged colours down to 70 % of their saturation. */
+const ROOF_SATURATION = 0.7;
+/** Lightness shifts that keep neighbouring roofs apart (OSM Buildings' colour variance). */
+const VARIANCE = [0.06, 0.03, -0.06, -0.03];
+
+/** A building's lightness shift, stable for its feature id. */
+export function colorVariance(id: number | string): number {
+  let n = typeof id === 'number' ? Math.abs(Math.trunc(id)) : 0;
+  if (typeof id === 'string')
+    for (let i = 0; i < id.length; i++) n = (n * 31 + id.charCodeAt(i)) >>> 0;
+  return VARIANCE[n % VARIANCE.length]!;
+}
+
+/** A roof colour as linear RGB: desaturated, with its lightness shifted by `variance`. */
+export function roofRGB(hex: string, variance = 0): [number, number, number] {
+  const c = new Color(hex);
+  const { h, s, l } = c.getHSL({ h: 0, s: 0, l: 0 }, SRGBColorSpace);
+  c.setHSL(h, s * ROOF_SATURATION, Math.min(1, Math.max(0, l + variance)), SRGBColorSpace);
   return [c.r, c.g, c.b];
 }

@@ -1,4 +1,4 @@
-import { toRGB } from '../colors';
+import { roofRGB, toRGB } from '../colors';
 import type { ProfileShape, RoofProps } from '../schema';
 import { roofFrame, type RoofFrame, type Vec2 } from './frame';
 import { MeshBuilder, type RoofMesh } from './mesh';
@@ -63,8 +63,11 @@ function area(ring: Vec2[]): number {
   return Math.abs(a) / 2;
 }
 
-/** The roof for one building (local metres, base at y = 0), or null when it gets none. */
-export function buildRoof(props: RoofProps, polygons: Vec2[][][]): BuiltRoof | null {
+/**
+ * The roof for one building (local metres, base at y = 0), or null when it gets none.
+ * `variance` shifts the roof colour's lightness (see `colorVariance`).
+ */
+export function buildRoof(props: RoofProps, polygons: Vec2[][][], variance = 0): BuiltRoof | null {
   const outers = polygons.map((rings) => open(rings[0] ?? []));
   const outer = outers.reduce((best, r) => (area(r) > area(best) ? r : best), outers[0] ?? []);
   if (outer.length < 3 || area(outer) < 1e-6) return null;
@@ -83,7 +86,7 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][]): BuiltRoof | n
   if (frame.L < 0.25 || frame.W < 0.25) return null;
   const H = resolveRoofHeight(props, frame);
   if (H === null || !(H > 0)) return null;
-  const roof = toRGB(props.roofColor);
+  const roof = roofRGB(props.roofColor, variance);
   const radius = Math.min(frame.L, frame.W);
   const b = new MeshBuilder();
   switch (props.shape) {

@@ -1,3 +1,5 @@
+import { MAX_RINGS } from './slices';
+
 /** A horizontal fog layer: a square of `uRadius` around the map centre at its band's altitude. */
 export const FOG_VERTEX = /* glsl */ `
 attribute vec2 aCorner;
@@ -14,13 +16,8 @@ void main() {
 }
 `;
 
-/**
- * One fog layer: the band of air it stands for, under the fog's billowing top, thresholded into
- * banks by world-anchored noise and lit brighter near the top. Each pixel tests depth at its own
- * dithered altitude inside the band, so terrain cutting through the stack makes fine grain rather
- * than contour bands.
- */
-export const FOG_FRAGMENT = /* glsl */ `
+/** Uniforms, noise and the fog itself, shared by the layers and the rings. */
+const FOG_COMMON = /* glsl */ `
 // three declares viewMatrix for fragment shaders but not projectionMatrix (needed for depth).
 uniform mat4 projectionMatrix;
 uniform vec3 uCamPos;
@@ -40,7 +37,9 @@ uniform float uTime;
 uniform float uCell;
 uniform float uPeriod;
 uniform float uStep;
-varying vec3 vWorld;
+uniform float uFloor;
+uniform float uCeil;
+uniform float uRingRatio;
 
 float hash(vec3 p) {
   return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
@@ -74,18 +73,19 @@ float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
-void main() {
-  vec3 ray = normalize(vWorld - uCamPos);
-  if (abs(ray.y) < 1e-4) discard;
-  // Dither the layer's altitude inside its band per pixel, and test depth at that point.
-  float alt = vWorld.y + (ign(gl_FragCoord.xy) - 0.5) * uStep;
-  float s = (alt - uCamPos.y) / ray.y;
-  if (s <= 0.0) discard;
-  vec3 p = uCamPos + ray * s;
+// Share of a ray's fog drawn by the rings: level rays run along the layers and cross almost none.
+float ringShare(vec3 ray) {
+  return 1.0 - smoothstep(0.04, 0.12, abs(ray.y));
+}
+
+void writeDepth(vec3 p) {
   vec4 clip = projectionMatrix * viewMatrix * vec4(p, 1.0);
   gl_FragDepth = 0.5 * (gl_DepthRange.diff * (clip.z / clip.w) + gl_DepthRange.near + gl_DepthRange.far);
-  // Flat maps: no air below the ground plane (with terrain, uClip is far below).
-  if (alt < uClip) discard;
+}
+
+// Fog at point p on the ray, for a path of 'len' metres through it (alpha 0: none).
+vec4 fogAt(vec3 p, vec3 ray, float len) {
+  float alt = p.y;
   vec2 xz = mod(p.xz * uNoiseScale + uOrigin - uScroll, 4096.0);
   float n = fbm(vec3(xz.x / uCell, alt / 60.0 + uTime * 0.02, xz.y / uCell));
   // Far away, many noise cells fall into one pixel: settle toward the mean instead of shimmering.
@@ -94,18 +94,91 @@ void main() {
   float top = uTop + (n - 0.5) * 2.0 * uSoft;
   float t = (top - alt) / uSoft;
   float fill = clamp(t, 0.0, 1.0);
-  if (fill <= 0.0) discard;
-  // Path through this layer's band of air.
-  float len = uStep / max(abs(ray.y), 0.02);
   float banks = smoothstep(1.0 - uCoverage - 0.2, 1.0 - uCoverage + 0.2, n);
   float fade = 1.0 - smoothstep(0.75 * uRadius, uRadius, length(p.xz));
   float alpha = 1.0 - exp(-uDensity * 0.004 * banks * fade * fill * len);
-  if (alpha < 0.002) discard;
   // Lit fog: brighter near its top (sky light), dimmer deep inside; forward sun scattering.
   float inside = clamp(t, 0.0, 3.0) / 3.0;
   vec3 base = uFogColor * mix(1.08, 0.82, inside);
   float glow = 0.35 * pow(max(dot(ray, uSunDir), 0.0), 6.0);
-  gl_FragColor = vec4(mix(base, uSunColor, glow), alpha);
+  return vec4(mix(base, uSunColor, glow), alpha);
+}
+`;
+
+/**
+ * One fog layer: the band of air it stands for, under the fog's billowing top, thresholded into
+ * banks by world-anchored noise and lit brighter near the top. Each pixel tests depth at its own
+ * dithered altitude inside the band, so terrain cutting through the stack makes fine grain rather
+ * than contour bands. Near-level rays are left to the rings.
+ */
+export const FOG_FRAGMENT = /* glsl */ `
+${FOG_COMMON}
+varying vec3 vWorld;
+
+void main() {
+  vec3 ray = normalize(vWorld - uCamPos);
+  float share = 1.0 - ringShare(ray);
+  if (share <= 0.0) discard;
+  // Dither the layer's altitude inside its band per pixel, and test depth at that point.
+  float alt = vWorld.y + (ign(gl_FragCoord.xy) - 0.5) * uStep;
+  float s = (alt - uCamPos.y) / ray.y;
+  if (s <= 0.0) discard;
+  vec3 p = uCamPos + ray * s;
+  writeDepth(p);
+  // Flat maps: no air below the ground plane (with terrain, uClip is far below).
+  if (alt < uClip) discard;
+  // Path through this layer's band of air.
+  vec4 fog = fogAt(p, ray, share * uStep / abs(ray.y));
+  if (fog.a < 0.002) discard;
+  gl_FragColor = fog;
+  #include <colorspace_fragment>
+}
+`;
+
+/** An upright ring of radius uRingR[i] around the camera, from the fog floor to its ceiling. */
+export const RING_VERTEX = /* glsl */ `
+attribute vec2 aCorner;
+attribute float aSlice;
+uniform float uRingR[${MAX_RINGS}];
+uniform vec3 uCamPos;
+uniform float uFloor;
+uniform float uCeil;
+varying vec3 vWorld;
+varying float vR;
+
+void main() {
+  int i = int(aSlice + 0.5);
+  float a = aCorner.x * 6.28318530718;
+  vR = uRingR[i];
+  vec3 w = vec3(uCamPos.x + cos(a) * vR, mix(uFloor, uCeil, aCorner.y), uCamPos.z + sin(a) * vR);
+  vWorld = w;
+  gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
+}
+`;
+
+/**
+ * One ring: the shell of air between it and its neighbours, for rays near level. Each pixel tests
+ * depth at its own dithered distance inside the shell, as the layers do with altitude.
+ */
+export const RING_FRAGMENT = /* glsl */ `
+${FOG_COMMON}
+varying vec3 vWorld;
+varying float vR;
+
+void main() {
+  vec3 ray = normalize(vWorld - uCamPos);
+  float share = ringShare(ray);
+  float level = length(ray.xz);
+  if (share <= 0.0 || level < 1e-4) discard;
+  float r = vR * pow(uRingRatio, ign(gl_FragCoord.xy) - 0.5);
+  vec3 p = uCamPos + ray * (r / level);
+  if (p.y < max(uFloor, uClip) || p.y > uCeil) discard;
+  writeDepth(p);
+  // Path through this ring's shell of air (rings are uRingRatio apart).
+  float shell = r * (sqrt(uRingRatio) - 1.0 / sqrt(uRingRatio));
+  vec4 fog = fogAt(p, ray, share * shell / level);
+  if (fog.a < 0.002) discard;
+  gl_FragColor = fog;
   #include <colorspace_fragment>
 }
 `;

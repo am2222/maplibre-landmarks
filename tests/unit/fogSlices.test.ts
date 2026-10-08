@@ -3,6 +3,7 @@ import { Matrix4, PerspectiveCamera, Vector3 } from 'three';
 import { localPosition, originAt } from '../../src/core/mercator';
 import { fogColor, FOG_COLORS } from '../../src/fog/colors';
 import {
+  buildRingGeometry,
   buildSliceGeometry,
   cameraBasis,
   indexFor,
@@ -10,6 +11,7 @@ import {
   layerOrder,
   noiseOrigin,
   NOISE_PERIOD_M,
+  ringRadii,
 } from '../../src/fog/slices';
 
 describe('fog slices', () => {
@@ -36,6 +38,29 @@ describe('fog slices', () => {
     const slice = g.getAttribute('aSlice');
     expect(slice.getX(index[0]!)).toBe(2);
     expect(slice.getX(index.at(-1)!)).toBe(0);
+  });
+
+  it('spaces rings geometrically from the inner to the outer radius', () => {
+    const { radii, ratio } = ringRadii(10, 1000, 3);
+    expect(ratio).toBeCloseTo(10, 9);
+    expect(radii[0]).toBeCloseTo(10, 9);
+    expect(radii[1]).toBeCloseTo(100, 9);
+    expect(radii[2]).toBeCloseTo(1000, 9);
+  });
+
+  it('builds one closed wall per ring, drawn far first', () => {
+    const g = buildRingGeometry(3, 8);
+    // (segments + 1) columns of bottom/top vertices per ring.
+    expect(g.getAttribute('aCorner').count).toBe(3 * 9 * 2);
+    const index = Array.from(g.getIndex()!.array);
+    expect(index).toHaveLength(3 * 8 * 6);
+    const ring = g.getAttribute('aSlice');
+    expect(ring.getX(index[0]!)).toBe(2);
+    expect(ring.getX(index.at(-1)!)).toBe(0);
+    const corner = g.getAttribute('aCorner');
+    const turns = Array.from({ length: 18 }, (_, i) => corner.getX(i));
+    expect(Math.min(...turns)).toBe(0);
+    expect(Math.max(...turns)).toBe(1);
   });
 
   it('reads a unit camera basis and field of view from scaled matrices', () => {

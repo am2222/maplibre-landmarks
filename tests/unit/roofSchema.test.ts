@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ROOF_COLOR, materialPairs, parseColor, toRGB } from '../../src/roofs/colors';
+import { Color, SRGBColorSpace } from 'three';
+import {
+  colorVariance,
+  DEFAULT_ROOF_COLOR,
+  materialPairs,
+  parseColor,
+  roofRGB,
+  toRGB,
+} from '../../src/roofs/colors';
 import {
   DEFAULT_FIELDS,
   normaliseShape,
@@ -112,6 +120,30 @@ describe('readRoofProps', () => {
     expect(readRoofProps({ 'roof:shape': 'dome', render_height: 12 }, fields, '#fff')!.shape).toBe(
       'dome',
     );
+  });
+});
+
+describe('roof colour tweaks', () => {
+  const hsl = (rgb: [number, number, number]) =>
+    new Color(...rgb).getHSL({ h: 0, s: 0, l: 0 }, SRGBColorSpace);
+
+  it('tones roof colours down to 70 % saturation, keeping hue and lightness', () => {
+    const red = hsl(roofRGB('#ff0000'));
+    expect(red.h).toBeCloseTo(0, 4);
+    expect(red.s).toBeCloseTo(0.7, 4);
+    expect(red.l).toBeCloseTo(0.5, 4);
+    expect(hsl(roofRGB('#999999')).s).toBeCloseTo(0, 6);
+  });
+
+  it('shifts lightness by a stable per-building variance', () => {
+    expect(hsl(roofRGB('#808080', 0.06)).l).toBeCloseTo(hsl(roofRGB('#808080')).l + 0.06, 4);
+    expect(hsl(roofRGB('#ffffff', 0.06)).l).toBeCloseTo(1, 6);
+    const ids = [1, 2, 3, 4, 5, 6, 7, 8, 'way/9', 'way/10'];
+    for (const id of ids) {
+      expect([0.06, 0.03, -0.06, -0.03]).toContain(colorVariance(id));
+      expect(colorVariance(id)).toBe(colorVariance(id));
+    }
+    expect(new Set(ids.map(colorVariance)).size).toBeGreaterThan(1);
   });
 });
 

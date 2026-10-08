@@ -12,6 +12,7 @@ import { localPosition, originAt } from '../core/mercator';
 import { OwnedPaint } from '../core/ownedPaint';
 import type { LngLat, Origin, ViewState } from '../core/types';
 import { exemptionsFor, offExemptionsChanged, onExemptionsChanged } from '../labels/exemptions';
+import { colorVariance } from './colors';
 import { FootprintIndex, type Footprint, type SourceFeatureLike } from './footprints';
 import type { Vec2 } from './geometry/frame';
 import { buildRoof, type BuiltRoof } from './geometry/roof';
@@ -249,7 +250,7 @@ export class RoofsModule implements LayerModule {
           }),
         ),
       );
-      return buildRoof(props, local);
+      return buildRoof(props, local, colorVariance(f.id));
     } catch (err) {
       this.report(`roof:${f.key}`, err);
       return null;

@@ -54,6 +54,45 @@ export function buildSliceGeometry(count: number): BufferGeometry {
   return g;
 }
 
+export const MAX_RINGS = 32;
+
+/** `count` ring radii from `inner` to `outer`, each `ratio` times the previous (dense near the camera). */
+export function ringRadii(
+  inner: number,
+  outer: number,
+  count: number,
+): { radii: number[]; ratio: number } {
+  const ratio = Math.max(1 + 1e-6, outer / inner) ** (1 / Math.max(1, count - 1));
+  return { radii: Array.from({ length: count }, (_, i) => inner * ratio ** i), ratio };
+}
+
+/**
+ * `count` upright rings of `segments` wall quads: `aCorner` is (turn 0..1, bottom 0 / top 1) and
+ * `aSlice` the ring. The vertex shader centres them on the camera; the largest is drawn first.
+ */
+export function buildRingGeometry(count: number, segments: number): BufferGeometry {
+  const corners: number[] = [];
+  const rings: number[] = [];
+  const columns = segments + 1;
+  for (let r = 0; r < count; r++)
+    for (let c = 0; c < columns; c++) {
+      corners.push(c / segments, 0, c / segments, 1);
+      rings.push(r, r);
+    }
+  const index: number[] = [];
+  for (let r = count - 1; r >= 0; r--)
+    for (let c = 0; c < segments; c++) {
+      const b = (r * columns + c) * 2;
+      index.push(b, b + 2, b + 3, b, b + 3, b + 1);
+    }
+  const g = new BufferGeometry();
+  g.setAttribute('aCorner', new Float32BufferAttribute(corners, 2));
+  g.setAttribute('aSlice', new Float32BufferAttribute(rings, 1));
+  g.setAttribute('position', new Float32BufferAttribute(new Array(rings.length * 3).fill(0), 3));
+  g.setIndex(index);
+  return g;
+}
+
 export interface CameraBasis {
   position: Vector3;
   right: Vector3;

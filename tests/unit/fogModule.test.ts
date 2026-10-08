@@ -221,6 +221,42 @@ describe('FogModule', () => {
     expect(module.uniforms.uRadius.value).toBeCloseTo(15000, 6);
   });
 
+  it('adds upright rings around the camera for level rays, only while the camera is near the fog', () => {
+    const { map, scene, module } = setup();
+    map.terrain = { source: 'dem' };
+    map.elevation = 1000;
+    module.update(view({ center: [6.735, 45.925], bounds: [6.7, 45.9, 6.77, 45.95] }));
+    expect(scene.children).toContain(module.rings);
+    expect(module.rings!.material).toMatchObject({
+      depthWrite: false,
+      depthTest: true,
+      transparent: true,
+    });
+    const u = module.uniforms;
+    expect(u.uFloor.value).toBe(1000);
+    expect(u.uCeil.value).toBeCloseTo(u.uTop.value + u.uSoft.value, 6);
+    const look = (y: number) => {
+      const camera = new PerspectiveCamera(50, 1, 1, 100000);
+      camera.position.set(0, y, 600);
+      camera.lookAt(0, y - 50, 0);
+      camera.updateMatrixWorld();
+      module.mesh!.onBeforeRender(
+        null as never,
+        null as never,
+        camera,
+        null as never,
+        null as never,
+        null as never,
+      );
+    };
+    look(1020); // inside the fog, looking level
+    expect(module.rings!.visible).toBe(true);
+    expect(u.uRingR.value[u.uRingR.value.length - 1]).toBeGreaterThanOrEqual(u.uRadius.value);
+    expect(u.uRingRatio.value).toBeGreaterThan(1);
+    look(60_000); // far above: no level ray reaches the fog
+    expect(module.rings!.visible).toBe(false);
+  });
+
   it('reaches the farthest visible ground (view bounds), not just around the camera', () => {
     const { module } = setup();
     // ~35 km to the north-east corner, as in a low pitched view up a valley.

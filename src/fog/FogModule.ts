@@ -16,17 +16,27 @@ import { bearingVector } from '../roofs/geometry/frame';
 import { fogColor } from './colors';
 import { Haze } from './haze';
 import { noiseCell, valleyFloor } from './profile';
-import { FOG_FRAGMENT, FOG_VERTEX } from './shaders';
+import { FOG_FRAGMENT, FOG_VERTEX, RING_FRAGMENT, RING_VERTEX } from './shaders';
 import {
+  buildRingGeometry,
   buildSliceGeometry,
   cameraBasis,
   indexFor,
   layerAltitudes,
   layerOrder,
+  MAX_RINGS,
   MAX_SLICES,
   NOISE_PERIOD_M,
   noiseOrigin,
+  ringRadii,
 } from './slices';
+
+/** Rings around the camera (level rays), from INNER_RING metres out past the fog's edge. */
+const RINGS = 24;
+const RING_SEGMENTS = 64;
+const INNER_RING = 10;
+/** Steepest ray (|dir.y|) the rings still draw; matches ringShare in the shaders. */
+const RING_SLOPE = 0.12;
 
 export interface FogWind {
   /** Metres per second. */
@@ -58,6 +68,12 @@ export interface FogUniforms {
   uAlt: IUniform<number[]>;
   /** Height of each layer's band of air, metres. */
   uStep: IUniform<number>;
+  /** Fog floor and ceiling (highest the billowing top reaches), metres. */
+  uFloor: IUniform<number>;
+  uCeil: IUniform<number>;
+  /** Ring radii around the camera, metres, each uRingRatio times the previous. */
+  uRingR: IUniform<number[]>;
+  uRingRatio: IUniform<number>;
   uFogColor: IUniform<Color>;
   uSunColor: IUniform<Color>;
   uSunDir: IUniform<Vector3>;
@@ -77,10 +93,14 @@ export interface FogUniforms {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/** Drifting, theme-tinted ground fog drawn as camera-facing slices. */
+/**
+ * Drifting, theme-tinted ground fog drawn as horizontal layers, plus upright rings around the
+ * camera for the near-level rays that run along the layers.
+ */
 export class FogModule implements LayerModule {
   readonly uniforms: FogUniforms;
   mesh?: Mesh<BufferGeometry, ShaderMaterial>;
+  rings?: Mesh<BufferGeometry, ShaderMaterial>;
   private ctx?: ModuleContext;
   private haze?: Haze;
   private theme: Theme = 'day';
@@ -113,6 +133,10 @@ export class FogModule implements LayerModule {
       uCamPos: { value: new Vector3() },
       uAlt: { value: new Array<number>(MAX_SLICES).fill(0) },
       uStep: { value: 1 },
+      uFloor: { value: 0 },
+      uCeil: { value: 1 },
+      uRingR: { value: new Array<number>(MAX_RINGS).fill(INNER_RING) },
+      uRingRatio: { value: 2 },
       uFogColor: { value: new Color() },
       uSunColor: { value: new Color() },
       uSunDir: { value: new Vector3(0, 1, 0) },
@@ -133,21 +157,30 @@ export class FogModule implements LayerModule {
 
   onAdd(ctx: ModuleContext): void {
     this.ctx = ctx;
-    const material = new ShaderMaterial({
-      vertexShader: FOG_VERTEX,
-      fragmentShader: FOG_FRAGMENT,
-      uniforms: this.uniforms,
-      transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      // Layers are seen from above and below.
-      side: DoubleSide,
-    });
-    const mesh = new Mesh(buildSliceGeometry(this.slices), material);
-    mesh.frustumCulled = false;
-    mesh.onBeforeRender = (_renderer, _scene, camera) => this.updateCamera(camera);
+    const material = (vertexShader: string, fragmentShader: string) =>
+      new ShaderMaterial({
+        vertexShader,
+        fragmentShader,
+        uniforms: this.uniforms,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        // Layers are seen from above and below, rings from inside.
+        side: DoubleSide,
+      });
+    const mesh = new Mesh(buildSliceGeometry(this.slices), material(FOG_VERTEX, FOG_FRAGMENT));
+    const rings = new Mesh(
+      buildRingGeometry(RINGS, RING_SEGMENTS),
+      material(RING_VERTEX, RING_FRAGMENT),
+    );
+    for (const m of [mesh, rings]) {
+      m.frustumCulled = false;
+      // Whichever draws first this frame brings the camera uniforms up to date.
+      m.onBeforeRender = (_renderer, _scene, camera) => this.updateCamera(camera);
+      ctx.scene.add(m);
+    }
     this.mesh = mesh;
-    ctx.scene.add(mesh);
+    this.rings = rings;
     if (this.options.horizonHaze ?? true) this.haze = new Haze(ctx.map);
     this.themeChanged((ctx.core as { theme?: Theme }).theme ?? 'day');
     ctx.map.on('terrain', this.onTerrain);
@@ -247,13 +280,15 @@ export class FogModule implements LayerModule {
     if (!ctx) return;
     ctx.map.off('terrain', this.onTerrain);
     ctx.map.off('sourcedata', this.onSourceData);
-    if (this.mesh) {
-      ctx.scene.remove(this.mesh);
-      this.mesh.geometry.dispose();
-      this.mesh.material.dispose();
+    for (const m of [this.mesh, this.rings]) {
+      if (!m) continue;
+      ctx.scene.remove(m);
+      m.geometry.dispose();
+      m.material.dispose();
     }
     this.haze?.restore();
     this.mesh = undefined;
+    this.rings = undefined;
     this.ctx = undefined;
   }
 
@@ -291,6 +326,8 @@ export class FogModule implements LayerModule {
     for (let i = 0; i < MAX_SLICES; i++)
       u.uAlt.value[i] = altitudes[Math.min(i, altitudes.length - 1)]!;
     u.uStep.value = step;
+    u.uFloor.value = base;
+    u.uCeil.value = u.uTop.value + u.uSoft.value;
     this.orderKey = '';
     this.ctx?.requestRepaint();
   }
@@ -300,6 +337,7 @@ export class FogModule implements LayerModule {
     const visible = this.zoomOk && this.density > 0;
     if (visible !== this.mesh.visible) this.ctx?.requestRepaint();
     this.mesh.visible = visible;
+    if (!visible && this.rings) this.rings.visible = false;
   }
 
   /** DEM tiles arriving refine the ground height (the terrain event fires before they load). */
@@ -317,6 +355,13 @@ export class FogModule implements LayerModule {
     u.uCamPos.value.copy(b.position);
     const toCentre = b.position.distanceTo(new Vector3(0, this.centreGround, 0));
     u.uRadius.value = this.options.radius ?? Math.max(1500, 1.5 * toCentre, this.viewReach);
+    // Rings reach the far side of the fog disc; skipped when no level ray can reach the fog.
+    const outer = u.uRadius.value + Math.hypot(b.position.x, b.position.z);
+    const { radii, ratio } = ringRadii(INNER_RING, outer, RINGS);
+    for (let i = 0; i < MAX_RINGS; i++) u.uRingR.value[i] = radii[Math.min(i, RINGS - 1)]!;
+    u.uRingRatio.value = ratio;
+    const gap = Math.max(b.position.y - u.uCeil.value, u.uFloor.value - b.position.y);
+    if (this.rings) this.rings.visible = !!this.mesh?.visible && gap < RING_SLOPE * outer;
     const order = layerOrder(u.uAlt.value.slice(0, this.slices), b.position.y);
     const key = order.join();
     if (key !== this.orderKey && this.mesh) {

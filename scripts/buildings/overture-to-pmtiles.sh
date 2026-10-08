@@ -14,7 +14,10 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 BBOX="bbox.xmin < $E AND bbox.xmax > $W AND bbox.ymin < $N AND bbox.ymax > $S"
-COLUMNS="height, min_height, roof_shape, roof_height, roof_direction, roof_orientation,
+# No height: 3 m per floor plus any tagged roof height (as OSM Buildings does with levels).
+COLUMNS="coalesce(height, num_floors * 3 + coalesce(roof_height, 0)) AS height,
+  coalesce(min_height, min_floor * 3) AS min_height,
+  roof_shape, roof_height, roof_direction, roof_orientation,
   roof_color, roof_material, facade_color, facade_material"
 
 duckdb -c "

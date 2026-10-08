@@ -25,8 +25,8 @@ keeps its flat extrusion.
 | Attribute          | Required    | Type              | Meaning                                                                                 | OSM tag                                  | Overture column    |
 | ------------------ | ----------- | ----------------- | --------------------------------------------------------------------------------------- | ---------------------------------------- | ------------------ |
 | `roof_shape`       | yes         | string            | Roof shape, see [Roof shapes](#roof-shapes)                                             | `roof:shape`                             | `roof_shape`       |
-| `height`           | yes         | number (m)        | Top of the building or part, **including** its roof                                     | `height` (or `building:levels`, below)   | `height`           |
-| `min_height`       | no (0)      | number (m)        | Bottom of the part (for parts that start above ground)                                  | `min_height` / `building:min_level`      | `min_height`       |
+| `height`           | yes         | number (m)        | Top of the building or part, **including** its roof                                     | `height` (or `building:levels`, below)   | `height` (or `num_floors`, below) |
+| `min_height`       | no (0)      | number (m)        | Bottom of the part (for parts that start above ground)                                  | `min_height` / `building:min_level`      | `min_height` (or `min_floor`) |
 | `roof_height`      | no          | number (m)        | Height of the roof alone, eaves to top                                                  | `roof:height` (or `roof:levels`)         | `roof_height`      |
 | `roof_angle`       | no          | number (°)        | Pitch of the roof faces; used only when there is no `roof_height`                       | `roof:angle`                             | —                  |
 | `roof_direction`   | no          | number (°) or N/E | Compass bearing the main roof face looks toward                                         | `roof:direction`                         | `roof_direction`   |
@@ -133,8 +133,7 @@ wall colour; sloped faces take the roof colour.
 ## Colours
 
 - **`roof_color` / `facade_color`** accept `#rgb`, `#rrggbb`, CSS colour names (`red`,
-  `darkslategray`, …), and `rgb()` / `hsl()`. Named colours are used literally, so `red` is pure
-  `#ff0000`.
+  `darkslategray`, …), and `rgb()` / `hsl()`. Named colours are parsed literally (`red` is `#ff0000`).
 - **Materials** pick a colour when no colour is set (palette from OSM Buildings):
 
   | Material (aliases)                                                                 | Colour    |
@@ -154,6 +153,11 @@ wall colour; sloped faces take the roof colour.
   | `bronze` / `silver` / `gold`                                                       | `#ffeecc` / `#cccccc` / `#ffcc00` |
 
 - **Defaults**: roofs `#b9a99a`; walls and gable ends use the layer's `gableColor` (`#d9d4ce`).
+- **Roof faces are toned down** as OSM Buildings does: every roof colour (tagged, from a material,
+  or the default) is drawn at 70 % of its HSL saturation, so `red` becomes a brick red. Each
+  building's roof lightness also shifts by ±0.03 or ±0.06 (stable for its feature id), so rows of
+  identical roofs stay distinguishable. Wall-coloured faces (gable ends, glazing) are left as
+  tagged, so they keep matching the extrusion walls.
 
 ## Building a tileset
 
@@ -166,7 +170,9 @@ exactly the attributes above. Both need [tippecanoe](https://github.com/felt/tip
 scripts/buildings/overture-to-pmtiles.sh <west> <south> <east> <north> out.pmtiles [release]
 ```
 
-Reads Overture's `building` and `building_part` types with DuckDB. Good for large areas. Overture
+Reads Overture's `building` and `building_part` types with DuckDB. Good for large areas. A
+building without `height` gets `num_floors × 3 m` plus its `roof_height` (if any); one without
+`min_height` gets `min_floor × 3 m`. Overture
 limits `roof_shape` to 14 values (`dome`, `flat`, `gabled`, `gambrel`, `half_hipped`, `hipped`,
 `mansard`, `onion`, `pyramidal`, `round`, `saltbox`, `sawtooth`, `skillion`, `spherical`), so
 OSM-only shapes such as `side_hipped`, `butterfly`, `crosspitched` or `hipped-and-gabled` arrive as

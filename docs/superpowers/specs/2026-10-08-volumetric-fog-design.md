@@ -233,3 +233,18 @@ visible step (one slice held most of the valley fog, about 12% of the distance a
   only when the camera crosses a layer. Layers are double-sided (seen from above and below).
 - Camera-facing basis, slice distances and the padding offset are no longer used by the fog
   (fog above the camera and map padding are handled by world-space layers).
+
+## Revision 4: level rays (2026-10-08)
+
+**Problem.** With the camera inside the fog, rays near eye level run parallel to the horizontal
+layers and cross almost none of them, so a clear band appears at the horizon.
+
+**Fix.** 24 upright rings around the camera (radii 10 m to the far side of the fog disc,
+geometric spacing), drawn with the same fog function. Each ring pixel dithers its distance inside
+its shell and writes depth there, as the layers do with altitude. A ray's fog is split by
+steepness: rings take `1 - smoothstep(0.04, 0.12, |dir.y|)` of it, layers the rest, so the two
+never double count. Rings are skipped when the camera is too far above (or below) the fog for any
+ray with |dir.y| < 0.12 to reach it.
+
+Also: the fog reaches the farthest corner of the visible bounds (not only 1.5× the camera
+distance), and distant noise settles to its mean (30 to 120 cells away) to avoid shimmer.
