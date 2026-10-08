@@ -14,6 +14,8 @@ export interface BuiltRoof {
 const TAN_30 = Math.tan(Math.PI / 6);
 const ROUNDED = new Set(['dome', 'onion', 'round']);
 const MIN_DEFAULT_M = 0.5;
+/** Shapes whose end slopes assume the ridge runs along the longer side. */
+const LONG_RIDGE = new Set(['hipped', 'half_hipped', 'mansard']);
 
 /** Spec section 3: explicit heights fill up to the span; defaults are capped at half of it. */
 export function resolveRoofHeight(
@@ -48,7 +50,18 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][]): BuiltRoof | n
   const outers = polygons.map((rings) => open(rings[0] ?? []));
   const outer = outers.reduce((best, r) => (area(r) > area(best) ? r : best), outers[0] ?? []);
   if (outer.length < 3 || area(outer) < 1e-6) return null;
-  const frame = roofFrame(outer, props.direction, props.orientation);
+  let frame = roofFrame(outer, props.direction, props.orientation);
+  if (LONG_RIDGE.has(props.shape) && frame.L < frame.W) {
+    // Hips are symmetric: turn the frame so the ridge is on the long side and the roof
+    // reaches its height (with u ⟂ v kept: v = perp(u)).
+    frame = {
+      origin: frame.origin,
+      u: frame.v,
+      v: [-frame.u[0], -frame.u[1]],
+      L: frame.W,
+      W: frame.L,
+    };
+  }
   if (frame.L < 0.25 || frame.W < 0.25) return null;
   const H = resolveRoofHeight(props, frame);
   if (H === null || !(H > 0)) return null;

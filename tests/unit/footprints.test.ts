@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FootprintIndex, type SourceFeatureLike } from '../../src/roofs/footprints';
 
 const box = (w: number, s: number, e: number, n: number) => [
@@ -61,5 +61,36 @@ describe('FootprintIndex', () => {
     const first = idx.update(features, keepTagged).get('1');
     expect(idx.update(features, keepTagged).get('1')).toBe(first);
     expect(idx.update(features.slice(0, 1), keepTagged).get('1')).not.toBe(first);
+  });
+
+  it('falls back to the largest piece when the union fails, and reports it', () => {
+    const onError = vi.fn();
+    const idx = new FootprintIndex(() => {
+      throw new Error('Unable to complete output ring');
+    }, onError);
+    const fps = idx.update(
+      [piece(7, box(0, 0, 0.002, 0.001)), piece(7, box(0.0019, 0, 0.0025, 0.001))],
+      keepTagged,
+    );
+    expect(fps.get('7')!.polygons).toEqual([box(0, 0, 0.002, 0.001)]);
+    expect(onError).toHaveBeenCalledWith('7', expect.any(Error));
+  });
+
+  it('samples terrain where MapLibre does: the vertex average of the largest piece', () => {
+    const idx = new FootprintIndex();
+    // Densely noded west side pulls the vertex average west of the area centroid.
+    const ring = [
+      [0, 0],
+      [0, 0.00025],
+      [0, 0.0005],
+      [0, 0.00075],
+      [0, 0.001],
+      [0.004, 0.001],
+      [0.004, 0],
+      [0, 0],
+    ];
+    const fp = idx.update([piece(1, [ring])], keepTagged).get('1')!;
+    expect(fp.terrainPoint[0]).toBeCloseTo((0.004 * 2) / 7, 9);
+    expect(fp.centroid[0]).toBeCloseTo(0.002, 9);
   });
 });

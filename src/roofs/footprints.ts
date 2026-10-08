@@ -15,6 +15,11 @@ export interface Footprint {
   polygons: number[][][][];
   properties: Record<string, unknown>;
   centroid: LngLat;
+  /**
+   * Where MapLibre samples terrain for this building's walls: the vertex average of its
+   * (largest) polygon, holes included.
+   */
+  terrainPoint: LngLat;
   /** Identity of the pieces it was built from. */
   signature: string;
 }
@@ -42,9 +47,42 @@ function centroidOf(polygons: number[][][][]): LngLat {
   return [x / (3 * a), y / (3 * a)];
 }
 
+function ringArea(ring: number[][]): number {
+  let a = 0;
+  for (let i = 0; i + 1 < ring.length; i++) {
+    a += ring[i]![0]! * ring[i + 1]![1]! - ring[i + 1]![0]! * ring[i]![1]!;
+  }
+  return Math.abs(a) / 2;
+}
+
+const largest = (polygons: number[][][][]) =>
+  polygons.reduce((best, p) => (ringArea(p[0] ?? []) > ringArea(best[0] ?? []) ? p : best));
+
+function vertexAverage(rings: number[][][]): LngLat {
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const ring of rings) {
+    const open = ring.length > 1 ? ring.slice(0, -1) : ring;
+    for (const [px, py] of open) {
+      x += px!;
+      y += py!;
+      n++;
+    }
+  }
+  return n ? [x / n, y / n] : [0, 0];
+}
+
+type Union = typeof polygonClipping.union;
+
 /** Groups vector-tile pieces by feature id and unions them back into whole footprints. */
 export class FootprintIndex {
   private cache = new Map<string, Footprint>();
+
+  constructor(
+    private readonly union: Union = polygonClipping.union,
+    private readonly onError?: (key: string, err: unknown) => void,
+  ) {}
   /** Pieces skipped in the last update for lacking an id. */
   missingIds = 0;
 
@@ -58,10 +96,11 @@ export class FootprintIndex {
       { id: number | string; pieces: number[][][][]; properties: Record<string, unknown> }
     >();
     for (const f of features) {
-      const polygons = polygonsOf(f.geometry);
-      if (!polygons.length) continue;
+      // Properties first: reading `geometry` decodes and projects the tile geometry.
       const properties = f.properties ?? {};
       if (!keep(properties)) continue;
+      const polygons = polygonsOf(f.geometry);
+      if (!polygons.length) continue;
       if (f.id === undefined || f.id === null) {
         this.missingIds++;
         continue;
@@ -83,15 +122,22 @@ export class FootprintIndex {
         continue;
       }
       const [first, ...rest] = g.pieces as unknown as Polygon[];
-      const polygons = (
-        rest.length ? polygonClipping.union(first!, ...rest) : [first!]
-      ) as number[][][][];
+      let polygons: number[][][][];
+      try {
+        polygons = (rest.length ? this.union(first!, ...rest) : [first!]) as number[][][][];
+      } catch (err) {
+        // The clipper can fail on near-coincident pieces: keep the biggest one, not nothing.
+        this.onError?.(key, err);
+        polygons = [largest(g.pieces)];
+      }
+      if (!polygons.length) continue;
       next.set(key, {
         id: g.id,
         key,
         polygons,
         properties: g.properties,
         centroid: centroidOf(polygons),
+        terrainPoint: vertexAverage(largest(polygons)),
         signature,
       });
     }

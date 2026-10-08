@@ -56,6 +56,11 @@ const ALIASES: Record<string, RoofShape> = {
   pyramid: 'pyramidal',
 };
 
+/** Every raw `roof_shape` value that draws a roof (lower case, `_` and `-` spellings). */
+export const ROOF_SHAPE_VALUES: string[] = [...SHAPES, ...Object.keys(ALIASES)].flatMap((v) =>
+  v.includes('_') ? [v, v.replaceAll('_', '-')] : [v],
+);
+
 export function normaliseShape(value: unknown): RoofShape | null {
   if (typeof value !== 'string') return null;
   const s = value.trim().toLowerCase().replaceAll('-', '_');

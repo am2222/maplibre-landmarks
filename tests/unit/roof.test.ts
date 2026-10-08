@@ -96,4 +96,13 @@ describe('buildRoof', () => {
     const built = buildRoof(props(), [[rect(4, 2, 40)], [rect(40, 20)]])!;
     expect(built.roofHeight).toBeCloseTo(10 * TAN_30, 9);
   });
+
+  it('keeps hipped and mansard ridges on the long side so they reach the roof height', () => {
+    for (const shape of ['hipped', 'half_hipped', 'mansard'] as const) {
+      for (const over of [{ orientation: 'across' as const }, { direction: 90 }]) {
+        const built = buildRoof(props({ shape, roofHeight: 6, ...over }), [[rect(40, 20)]])!;
+        expect(Math.max(...ys(built.mesh.positions))).toBeCloseTo(6, 9);
+      }
+    }
+  });
 });

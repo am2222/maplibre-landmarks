@@ -124,6 +124,9 @@ map.addLayer(
 | `facade_color`, `facade_material`    | Walls, with `wallColors: true`                                                                                                |
 | `has_parts`                          | Outline drawn by its parts: no roof of its own                                                                                |
 
+Draw walls only for outlines without parts, or each outline's box hides its parts' roofs:
+add `filter: ['!=', ['get', 'has_parts'], true]` to your extrusion layer.
+
 Other sources map their names with `fields`, e.g. `fields: { roof_shape: 'roof:shape' }`.
 Buildings without a roof shape keep their flat extrusion. Options: `minZoom` (15),
 `maxBuildings` (2000), `wallColors` (false), `gableColor` (`#d9d4ce`), `onError`.

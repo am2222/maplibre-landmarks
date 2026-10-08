@@ -46,8 +46,9 @@ function fakeMap() {
     terrain: null as object | null,
     on: vi.fn((t: string, fn: (e?: unknown) => void) => handlers.set(t, fn)),
     off: vi.fn((t: string) => handlers.delete(t)),
-    getSource: (id: string) => (id === 'b' ? {} : undefined),
-    querySourceFeatures: vi.fn(() => map.features),
+    vectorLayerIds: undefined as string[] | undefined,
+    getSource: (id: string) => (id === 'b' ? { vectorLayerIds: map.vectorLayerIds } : undefined),
+    querySourceFeatures: vi.fn((_s: string, _o?: object) => map.features),
     getLayer: (id: string) => (id === 'b3d' && layer ? { id } : undefined),
     getPaintProperty: (_id: string, p: string) => paint[p],
     setPaintProperty: vi.fn((_id: string, p: string, v: unknown) => (paint[p] = v)),
@@ -232,5 +233,25 @@ describe('RoofsModule', () => {
     const color = map.paint['fill-extrusion-color'] as unknown[];
     expect(color[0]).toBe('to-color');
     expect(color[1]).toEqual(['get', 'facade_color']);
+  });
+
+  it('asks MapLibre for roofed buildings only', () => {
+    const { map, module } = setup();
+    module.update(view());
+    const [, options] = map.querySourceFeatures.mock.calls[0] as unknown as [
+      string,
+      { filter?: unknown[] },
+    ];
+    expect(JSON.stringify(options.filter)).toContain('roof_shape');
+    expect(JSON.stringify(options.filter)).toContain('double_saltbox');
+  });
+
+  it('reports a source layer the source does not have', () => {
+    const { map, module, onError } = setup({ sourceLayer: 'buildings' });
+    map.vectorLayerIds = ['building'];
+    module.update(view());
+    module.update(view());
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(String(onError.mock.calls[0]![0])).toContain('buildings');
   });
 });

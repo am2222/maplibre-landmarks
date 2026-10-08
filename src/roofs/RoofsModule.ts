@@ -15,7 +15,13 @@ import { exemptionsFor, offExemptionsChanged, onExemptionsChanged } from '../lab
 import { FootprintIndex, type Footprint, type SourceFeatureLike } from './footprints';
 import type { Vec2 } from './geometry/frame';
 import { buildRoof, type BuiltRoof } from './geometry/roof';
-import { readRoofProps, resolveFields, type Fields, type RoofProps } from './schema';
+import {
+  readRoofProps,
+  resolveFields,
+  ROOF_SHAPE_VALUES,
+  type Fields,
+  type RoofProps,
+} from './schema';
 import { ROOF_STATE, wallRules } from './walls';
 
 export interface RoofsOptions {
@@ -50,7 +56,9 @@ export class RoofsModule implements LayerModule {
   private view?: ViewState;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly fields: Fields;
-  private readonly footprints = new FootprintIndex();
+  private readonly footprints = new FootprintIndex(undefined, (key, err) =>
+    this.report(`union:${key}`, err),
+  );
   /** Built roofs by footprint key, rebuilt when the footprint's pieces change. */
   private roofs = new Map<string, { signature: string; built: BuiltRoof | null }>();
   /** Roofs currently drawn, with the feature-state written for each. */
@@ -182,10 +190,24 @@ export class RoofsModule implements LayerModule {
 
   private collect(map: MlMap, view: ViewState): Map<string, Drawn> {
     const gable = this.options.gableColor ?? '#d9d4ce';
-    const features = map.querySourceFeatures(
-      this.options.source,
-      this.options.sourceLayer ? { sourceLayer: this.options.sourceLayer } : {},
-    ) as unknown as SourceFeatureLike[];
+    const layerIds = (map.getSource(this.options.source) as { vectorLayerIds?: string[] })
+      .vectorLayerIds;
+    if (this.options.sourceLayer && layerIds && !layerIds.includes(this.options.sourceLayer)) {
+      this.report(
+        'sourceLayer',
+        new Error(`source "${this.options.source}" has no layer "${this.options.sourceLayer}"`),
+      );
+    }
+    // Only roofed buildings: MapLibre skips building GeoJSON for everything else.
+    const filter = [
+      'in',
+      ['downcase', ['to-string', ['get', this.fields.roof_shape]]],
+      ['literal', ROOF_SHAPE_VALUES],
+    ];
+    const features = map.querySourceFeatures(this.options.source, {
+      ...(this.options.sourceLayer ? { sourceLayer: this.options.sourceLayer } : {}),
+      filter: filter as never,
+    }) as unknown as SourceFeatureLike[];
     const footprints = this.footprints.update(
       features,
       (p) => readRoofProps(p, this.fields, gable) !== null,
@@ -264,7 +286,7 @@ export class RoofsModule implements LayerModule {
         const lift =
           props.height -
           built.roofHeight +
-          this.elevation(map, footprint.key, footprint.centroid) -
+          this.elevation(map, footprint.key, footprint.terrainPoint) -
           this.anchorElevation;
         const p = built.mesh.positions;
         for (let i = 0; i < p.length; i += 3)
