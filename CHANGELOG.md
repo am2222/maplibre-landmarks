@@ -15,6 +15,8 @@
 * **main:** refactor map initialization and layer handling logic ([92bb5fd](https://github.com/am2222/maplibre-landmarks/commit/92bb5fd23ef94d5279b6caf98421ebf277a7f9dc))
 * **panel:** enhance UI and functionality for layer management ([92bb5fd](https://github.com/am2222/maplibre-landmarks/commit/92bb5fd23ef94d5279b6caf98421ebf277a7f9dc))
 * **panel:** enhance UI with collapsible sections and tab synchronization ([8d4bab7](https://github.com/am2222/maplibre-landmarks/commit/8d4bab76eed5819ac4eb531178c102f382cd75bb))
+* **power, trees, water:** integrate water handling for power and tree layers ([779c933](https://github.com/am2222/maplibre-landmarks/commit/779c933968fec57feb1a88dc86dbca6705efc78a))
+* **power:** add geometry and network models for power lines and supports ([2604ed3](https://github.com/am2222/maplibre-landmarks/commit/2604ed396f6cdcbee8a59f3ae33e827b2509b108))
 * **replacement, roofs:** hide roofs for buildings replaced by landmarks ([503a043](https://github.com/am2222/maplibre-landmarks/commit/503a043e61502615933fbdb2cb8f534b536a0b92))
 * **roof:** add support for real roof shapes and update documentation ([5f20b2c](https://github.com/am2222/maplibre-landmarks/commit/5f20b2c915fd6b66bccf9b7789f79d570cdf0a44))
 * **roof:** adjust roof shape handling for hipped and mansard roofs ([e4e8952](https://github.com/am2222/maplibre-landmarks/commit/e4e8952e4e5ad1c36bdc32eab799fc0718c05ea7))
