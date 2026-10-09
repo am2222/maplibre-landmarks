@@ -459,4 +459,7 @@ renderModels(models);
   get trees() {
     return trees;
   },
+  get power() {
+    return power;
+  },
 };

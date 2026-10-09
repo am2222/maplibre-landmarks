@@ -26,7 +26,7 @@ any layer, for example an invisible line layer on `infrastructure`.
 - **Spans** join consecutive supports along each `power_line` / `minor_line`. Tiles simplify
   lines (towers on a straight run drop out of the geometry) but keep the points, so supports
   are ordered along the line. A span cut by a tile edge is joined to the first tower of the same
-  line straight ahead in the next tile. A line without mapped supports hangs from its vertices.
+  line straight ahead in the next tile. A line without mapped supports hangs from its vertices, except those in water.
 - Supports are turned across their line; wires hang from the arm tips and the top, sagging 3% of
   the span.
 - Buried `cable`s and substations are left out.
@@ -40,6 +40,7 @@ any layer, for example an invisible line layer on `infrastructure`.
 | `minZoom`      | `14`               |                                                                    |
 | `maxSupports`  | `2000`             | Nearest supports drawn                                             |
 | `farCutoff`    | `true`             | Pitched views draw supports only to about three screen heights away |
+| `water` | same source, `'water'` | Water polygons: a line without mapped supports gets no pole in water; `false` turns it off |
 | `onError`      | —                  |                                                                    |
 
 Methods: `getStats()` (`supports`, `spans`, `tallest`).

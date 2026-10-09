@@ -44,7 +44,12 @@ const M_PER_DEG = 111_320;
  * cut by a tile edge (spans are longer than the tile buffer) is joined to the first tower of
  * the same line straight ahead in the next tile.
  */
-export function buildNetwork(pieces: LinePiece[], mapped: Support[]): Network {
+export function buildNetwork(
+  pieces: LinePiece[],
+  mapped: Support[],
+  /** Water: a line without mapped supports gets no pole where its vertex is in water. */
+  inWater: (lngLat: LngLat) => boolean = () => false,
+): Network {
   const origin = pieces[0]?.coords[0] ?? mapped[0]?.lngLat;
   if (!origin) return { supports: [], spans: [] };
   const kx = M_PER_DEG * Math.cos((origin[1] * Math.PI) / 180);
@@ -95,7 +100,8 @@ export function buildNetwork(pieces: LinePiece[], mapped: Support[]): Network {
     if (!order.length) {
       // No mapped supports: hang the line from its own vertices.
       const kind = piece.kind === 'minor_line' ? 'pole' : 'tower';
-      order = piece.coords.map((c, k) => {
+      const dry = piece.coords.map((c, k) => [c, k] as const).filter(([c]) => !inWater(c));
+      order = dry.map(([c, k]) => {
         const i = add({ lngLat: c, kind });
         const [a, b] = [line[Math.max(0, k - 1)]!, line[Math.min(line.length - 1, k + 1)]!];
         const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
@@ -104,6 +110,7 @@ export function buildNetwork(pieces: LinePiece[], mapped: Support[]): Network {
         return i;
       });
     }
+    if (!order.length) continue; // all of it over water
     for (let k = 0; k + 1 < order.length; k++) span(order[k]!, order[k + 1]!);
     runs.push({ id: piece.id, order, end: line.at(-1)! });
   }

@@ -51,6 +51,17 @@ describe('buildNetwork', () => {
     expect(net.spans).toHaveLength(2);
   });
 
+  it('puts no pole on a line vertex in water: the wires span the river instead', () => {
+    const river = (ll: [number, number]) => ll[0] > at(30)[0] && ll[0] < at(50)[0];
+    const net = buildNetwork([piece('m', [0, 40, 80], { kind: 'minor_line' })], [], river);
+    expect(net.supports).toHaveLength(2);
+    expect(net.spans).toHaveLength(1);
+    // Mapped towers stand where they are mapped, even in a river.
+    expect(
+      buildNetwork([piece('a', [0, 80])], [tower(0), tower(40), tower(80)], river).supports,
+    ).toHaveLength(3);
+  });
+
   it('turns each support across its line and takes the tagged height or the default', () => {
     const net = buildNetwork([piece('a', [0, 300])], [tower(0, 0, { height: 42 }), tower(300)]);
     expect(net.supports[0]!.height).toBe(42);

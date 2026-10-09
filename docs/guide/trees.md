@@ -17,7 +17,7 @@ wind stops the repaint loop.
 | Option                                  | Default                                     | Description                                                               |
 | --------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
 | `source`                                | required                                    | Vector (Protomaps schema) or GeoJSON source id                            |
-| `sourceLayers`                          | `{ points: 'pois', polygons: 'landuse' }`   | `''` for GeoJSON                                                          |
+| `sourceLayers`                          | `{ points: 'pois', polygons: 'landuse', water: 'water' }` | `''` for GeoJSON (water then off unless named)               |
 | `models`                                | `[deciduous, conifer, birch]`               | Any `TreeModel`                                                           |
 | `weights`                               | `{ deciduous: .6, conifer: .2, birch: .2 }` | Pick probability per model id                                             |
 | `maxTrees` / `minZoom` / `lodDistanceM` | `4000` / `14` / `300`                       | Budget (trees appear with the 3D buildings at zoom 14)                    |
@@ -25,6 +25,7 @@ wind stops the repaint loop.
 | `scatter`                               | `{ forest: 1/60, wood: 1/60, park: 1/400 }` | Trees per m² by landuse kind; `false` = points only                       |
 | `density` | `0.6` | Share of trees drawn, mapped and scattered (a fixed subset per tree) |
 | `farCutoff` | `true` | Pitched views (past 45°) draw trees only to about three screen heights away, sinking them near the edge, and skip tiles beyond |
+| `avoidWater` | `true` | No scattered tree in water (lakes and streams inside parks and woods); mapped trees stay |
 | `riseMs` | `400` | A newly shown tree rises from the ground over this time (`0`: appears at once) |
 | `scatterSkipRatio`                      | `0.25`                                      | Don't scatter a tile piece whose mapped trees reach this share of its target |
 | `wind`                                  | `{ strength: 1, directionDeg: 250 }`        | Direction the wind blows from                                             |

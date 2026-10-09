@@ -5,6 +5,7 @@ import type { Theme } from '../core/theme';
 import type { Bounds, LngLat, Origin, ViewState } from '../core/types';
 import { padBounds, padMetres } from '../landmarks/discovery';
 import { TileFeed } from '../core/tileFeed';
+import { WaterMask } from '../core/waterMask';
 import { TreeBatches } from './batches';
 import { createTreeMaterial } from './material';
 import { disposePrepared, prepareModel, type PreparedModel } from './models/prepare';
@@ -21,8 +22,13 @@ export interface TreesWind {
 
 export interface TreesOptions {
   source: string;
-  /** Default { points: 'pois', polygons: 'landuse' }; '' means none (GeoJSON sources). */
-  sourceLayers?: { points?: string; polygons?: string };
+  /**
+   * Default { points: 'pois', polygons: 'landuse', water: 'water' }; '' means none (GeoJSON
+   * sources).
+   */
+  sourceLayers?: { points?: string; polygons?: string; water?: string };
+  /** Scatter no tree into water (lakes and rivers inside parks and woods; default true). */
+  avoidWater?: boolean;
   models?: TreeModel[];
   weights?: Record<string, number>;
   maxTrees?: number;
@@ -93,6 +99,8 @@ export class TreesModule implements LayerModule {
   /** Trees per tile, fed by the source's tiles as they load. */
   private tiles?: TreeTiles;
   private feeds: TileFeed[] = [];
+  /** Water of the held tiles: scattered trees stay out of it. */
+  private water?: WaterMask;
   /** Pieces scattered before this update (stats report the new ones). */
   private scatteredBefore = 0;
   private stats: TreeStats = {
@@ -150,12 +158,14 @@ export class TreesModule implements LayerModule {
     const t0 = performance.now();
     if (view.zoom < (this.opts.minZoom ?? 14)) {
       for (const feed of this.feeds) feed.suspend();
+      this.water?.suspend();
       this.write([], view);
       return;
     }
     if (!ctx.map.getSource(this.opts.source)) {
       this.reportSource(new Error(`Source "${this.opts.source}" not found`));
       for (const feed of this.feeds) feed.suspend();
+      this.water?.suspend();
       this.write([], view);
       return;
     }
@@ -165,6 +175,7 @@ export class TreesModule implements LayerModule {
     u.uCutoffFade.value = Number.isFinite(this.cutoff) ? this.cutoff * 0.25 : 1;
     try {
       for (const feed of this.feeds) feed.settle();
+      this.water?.settle();
     } catch (err) {
       this.reportSource(err);
       this.write([], view);
@@ -203,7 +214,8 @@ export class TreesModule implements LayerModule {
     for (const { t, near } of ordered) {
       if (near > cutoff || near > far) break;
       for (const m of t.mapped) if (m.thin < this.density && add(m)) mapped++;
-      for (const p of t.scatter()) if (p.thin < keep && add(p)) scattered++;
+      for (const p of t.scatter())
+        if (p.thin < keep && !this.water?.contains(p.lngLat) && add(p)) scattered++;
       // Tighten the cutoff as candidates grow (recomputed when their number doubles).
       if (candidates.length >= cutoffAt) {
         cutoff = kthSmallest(
@@ -267,6 +279,7 @@ export class TreesModule implements LayerModule {
   styleChanged(attached: boolean): void {
     // A swapped style may carry other tiles: start the feeds over.
     for (const feed of this.feeds) feed.reset();
+    this.water?.reset();
     if (attached && this.lastView) this.update(this.lastView);
   }
 
@@ -278,6 +291,8 @@ export class TreesModule implements LayerModule {
     ctx?.map.off('terrain', this.onTerrain);
     for (const feed of this.feeds) feed.dispose();
     this.feeds = [];
+    this.water?.dispose();
+    this.water = undefined;
     this.tiles = undefined;
     if (this.batches) {
       ctx?.scene.remove(this.batches.group);
@@ -318,7 +333,14 @@ export class TreesModule implements LayerModule {
 
   /** Mapped trees and green polygons, delivered tile by tile into the per-tile store. */
   private createFeeds(ctx: ModuleContext): void {
-    const layers = { points: 'pois', polygons: 'landuse', ...this.opts.sourceLayers };
+    const given = this.opts.sourceLayers;
+    const layers = {
+      points: 'pois',
+      polygons: 'landuse',
+      ...given,
+      // A source without layers (GeoJSON: polygons '') has no water layer unless one is named.
+      water: given?.water ?? (given?.polygons === '' ? '' : 'water'),
+    };
     const scatter = this.opts.scatter === false ? {} : (this.opts.scatter ?? DEFAULT_SCATTER);
     const tiles = (this.tiles = new TreeTiles({
       scatter,
@@ -366,6 +388,15 @@ export class TreesModule implements LayerModule {
           (k) => tiles.dropPolygons(k),
         ),
       );
+    // Needs a water layer: a source without layers (GeoJSON) would read its parks as water.
+    if (kinds.length && layers.water && this.opts.avoidWater !== false)
+      this.water = new WaterMask(ctx.map, {
+        source: this.opts.source,
+        sourceLayer: layers.water,
+        wants: (key) =>
+          key === '*' || !this.lastView || tileNearestM(key, this.lastView.center) <= this.cutoff,
+        onChange: changed,
+      });
   }
 
   private schedule(): void {

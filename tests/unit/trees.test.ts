@@ -42,11 +42,12 @@ const box: TreeModel = {
 
 function setup(
   over: Partial<TreesOptions> = {},
-  data?: { points?: unknown[]; polygons?: unknown[] },
+  data?: { points?: unknown[]; polygons?: unknown[]; water?: unknown[] },
 ) {
   const features = {
     points: data?.points ?? [point(1, at(10, 0)), point(2, at(-20, 5)), point(3, at(400, 0))],
     polygons: data?.polygons ?? [],
+    water: data?.water ?? [],
   };
   const handlers = new Map<string, (e: unknown) => void>();
   const listeners = new Map<string, ((e: unknown) => void)[]>();
@@ -63,8 +64,12 @@ function setup(
     getZoom(): number {
       return this.zoom;
     },
-    querySourceFeatures: vi.fn((_s: string, o: { filter: unknown[] }) =>
-      o.filter[0] === '==' ? features.points : features.polygons,
+    querySourceFeatures: vi.fn((_s: string, o: { filter: unknown[]; sourceLayer?: string }) =>
+      o.sourceLayer === 'water'
+        ? features.water
+        : o.filter[0] === '=='
+          ? features.points
+          : features.polygons,
     ),
     // Several listeners per event (the module and its tile feeds); handlers.get(t) calls them all.
     on: vi.fn((t: string, fn: (e: unknown) => void) => {
@@ -219,6 +224,39 @@ describe('TreesModule', () => {
     expect(query).toHaveBeenCalled();
   });
 
+  it('scatters no tree into a lake inside a wood (mapped trees stay)', async () => {
+    const wood = polygon(2, 'forest', square(0, 0, 200));
+    const lake = {
+      properties: { kind: 'water' },
+      geometry: { type: 'Polygon', coordinates: [square(0, 0, 100)] },
+    };
+    const dry = setup({ maxTrees: 100_000 }, { points: [point(1, at(10, 10))], polygons: [wood] });
+    dry.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const wet = setup(
+      { maxTrees: 100_000 },
+      { points: [point(1, at(10, 10))], polygons: [wood], water: [lake] },
+    );
+    wet.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const [all, kept] = [dry.module.getStats(), wet.module.getStats()];
+    // A quarter of the wood is lake: about a quarter of its trees go, the mapped one stays.
+    expect(kept.scattered / all.scattered).toBeGreaterThan(0.68);
+    expect(kept.scattered / all.scattered).toBeLessThan(0.82);
+    expect(kept.mapped).toBe(1);
+  });
+
+  it('reads no water from a source without layers (GeoJSON), unless one is named', async () => {
+    const s = setup({ sourceLayers: { points: '', polygons: '' } });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const layersAsked = s.map.querySourceFeatures.mock.calls.map(
+      (c) => (c[1] as { sourceLayer?: string }).sourceLayer,
+    );
+    expect(layersAsked).not.toContain('water');
+    expect(s.map.querySourceFeatures.mock.calls).toHaveLength(2); // points and woods only
+  });
+
   it('recomputes scatter when more pieces of a polygon load', async () => {
     const full = square(90, 0, 80);
     const westHalf = [at(50, -40), at(90, -40), at(90, 40), at(50, 40), at(50, -40)];
@@ -274,8 +312,13 @@ describe('TreesModule', () => {
         sourceId: 'src',
         tile: {
           tileID: { canonical: tile },
-          querySourceFeatures: (result: unknown[], params: { filter: unknown[] }) => {
-            if (params.filter[0] !== '==') result.push(...features);
+          querySourceFeatures: (
+            result: unknown[],
+            params: { filter: unknown[]; sourceLayer?: string },
+          ) => {
+            // Woods only: no tree points, and no water in these tiles.
+            if (params.filter[0] !== '==' && params.sourceLayer !== 'water')
+              result.push(...features);
           },
         },
       });
@@ -310,8 +353,13 @@ describe('TreesModule', () => {
   /** A tile announced by MapLibre with its own trees (points) and green polygons. */
   const tileWith = (canonical: object, points: unknown[], polygons: unknown[] = []) => ({
     tileID: { canonical },
-    querySourceFeatures: (result: unknown[], params: { filter: unknown[] }) =>
-      result.push(...(params.filter[0] === '==' ? points : polygons)),
+    querySourceFeatures: (
+      result: unknown[],
+      params: { filter: unknown[]; sourceLayer?: string },
+    ) =>
+      params.sourceLayer === 'water'
+        ? 0
+        : result.push(...(params.filter[0] === '==' ? points : polygons)),
   });
 
   it('keeps a reloaded tile drawn once (the same tile object announced again)', async () => {

@@ -14,6 +14,7 @@ import { farCutoffM, tileNearestM } from '../core/cutoff';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
 import { localPosition, originAt } from '../core/mercator';
 import { TileFeed, type FeedFeature, type FeedMap } from '../core/tileFeed';
+import { WaterMask } from '../core/waterMask';
 import type { LngLat, Origin, ViewState } from '../core/types';
 import { attachments, sagCurve, supportGeometry } from './geometry';
 import { buildNetwork, type LinePiece, type Support } from './network';
@@ -29,6 +30,11 @@ export interface PowerOptions {
   maxSupports?: number;
   /** Pitched views draw supports only to about three screen heights away (default true). */
   farCutoff?: boolean;
+  /**
+   * Water polygons (default: the same source's `water` layer, as in Overture's base tiles):
+   * lines without mapped supports get no pole in water. `false` turns this off.
+   */
+  water?: false | { source?: string; sourceLayer?: string };
   onError?: (err: unknown) => void;
 }
 
@@ -62,6 +68,7 @@ export class PowerModule implements LayerModule {
   private readonly supportMeshes = new Map<'tower' | 'pole', InstancedMesh>();
   private wires?: LineSegments<BufferGeometry, LineBasicMaterial>;
   private feed?: TileFeed;
+  private water?: WaterMask;
   /** Each held tile's line pieces and supports. */
   private readonly tiles = new Map<string, { lines: LinePiece[]; supports: Support[] }>();
   private network?: ReturnType<typeof buildNetwork>;
@@ -109,6 +116,7 @@ export class PowerModule implements LayerModule {
 
   styleChanged(attached: boolean): void {
     this.feed?.reset();
+    this.water?.reset();
     if (attached) this.rebuild();
   }
 
@@ -116,6 +124,8 @@ export class PowerModule implements LayerModule {
     clearTimeout(this.timer);
     this.feed?.dispose();
     this.feed = undefined;
+    this.water?.dispose();
+    this.water = undefined;
     this.ctx?.scene.remove(this.group);
     for (const mesh of this.supportMeshes.values()) {
       mesh.geometry.dispose();
@@ -150,15 +160,18 @@ export class PowerModule implements LayerModule {
       }
     } else if (active) {
       this.feedFor(ctx).settle();
+      this.waterFor(ctx)?.settle();
     }
     if (!active || !ctx.map.getSource(this.options.source)) {
       this.feed?.suspend();
+      this.water?.suspend();
       this.draw(view, []);
       return;
     }
     this.network ??= buildNetwork(
       [...this.tiles.values()].flatMap((t) => t.lines),
       [...this.tiles.values()].flatMap((t) => t.supports),
+      (p) => this.water?.contains(p) ?? false,
     );
     const cutoff = this.options.farCutoff === false ? Infinity : farCutoffM(view);
     const k = 111_320 * Math.cos((view.center[1] * Math.PI) / 180);
@@ -198,6 +211,20 @@ export class PowerModule implements LayerModule {
       },
     });
     return this.feed;
+  }
+
+  private waterFor(ctx: ModuleContext): WaterMask | undefined {
+    const water = this.options.water;
+    if (water === false) return undefined;
+    this.water ??= new WaterMask(ctx.map as unknown as FeedMap, {
+      source: water?.source ?? this.options.source,
+      sourceLayer: water?.sourceLayer ?? 'water',
+      onChange: () => {
+        this.network = undefined;
+        this.schedule();
+      },
+    });
+    return this.water;
   }
 
   private read(features: FeedFeature[]): { lines: LinePiece[]; supports: Support[] } {

@@ -17,7 +17,7 @@ const line = (id: string, from: number, to: number, cls = 'power_line') => ({
   geometry: { type: 'LineString', coordinates: [at(from), at(to)] },
 });
 
-function setup(over: Partial<PowerOptions> = {}, features: unknown[] = []) {
+function setup(over: Partial<PowerOptions> = {}, features: unknown[] = [], water: unknown[] = []) {
   const handlers = new Map<string, (e?: unknown) => void>();
   const listeners = new Map<string, ((e?: unknown) => void)[]>();
   const map = {
@@ -28,7 +28,9 @@ function setup(over: Partial<PowerOptions> = {}, features: unknown[] = []) {
     queryTerrainElevation: () => 0,
     getZoom: () => 16,
     getCenter: () => ({ lng: C[0], lat: C[1] }),
-    querySourceFeatures: vi.fn(() => map.features),
+    querySourceFeatures: vi.fn((_s: string, o: { sourceLayer?: string }) =>
+      o.sourceLayer === 'water' ? water : map.features,
+    ),
     on: vi.fn((t: string, fn: (e?: unknown) => void) => {
       listeners.set(t, [...(listeners.get(t) ?? []), fn]);
       handlers.set(t, (e?: unknown) => [...(listeners.get(t) ?? [])].forEach((f) => f(e)));
@@ -82,6 +84,23 @@ describe('PowerModule', () => {
     expect(options.sourceLayer).toBe('infrastructure');
     expect(JSON.stringify(options.filter)).toContain('power_tower');
     expect(JSON.stringify(options.filter)).not.toContain('"cable"');
+  });
+
+  it("puts no pole in a river where a minor line's vertex lies in it", () => {
+    const minor = {
+      properties: { subtype: 'power', class: 'minor_line', id: 'm' },
+      geometry: { type: 'LineString', coordinates: [at(0), at(40), at(80)] },
+    };
+    const river = {
+      properties: { subtype: 'river' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[at(30, -20), at(50, -20), at(50, 20), at(30, 20), at(30, -20)]],
+      },
+    };
+    const { module } = setup({}, [minor], [river]);
+    module.update(view({ center: C, zoom: 16 }));
+    expect(module.getStats()).toMatchObject({ supports: 2, spans: 1 });
   });
 
   it('pitched: draws no support past the far cutoff', () => {
