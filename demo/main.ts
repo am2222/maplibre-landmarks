@@ -233,7 +233,7 @@ const fogWindDir = range('fog-wind-dir', (v) => fog?.setWind({ direction: v }), 
 function restyle(wallsChange = false) {
   if (wallsChange) remove('roofs');
   map.setStyle(style());
-  setTheme(map, state.theme);
+  setTheme(map, state.theme, { sky: true });
   if (wallsChange)
     map.once('style.load', () => {
       if (toggle('roofs').checked) addRoofs();
@@ -334,7 +334,7 @@ for (const button of document.querySelectorAll<HTMLElement>('[data-place]'))
 // ---- Map lifecycle --------------------------------------------------------------------------
 
 map.on('load', () => {
-  setTheme(map, state.theme);
+  setTheme(map, state.theme, { sky: true });
   restoreLayers();
 });
 // A full (non-diffed) style swap drops custom layers: put back the ones switched on.

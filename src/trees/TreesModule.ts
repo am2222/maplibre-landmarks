@@ -13,7 +13,7 @@ import {
   type MappedTree,
   type PolygonGroup,
 } from './collect';
-import { hashString } from './hash';
+import { hashString, hashValues } from './hash';
 import { createTreeMaterial } from './material';
 import { disposePrepared, prepareModel, type PreparedModel } from './models/prepare';
 import { birch, conifer, deciduous } from './models/procedural';
@@ -34,7 +34,13 @@ export interface TreesOptions {
   models?: TreeModel[];
   weights?: Record<string, number>;
   maxTrees?: number;
+  /** Trees appear from this zoom (default 14, with the 3D buildings). */
   minZoom?: number;
+  /**
+   * Scattered trees are thinned below this zoom (default 16): a quarter of them at two zooms
+   * below, half at one. A fixed subset per tree, so zooming in only adds trees.
+   */
+  fullDensityZoom?: number;
   lodDistanceM?: number;
   /** Trees per m² by landuse kind; false disables scattering. */
   scatter?: Record<string, number> | false;
@@ -82,6 +88,7 @@ export class TreesModule implements LayerModule {
   private lastView?: ViewState;
   private anchor: LngLat = [0, 0];
   private readonly pieceCache = new Map<string, ScatterPoint[]>();
+  private lastDrawn: string[] = [];
   /** Mapped trees inside each polygon, by polygon, its pieces and the mapped trees. */
   private readonly insideCache = new Map<string, number>();
   private stats: TreeStats = {
@@ -131,7 +138,7 @@ export class TreesModule implements LayerModule {
     const ctx = this.ctx;
     if (!ctx || !this.batches || !this.models.length) return;
     const t0 = performance.now();
-    if (view.zoom < (this.opts.minZoom ?? 16)) {
+    if (view.zoom < (this.opts.minZoom ?? 14)) {
       this.write([], view);
       return;
     }
@@ -154,13 +161,8 @@ export class TreesModule implements LayerModule {
     }
 
     const index = new PointIndex(mapped);
-    // Counts change only when a polygon's pieces or the mapped trees change (tiles loading).
-    const mappedKey = hashString(
-      mapped
-        .map((m) => m.key)
-        .sort()
-        .join(','),
-    );
+    const keep = Math.min(1, Math.max(0.25, 2 ** (view.zoom - (this.opts.fullDensityZoom ?? 16))));
+    // Counts change only when a polygon's pieces or the mapped trees near it change.
     if (this.insideCache.size > INSIDE_CACHE_LIMIT) this.insideCache.clear();
     const maxTrees = this.opts.maxTrees ?? 4000;
     const padded = padBounds(view.bounds, padMetres(view.pitch, 30));
@@ -182,7 +184,7 @@ export class TreesModule implements LayerModule {
     for (const { g, near } of groups) {
       if (near > cutoff) break;
       const density = scatter[g.kind]!;
-      const insideKey = `${g.id}|${piecesHash(g.pieces)}|${mappedKey}`;
+      const insideKey = `${g.id}|${piecesHash(g.pieces)}|${hashString(index.keysNear(g.pieces))}`;
       let inside = this.insideCache.get(insideKey);
       if (inside === undefined) {
         inside = index.countInside(g.pieces);
@@ -203,6 +205,8 @@ export class TreesModule implements LayerModule {
           this.pieceCache.set(key, points);
           usedPieces++;
           for (const p of points) {
+            // Value 5 of the tree's hash: 0-4 pick its look (select.ts), so thinning is independent.
+            if (keep < 1 && hashValues(p.key, 6)[5]! >= keep) continue;
             if (scattered.has(p.key)) continue;
             scattered.set(p.key, p);
             added++;
@@ -236,6 +240,7 @@ export class TreesModule implements LayerModule {
       ),
       variants: this.models.map(({ prepared }) => prepared.variants.length),
     });
+    this.lastDrawn = selected.map((t) => t.key);
     this.write(selected, view);
     this.stats = {
       ...this.stats,
@@ -250,6 +255,10 @@ export class TreesModule implements LayerModule {
 
   place(origin: Origin): void {
     if (!this.batches) return;
+    // Like zoom-interpolated building heights: full size one zoom after minZoom.
+    const zoom = this.ctx?.map.getZoom() ?? Number.POSITIVE_INFINITY;
+    const grow = Math.min(1, Math.max(0, zoom - (this.opts.minZoom ?? 14)));
+    this.look.uniforms.uGrow.value = grow;
     this.batches.group.position.set(...localPosition(origin, this.anchor, 0));
     this.batches.group.updateMatrixWorld(true);
   }
@@ -295,6 +304,11 @@ export class TreesModule implements LayerModule {
     this.wind = { ...this.wind, ...wind };
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
     this.ctx?.requestRepaint();
+  }
+
+  /** Keys of the trees drawn by the last update. */
+  drawnKeys(): string[] {
+    return this.lastDrawn;
   }
 
   getStats(): TreeStats {

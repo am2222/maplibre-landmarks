@@ -156,10 +156,7 @@ export function styleFor(o: StyleOptions): StyleSpecification {
     glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
     sprite: `https://protomaps.github.io/basemaps-assets/sprites/v4/${flavor}`,
     projection: { type: o.projection },
-    // Atmosphere around the globe, fading out as the map flattens.
-    ...(o.projection === 'globe'
-      ? { sky: { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 6, 1, 8, 0] } }
-      : {}),
+    // The sky (colours, globe atmosphere) comes from the theme: setTheme(map, theme, { sky: true }).
     ...(o.terrain ? { terrain: { source: 'terrain', exaggeration: 1 } } : {}),
     sources: {
       protomaps: {

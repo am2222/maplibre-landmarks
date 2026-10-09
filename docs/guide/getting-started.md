@@ -28,6 +28,24 @@ map.on('load', () => {
 });
 ```
 
+## Themes and sky
+
+`setTheme(map, theme)` sets the lights and palettes of every layer (`day`, `dawn`, `dusk`,
+`night`). With `{ sky: true }` it also sets MapLibre's sky from the theme: sky, horizon and fog
+colours, and the atmosphere glow around the globe (it fades out as the globe flattens into the
+map). The fog layer's horizon haze builds on that sky.
+
+```ts
+import { setTheme, themeSky } from 'maplibre-landmarks';
+
+setTheme(map, 'dusk', { sky: true });
+// or set it yourself, e.g. merged with your own values:
+map.setSky({ ...themeSky('dusk'), 'sky-horizon-blend': 0.8 });
+```
+
+On a globe the area around the planet is the map container's background: give it a dark,
+space-like colour so the atmosphere glow shows.
+
 ## Without a bundler
 
 The package is a single ES module. Map `maplibre-gl` and `three` with an import map:

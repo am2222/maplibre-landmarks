@@ -1,3 +1,4 @@
+import type { SkySpecification } from 'maplibre-gl';
 import { DirectionalLight, Group, HemisphereLight } from 'three';
 
 export type Theme = 'day' | 'dawn' | 'dusk' | 'night';
@@ -60,6 +61,38 @@ export const THEMES: Record<Theme, ThemeValues> = {
     palette: { foliage: 0x4a7a5a, foliageJitter: 0.2, trunk: 0x4a4038 },
   },
 };
+
+/** MapLibre sky colours per theme: zenith, horizon, and the fog over distant ground. */
+export interface SkyColors {
+  sky: string;
+  horizon: string;
+  fog: string;
+}
+
+export const SKY_COLORS: Record<Theme, SkyColors> = {
+  day: { sky: '#7fb3e6', horizon: '#dfeaf5', fog: '#e8eef3' },
+  dawn: { sky: '#8aa3cf', horizon: '#f2c9a8', fog: '#efd4c4' },
+  dusk: { sky: '#3b3f6e', horizon: '#9a8aba', fog: '#b7aec8' },
+  night: { sky: '#0b1026', horizon: '#27324f', fog: '#3a4560' },
+};
+
+/**
+ * MapLibre sky for a theme: colours plus the globe's atmosphere glow, which fades out as the
+ * globe flattens into the map (zoom 5 to 7). Apply with `setTheme(map, theme, { sky: true })`
+ * or `map.setSky(themeSky(theme))`.
+ */
+export function themeSky(theme: Theme): SkySpecification {
+  const c = SKY_COLORS[theme];
+  return {
+    'sky-color': c.sky,
+    'horizon-color': c.horizon,
+    'fog-color': c.fog,
+    'sky-horizon-blend': 0.5,
+    'horizon-fog-blend': 0.6,
+    'fog-ground-blend': 0.5,
+    'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0],
+  };
+}
 
 export interface LightRig {
   group: Group;

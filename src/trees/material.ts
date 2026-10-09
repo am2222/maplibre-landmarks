@@ -8,6 +8,8 @@ export interface TreeUniforms {
   uFoliage: { value: Color };
   uFoliageJitter: { value: number };
   uTrunk: { value: Color };
+  /** 0..1: trees grow out of the ground as the map zooms in past the layer's minZoom. */
+  uGrow: { value: number };
 }
 
 /** Downwind unit vector in local XZ for a wind blowing FROM `directionDeg` (clockwise from north). */
@@ -28,10 +30,12 @@ varying float vTint;
 uniform float uTime;
 uniform vec2 uWindDir;
 uniform float uWindStrength;
+uniform float uGrow;
 `;
 
 const PROJECT_WITH_WIND = /* glsl */ `
-vec4 mvPosition = vec4( transformed, 1.0 );
+// Scaled about the tree's base (local origin) before placement: trees rise from the ground.
+vec4 mvPosition = vec4( transformed * uGrow, 1.0 );
 #ifdef USE_INSTANCING
   mvPosition = instanceMatrix * mvPosition;
   vec3 treeOrigin = instanceMatrix[3].xyz;
@@ -73,6 +77,7 @@ export function createTreeMaterial() {
     uFoliage: { value: new Color() },
     uFoliageJitter: { value: 0.3 },
     uTrunk: { value: new Color() },
+    uGrow: { value: 1 },
   };
   const material = new MeshStandardMaterial({ flatShading: true, roughness: 0.9, metalness: 0 });
   material.userData.treeUniforms = uniforms;

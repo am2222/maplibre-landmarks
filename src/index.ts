@@ -26,9 +26,19 @@ export {
   type FrameProjection,
   type RendererFactory,
   type RendererLike,
+  type SetThemeOptions,
   type ThemeListener,
 } from './core/ThreeCore';
-export { THEME_NAMES, THEMES, type Theme, type ThemePalette, type ThemeValues } from './core/theme';
+export {
+  SKY_COLORS,
+  THEME_NAMES,
+  THEMES,
+  themeSky,
+  type SkyColors,
+  type Theme,
+  type ThemePalette,
+  type ThemeValues,
+} from './core/theme';
 export { cameraMatrix, localPosition, originAt } from './core/mercator';
 export type { Bounds, LngLat, Origin, ViewState } from './core/types';
 export { LabelOcclusion, type LabelOcclusionOptions } from './labels/LabelOcclusion';

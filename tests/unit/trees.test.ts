@@ -58,6 +58,10 @@ function setup(
       return this.terrain;
     },
     queryTerrainElevation: vi.fn(() => 35),
+    zoom: 17,
+    getZoom(): number {
+      return this.zoom;
+    },
     querySourceFeatures: vi.fn((_s: string, o: { filter: unknown[] }) =>
       o.filter[0] === '==' ? features.points : features.polygons,
     ),
@@ -178,10 +182,63 @@ describe('TreesModule', () => {
     expect(first).toBeGreaterThan(0);
     s.module.update(view({ center: C, zoom: 17 }));
     expect(count.mock.calls.length).toBe(first); // nothing changed: cached
-    s.map.features.points = [point(1, at(80, 0)), point(2, at(95, 5))];
+    s.map.features.points = [point(1, at(80, 0)), point(3, at(-900, 0))];
     s.module.update(view({ center: C, zoom: 17 }));
-    expect(count.mock.calls.length).toBe(first + 1); // a mapped tree arrived: recount
+    expect(count.mock.calls.length).toBe(first); // a tree far from the park: still cached
+    s.map.features.points = [point(1, at(80, 0)), point(3, at(-900, 0)), point(2, at(95, 5))];
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(count.mock.calls.length).toBe(first + 1); // a mapped tree arrived in the park: recount
     count.mockRestore();
+  });
+
+  it('starts at zoom 14 (with the 3D buildings), thinning scattered trees until zoom 16', async () => {
+    const park = polygon(1, 'park', square(0, 0, 600));
+    const s = setup({ minZoom: undefined }, { points: [point(1, at(10, 0))], polygons: [park] });
+    await flush();
+    const keysAt = (zoom: number) => {
+      s.module.update(view({ center: C, zoom, bounds: [2.28, 48.85, 2.31, 48.87] }));
+      return s.module.getStats().scattered;
+    };
+    const full = keysAt(16.5);
+    const quarter = keysAt(14);
+    const half = keysAt(15);
+    expect(full).toBeGreaterThan(400);
+    expect(quarter / full).toBeGreaterThan(0.18);
+    expect(quarter / full).toBeLessThan(0.32);
+    expect(half / full).toBeGreaterThan(0.4);
+    expect(half / full).toBeLessThan(0.6);
+    expect(s.module.getStats().mapped).toBe(1); // real (mapped) trees are always kept
+    s.module.update(view({ center: C, zoom: 13.9 }));
+    expect(s.module.getStats().drawn).toBe(0);
+  });
+
+  it('thins to a fixed subset: zooming in only adds trees', async () => {
+    const s = setup({}, { points: [], polygons: [polygon(1, 'park', square(0, 0, 600))] });
+    await flush();
+    const drawnKeys = (zoom: number) => {
+      s.module.update(view({ center: C, zoom, bounds: [2.28, 48.85, 2.31, 48.87] }));
+      return new Set(s.module.drawnKeys());
+    };
+    const low = drawnKeys(14.5);
+    const high = drawnKeys(16);
+    for (const key of low) expect(high.has(key)).toBe(true);
+  });
+
+  it('grows trees out of the ground over the zoom after minZoom, like the buildings', async () => {
+    const s = setup({ minZoom: 14 });
+    await flush();
+    const grow = () => uniformsOf(s.scene).uGrow.value;
+    const origin = originAt(C);
+    for (const [zoom, expected] of [
+      [14, 0],
+      [14.5, 0.5],
+      [15, 1],
+      [17, 1],
+    ] as const) {
+      s.map.zoom = zoom;
+      s.module.place(origin);
+      expect(grow()).toBeCloseTo(expected, 6);
+    }
   });
 
   it('caps at maxTrees', async () => {
