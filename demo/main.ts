@@ -3,6 +3,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Protocol } from 'pmtiles';
 import {
+  CloudsLayer,
   FogLayer,
   LabelOcclusion,
   LandmarksLayer,
@@ -45,8 +46,9 @@ const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
 // Start-up settings from the page URL (the docs embed a dusk skyline):
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
-// `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?rain` (or
-// `?rain=<intensity 0–1>`), `?snow` (or `?snow=<intensity 0–1>`).
+// `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?clouds` (or
+// `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
+// `?snow=<intensity 0–1>`).
 const params = new URLSearchParams(location.search);
 // Power lines: Overture's base theme (only fetched while the power layer is on).
 const OVERTURE_BASE =
@@ -107,6 +109,7 @@ let roofs: RoofsLayer | undefined;
 let trees: TreesLayer | undefined;
 let water: WaterLayer | undefined;
 let fog: FogLayer | undefined;
+let clouds: CloudsLayer | undefined;
 let rain: RainLayer | undefined;
 let snow: SnowLayer | undefined;
 let power: PowerLinesLayer | undefined;
@@ -258,6 +261,22 @@ function addSnow() {
   map.addLayer(snow, firstSymbol());
 }
 
+/** Above the 3D layers and the fog: the shadows darken them, the clouds hang over them. */
+function addClouds() {
+  remove('clouds');
+  clouds = new CloudsLayer({
+    id: 'clouds',
+    coverage: cloudCoverage.value(),
+    density: cloudDensity.value(),
+    base: cloudBase.value(),
+    thickness: cloudThickness.value(),
+    wind: { speed: cloudWind.value(), directionDeg: cloudWindDir.value() },
+    shadows: cloudShadows.value(),
+    flyThrough: $<HTMLInputElement>('cloud-fly').checked,
+  });
+  map.addLayer(clouds, firstSymbol());
+}
+
 function addLabels() {
   if (occlusion && map.getLayer(occlusion.id)) return;
   occlusion = new LabelOcclusion();
@@ -270,6 +289,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   trees: { add: addTrees, id: () => 'trees' },
   water: { add: addWater, id: () => 'water-3d' },
   fog: { add: addFog, id: () => 'fog' },
+  clouds: { add: addClouds, id: () => 'clouds' },
   rain: { add: addRain, id: () => 'rain' },
   snow: { add: addSnow, id: () => 'snow' },
   power: { add: addPower, id: () => 'power' },
@@ -321,6 +341,43 @@ const fogWind = range(
   (v) => `${v} m/s`,
 );
 const fogWindDir = range('fog-wind-dir', (v) => fog?.setWind({ direction: v }), degrees);
+const cloudCoverage = range(
+  'cloud-coverage',
+  (v) => clouds?.setCoverage(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+const cloudDensity = range('cloud-density', (v) => clouds?.setDensity(v));
+const cloudBase = range(
+  'cloud-base',
+  (v) => clouds?.setAltitude(v),
+  (v) => `${v} m`,
+);
+const cloudThickness = range(
+  'cloud-thickness',
+  (v) => clouds?.setAltitude(cloudBase.value(), v),
+  (v) => `${v} m`,
+);
+const cloudWind = range(
+  'cloud-wind',
+  (v) => clouds?.setWind({ speed: v }),
+  (v) => `${v} m/s`,
+);
+const cloudWindDir = range('cloud-wind-dir', (v) => clouds?.setWind({ directionDeg: v }), degrees);
+const cloudShadows = range(
+  'cloud-shadows',
+  (v) => clouds?.setShadows(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+// Fixed at construction: rebuilds the layer.
+$<HTMLInputElement>('cloud-fly').onchange = () => {
+  if (toggle('clouds').checked) addClouds();
+};
+if (params.has('clouds')) {
+  const coverage = Number(params.get('clouds'));
+  if (params.get('clouds') && coverage >= 0 && coverage <= 1) cloudCoverage.set(coverage);
+  toggle('clouds').checked = true;
+  syncTabDots();
+}
 const rainIntensity = range(
   'rain-intensity',
   (v) => rain?.setIntensity(v),
@@ -630,6 +687,9 @@ renderModels(models);
   },
   get power() {
     return power;
+  },
+  get clouds() {
+    return clouds;
   },
   get rain() {
     return rain;
