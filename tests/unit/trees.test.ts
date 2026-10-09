@@ -5,6 +5,7 @@ import { localPosition, originAt } from '../../src/core/mercator';
 import { THEMES } from '../../src/core/theme';
 import type { TreeModel } from '../../src/trees/models/types';
 import { TreesModule, type TreesOptions } from '../../src/trees/TreesModule';
+import { PointIndex } from '../../src/trees/collect';
 import type { TreeUniforms } from '../../src/trees/material';
 import { flush, view } from './helpers';
 
@@ -142,6 +143,45 @@ describe('TreesModule', () => {
     await flush();
     expect(s.module.getStats().drawn).toBe(0);
     expect(s.map.querySourceFeatures).not.toHaveBeenCalled();
+  });
+
+  it('stays fast in a near-horizontal view: far woods cannot beat the nearest trees', async () => {
+    // A low camera sees woods out to the horizon: 3,000 woods over ~10 km, one park near the centre.
+    const parks = Array.from({ length: 3000 }, (_, i) =>
+      polygon(10 + i, 'wood', square(400 + (i % 60) * 160, -4000 + Math.floor(i / 60) * 160, 120)),
+    );
+    const s = setup(
+      { maxTrees: 4000 },
+      { points: [], polygons: [polygon(1, 'park', square(0, 0, 300)), ...parks] },
+    );
+    await flush();
+    const wide = view({ center: C, zoom: 17, pitch: 85, bounds: [2.2, 48.8, 2.45, 48.95] });
+    const t0 = performance.now();
+    s.module.update(wide);
+    const ms = performance.now() - t0;
+    const stats = s.module.getStats();
+    expect(stats.drawn).toBe(4000);
+    // Every drawn tree is as near as the nearest 4,000 of all scattered: far parks were skipped,
+    // not dropped from the answer.
+    expect(ms).toBeLessThan(process.env.CI ? 1500 : 300);
+  });
+
+  it('counts mapped trees inside a polygon again only when its pieces or the trees change', async () => {
+    const count = vi.spyOn(PointIndex.prototype, 'countInside');
+    const s = setup(
+      {},
+      { points: [point(1, at(80, 0))], polygons: [polygon(1, 'park', square(90, 0, 80))] },
+    );
+    await flush();
+    s.module.update(view({ center: C, zoom: 17 }));
+    const first = count.mock.calls.length;
+    expect(first).toBeGreaterThan(0);
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(count.mock.calls.length).toBe(first); // nothing changed: cached
+    s.map.features.points = [point(1, at(80, 0)), point(2, at(95, 5))];
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(count.mock.calls.length).toBe(first + 1); // a mapped tree arrived: recount
+    count.mockRestore();
   });
 
   it('caps at maxTrees', async () => {

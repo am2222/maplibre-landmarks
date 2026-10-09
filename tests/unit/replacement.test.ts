@@ -219,6 +219,36 @@ describe('BuildingReplacement (feature-state)', () => {
     expect(map.states.size).toBe(0);
   });
 
+  it('skips whole tiles far from every landmark without decoding their buildings', () => {
+    const { map, target } = fakeStyle();
+    // MapLibre's features know their tile (_x, _y, _z) and decode geometry lazily on access.
+    const tileOf = (lng: number, lat: number, z = 16) => {
+      const r = (lat * Math.PI) / 180;
+      return {
+        _z: z,
+        _x: Math.floor(((lng + 180) / 360) * 2 ** z),
+        _y: Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z),
+      };
+    };
+    let decoded = 0;
+    const lazy = (b: ReturnType<typeof building>, tile: object) => ({
+      ...tile,
+      id: b.id,
+      get geometry() {
+        decoded++;
+        return b.geometry;
+      },
+    });
+    const far = Array.from({ length: 500 }, (_, i) =>
+      lazy(building(100 + i, 2.33, 48.87), tileOf(2.33, 48.87)),
+    );
+    const near = lazy(building(1, 2.2945, 48.85845), tileOf(2.2945, 48.85845));
+    map.features.splice(0, map.features.length, ...far, near);
+    new BuildingReplacement(target, ['buildings'], 1.5).update([full(landmark())]);
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+    expect(decoded).toBeLessThanOrEqual(1);
+  });
+
   it('tells exemption listeners (roofs) when the set of hidden buildings changes', () => {
     const { map, target } = fakeStyle();
     const listener = vi.fn();

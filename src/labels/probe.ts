@@ -133,55 +133,41 @@ export class OcclusionProbe {
     this.uploaded = false;
   }
 
+  /**
+   * Draw the probe points, one occlusion query each. No GL state is saved or restored: each
+   * read would be a synchronous round trip to the GPU process, and MapLibre marks its whole
+   * GL state dirty after a custom layer renders (three.js resets its own before rendering).
+   */
   draw(mainMatrix: ArrayLike<number>, pointSizePx: number): void {
     if (!this.slots.length) return;
     const gl = this.gl;
-    const saved = {
-      program: gl.getParameter(gl.CURRENT_PROGRAM) as WebGLProgram | null,
-      vao: gl.getParameter(gl.VERTEX_ARRAY_BINDING) as WebGLVertexArrayObject | null,
-      buffer: gl.getParameter(gl.ARRAY_BUFFER_BINDING) as WebGLBuffer | null,
-      colors: gl.getParameter(gl.COLOR_WRITEMASK) as boolean[],
-      depthMask: gl.getParameter(gl.DEPTH_WRITEMASK) as boolean,
-      depthTest: gl.isEnabled(gl.DEPTH_TEST),
-      depthFunc: gl.getParameter(gl.DEPTH_FUNC) as number,
-    };
-    try {
-      if (!this.uploaded) {
-        const [ox, oy] = this.origin;
-        const data = new Float32Array(this.slots.length * 3);
-        this.slots.forEach((s, i) => data.set([s.x - ox, s.y - oy, s.z], i * 3));
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-        this.uploaded = true;
-      }
-      gl.useProgram(this.program);
-      gl.bindVertexArray(this.vao);
-      gl.uniformMatrix4fv(this.uMatrix, false, translated(mainMatrix, ...this.origin));
-      gl.uniform1f(this.uSize, pointSizePx);
-      gl.colorMask(false, false, false, false);
-      gl.depthMask(false);
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LEQUAL);
-      this.slots.forEach((slot, i) => {
-        if (slot.query) return;
-        const handle = this.pool.pop() ?? gl.createQuery()!;
-        const query: InFlight = { handle, slot, revision: slot.revision };
-        slot.query = query;
-        this.inFlight.add(query);
-        gl.beginQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE, handle);
-        gl.drawArrays(gl.POINTS, i, 1);
-        gl.endQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE);
-      });
-    } finally {
-      gl.colorMask(saved.colors[0]!, saved.colors[1]!, saved.colors[2]!, saved.colors[3]!);
-      gl.depthMask(saved.depthMask);
-      gl.depthFunc(saved.depthFunc);
-      if (saved.depthTest) gl.enable(gl.DEPTH_TEST);
-      else gl.disable(gl.DEPTH_TEST);
-      gl.bindVertexArray(saved.vao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, saved.buffer);
-      gl.useProgram(saved.program);
+    if (!this.uploaded) {
+      const [ox, oy] = this.origin;
+      const data = new Float32Array(this.slots.length * 3);
+      this.slots.forEach((s, i) => data.set([s.x - ox, s.y - oy, s.z], i * 3));
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      this.uploaded = true;
     }
+    gl.useProgram(this.program);
+    gl.bindVertexArray(this.vao);
+    gl.uniformMatrix4fv(this.uMatrix, false, translated(mainMatrix, ...this.origin));
+    gl.uniform1f(this.uSize, pointSizePx);
+    gl.colorMask(false, false, false, false);
+    gl.depthMask(false);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    this.slots.forEach((slot, i) => {
+      if (slot.query) return;
+      const handle = this.pool.pop() ?? gl.createQuery()!;
+      const query: InFlight = { handle, slot, revision: slot.revision };
+      slot.query = query;
+      this.inFlight.add(query);
+      gl.beginQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE, handle);
+      gl.drawArrays(gl.POINTS, i, 1);
+      gl.endQuery(gl.ANY_SAMPLES_PASSED_CONSERVATIVE);
+    });
+    gl.bindVertexArray(null);
   }
 
   /** Finished answers since the last poll: label key → visible. Stale answers are dropped. */

@@ -142,6 +142,21 @@ function areaOf(polygons: number[][][][]): number {
   return total;
 }
 
+/**
+ * Bounds of the tile a feature came from, padded by a tenth of a tile (features reach into the
+ * tile buffer), or null when MapLibre does not expose it. `querySourceFeatures` returns
+ * features that know their tile (`_x`, `_y`, `_z`) and decode their geometry only when read.
+ */
+function tileBoundsOf(feature: object): Bbox | null {
+  const { _x: x, _y: y, _z: z } = feature as { _x?: unknown; _y?: unknown; _z?: unknown };
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return null;
+  const n = 2 ** z;
+  const lng = (t: number) => (t / n) * 360 - 180;
+  const lat = (t: number) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * t) / n))) * 180) / Math.PI;
+  const pad = 0.1;
+  return [lng(x - pad), lat(y + 1 + pad), lng(x + 1 + pad), lat(y - pad)];
+}
+
 /** Share (0..1) of a building's area inside a footprint; 0 when it cannot be computed. */
 function shareInside(building: number[][][][], footprint: number[][][][]): number {
   const area = areaOf(building);
@@ -342,6 +357,9 @@ export class BuildingReplacement {
       );
       for (const f of features) {
         if (f.id === undefined || f.id === null) continue;
+        // A whole tile far from every landmark: skip without decoding its buildings.
+        const tile = tileBoundsOf(f);
+        if (tile && !this.regions.some((r) => overlaps(tile, r.bbox))) continue;
         const geometry = f.geometry as { type: string; coordinates: unknown };
         const centre = centreOf(geometry);
         if (!centre) continue;

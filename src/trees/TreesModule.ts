@@ -8,16 +8,18 @@ import {
   collectMapped,
   collectPolygons,
   pieceKey,
+  piecesHash,
   PointIndex,
   type MappedTree,
   type PolygonGroup,
 } from './collect';
+import { hashString } from './hash';
 import { createTreeMaterial } from './material';
 import { disposePrepared, prepareModel, type PreparedModel } from './models/prepare';
 import { birch, conifer, deciduous } from './models/procedural';
 import type { TreeModel } from './models/types';
-import { scatterPiece, shouldScatter, type ScatterPoint } from './scatter';
-import { selectTrees, type PlacedTree } from './select';
+import { bboxOf, scatterPiece, shouldScatter, type ScatterPoint } from './scatter';
+import { distanceFrom, kthSmallest, selectTrees, type Candidate, type PlacedTree } from './select';
 
 export interface TreesWind {
   strength?: number;
@@ -60,9 +62,17 @@ const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 60, wood: 1 / 60, 
 /** Cached scattered tile pieces (each ≤ one basemap tile). */
 const PIECE_CACHE_LIMIT = 2048;
 const SOURCE_DEBOUNCE_MS = 200;
+const INSIDE_CACHE_LIMIT = 4096;
 
 const inBounds = ([lng, lat]: LngLat, [w, s, e, n]: Bounds) =>
   lng >= w && lng <= e && lat >= s && lat <= n;
+
+/** Distance from `center` to the nearest point of a bounding box (0 when inside it). */
+const nearestDistance = (
+  [w, s, e, n]: [number, number, number, number],
+  [lng, lat]: LngLat,
+  distance: (p: [number, number]) => number,
+) => distance([Math.min(Math.max(lng, w), e), Math.min(Math.max(lat, s), n)]);
 
 export class TreesModule implements LayerModule {
   private ctx?: ModuleContext;
@@ -72,6 +82,8 @@ export class TreesModule implements LayerModule {
   private lastView?: ViewState;
   private anchor: LngLat = [0, 0];
   private readonly pieceCache = new Map<string, ScatterPoint[]>();
+  /** Mapped trees inside each polygon, by polygon, its pieces and the mapped trees. */
+  private readonly insideCache = new Map<string, number>();
   private stats: TreeStats = {
     mapped: 0,
     scattered: 0,
@@ -142,14 +154,40 @@ export class TreesModule implements LayerModule {
     }
 
     const index = new PointIndex(mapped);
+    // Counts change only when a polygon's pieces or the mapped trees change (tiles loading).
+    const mappedKey = hashString(
+      mapped
+        .map((m) => m.key)
+        .sort()
+        .join(','),
+    );
+    if (this.insideCache.size > INSIDE_CACHE_LIMIT) this.insideCache.clear();
+    const maxTrees = this.opts.maxTrees ?? 4000;
+    const padded = padBounds(view.bounds, padMetres(view.pitch, 30));
+    const distance = distanceFrom(view.center);
+    const candidates: Candidate[] = mapped.filter((c) => inBounds(c.lngLat, padded));
     const scattered = new Map<string, ScatterPoint>();
     let filled = 0;
     let skipped = 0;
     let piecesScattered = 0;
     let usedPieces = 0;
-    for (const g of polygons) {
+    // Nearest polygons first. Only the nearest maxTrees are drawn, so once that many candidates
+    // are in, a polygon whose bounds lie beyond the current maxTrees-th distance cannot add a
+    // drawn tree: it and every farther one are skipped (a low camera sees woods to the horizon).
+    const groups = polygons
+      .map((g) => ({ g, near: nearestDistance(bboxOf(g.pieces), view.center, distance) }))
+      .sort((a, b) => a.near - b.near);
+    let cutoff = Number.POSITIVE_INFINITY;
+    let cutoffAt = maxTrees;
+    for (const { g, near } of groups) {
+      if (near > cutoff) break;
       const density = scatter[g.kind]!;
-      const inside = index.countInside(g.pieces);
+      const insideKey = `${g.id}|${piecesHash(g.pieces)}|${mappedKey}`;
+      let inside = this.insideCache.get(insideKey);
+      if (inside === undefined) {
+        inside = index.countInside(g.pieces);
+        this.insideCache.set(insideKey, inside);
+      }
       const fill = shouldScatter(g.pieces, density, inside, this.opts.scatterSkipRatio ?? 0.25);
       let added = 0;
       if (fill) {
@@ -165,13 +203,23 @@ export class TreesModule implements LayerModule {
           this.pieceCache.set(key, points);
           usedPieces++;
           for (const p of points) {
+            if (scattered.has(p.key)) continue;
             scattered.set(p.key, p);
             added++;
+            if (inBounds(p.lngLat, padded)) candidates.push(p);
           }
         }
       }
       if (added) filled++;
       else skipped++;
+      // Tighten the cutoff as candidates grow (recomputed when their number doubles).
+      if (candidates.length >= cutoffAt) {
+        cutoff = kthSmallest(
+          candidates.map((c) => distance(c.lngLat)),
+          maxTrees,
+        );
+        cutoffAt = candidates.length * 2;
+      }
     }
     // Evict after the loop so pieces in use this update are never thrown out mid-way.
     const limit = Math.max(PIECE_CACHE_LIMIT, usedPieces);
@@ -180,10 +228,8 @@ export class TreesModule implements LayerModule {
       this.pieceCache.delete(key);
     }
 
-    const padded = padBounds(view.bounds, padMetres(view.pitch, 30));
-    const candidates = [...mapped, ...scattered.values()].filter((c) => inBounds(c.lngLat, padded));
     const selected = selectTrees(candidates, view.center, {
-      maxTrees: this.opts.maxTrees ?? 4000,
+      maxTrees,
       lodDistanceM: this.opts.lodDistanceM ?? 300,
       weights: this.models.map(
         ({ model }) => this.opts.weights?.[model.id] ?? DEFAULT_WEIGHTS[model.id] ?? 1,

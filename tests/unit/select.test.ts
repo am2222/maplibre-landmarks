@@ -65,4 +65,22 @@ describe('selectTrees', () => {
     expect(Math.abs(share(0) - 0.6)).toBeLessThan(0.05);
     expect(Math.abs(share(1) - 0.2)).toBeLessThan(0.05);
   });
+
+  it('picks exactly the nearest trees from a large set, as a full sort would', () => {
+    let seed = 7;
+    const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const many = Array.from({ length: 20_000 }, (_, i) => ({
+      key: `k${i}`,
+      lngLat: [C[0] + (rand() - 0.5) * 0.05, C[1] + (rand() - 0.5) * 0.05] as [number, number],
+    }));
+    // Ties at the cut: equal distances are ordered by key, as in a full sort.
+    many.push({ key: 'tie-b', lngLat: many[0]!.lngLat }, { key: 'tie-a', lngLat: many[0]!.lngLat });
+    const big = { ...opts, maxTrees: 500 };
+    const naive = many
+      .map((c) => ({ c, d: Math.hypot((c.lngLat[0] - C[0]) * kx, (c.lngLat[1] - C[1]) * M) }))
+      .sort((a, b) => a.d - b.d || (a.c.key < b.c.key ? -1 : 1))
+      .slice(0, 500)
+      .map(({ c }) => c.key);
+    expect(selectTrees(many, C, big).map((t) => t.key)).toEqual(naive);
+  });
 });
