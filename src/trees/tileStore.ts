@@ -9,10 +9,15 @@ export interface ThinnedPoint extends ScatterPoint {
   thin: number;
 }
 
+/** A mapped tree with its thinning value (density keeps the trees below it). */
+export interface ThinnedTree extends MappedTree {
+  thin: number;
+}
+
 export interface TreeTile {
   key: string;
   bounds: [number, number, number, number];
-  mapped: MappedTree[];
+  mapped: ThinnedTree[];
   /** Scattered trees, computed on first call (far tiles a selection never reaches stay unscattered). */
   scatter(): ThinnedPoint[];
 }
@@ -30,7 +35,7 @@ interface Piece {
 }
 
 interface Entry {
-  mapped: MappedTree[];
+  mapped: ThinnedTree[];
   pieces: Piece[];
   /** Scattered trees, computed lazily (undefined when the tile's data changed). */
   scattered?: ThinnedPoint[];
@@ -57,13 +62,14 @@ export class TreeTiles {
 
   /** Mapped trees (point features) of a tile. */
   setPoints(key: string, features: FeedFeature[]): void {
-    const mapped = new Map<string, MappedTree>();
+    const mapped = new Map<string, ThinnedTree>();
     for (const f of features) {
       if (f.geometry.type !== 'Point') continue;
       const [lng, lat] = f.geometry.coordinates as [number, number];
       const id =
         f.id !== undefined && f.id !== null ? `t:${f.id}` : `t:${lng.toFixed(6)},${lat.toFixed(6)}`;
-      if (!mapped.has(id)) mapped.set(id, { key: id, lngLat: [lng, lat] });
+      if (!mapped.has(id))
+        mapped.set(id, { key: id, lngLat: [lng, lat], thin: hashValues(id, 6)[5]! });
     }
     const entry = this.entry(key);
     entry.mapped = [...mapped.values()];

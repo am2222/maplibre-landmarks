@@ -83,7 +83,15 @@ function setup(
   const core = { theme: 'day', setTheme: vi.fn() };
   const requestRepaint = vi.fn();
   const onError = vi.fn();
-  const module = new TreesModule({ source: 'src', models: [box], minZoom: 15, onError, ...over });
+  // Every tree drawn unless a test is about density.
+  const module = new TreesModule({
+    source: 'src',
+    models: [box],
+    minZoom: 15,
+    density: 1,
+    onError,
+    ...over,
+  });
   const ctx = { map, core, scene, requestRepaint } as unknown as ModuleContext;
   module.onAdd(ctx);
   return { module, map, scene, core, requestRepaint, onError, ctx };
@@ -150,24 +158,27 @@ describe('TreesModule', () => {
     expect(stats.drawn).toBe(20 + stats.scattered);
   });
 
-  it('keeps a fixed share of scattered trees by density (mapped trees all stay), live', async () => {
-    const data = {
-      points: [point(1, at(300, 0))],
-      polygons: [polygon(2, 'forest', square(0, 0, 200))],
-    };
+  it('keeps a fixed share of trees by density, mapped street trees too, live', async () => {
+    const street = Array.from({ length: 200 }, (_, k) => point(1000 + k, at(-100 + k, 50)));
+    const data = { points: street, polygons: [polygon(2, 'forest', square(0, -100, 200))] };
     const full = setup({ density: 1, maxTrees: 100_000 }, data);
     full.module.update(view({ center: C, zoom: 17 }));
     await flush();
-    const all = full.module.getStats().scattered;
+    const all = full.module.getStats();
+    expect(all.mapped).toBe(200);
     const half = setup({ density: 0.5, maxTrees: 100_000 }, data);
     half.module.update(view({ center: C, zoom: 17 }));
     await flush();
     const kept = half.module.getStats();
-    expect(kept.scattered / all).toBeGreaterThan(0.4);
-    expect(kept.scattered / all).toBeLessThan(0.6);
-    expect(kept.mapped).toBe(1);
+    for (const [n, total] of [
+      [kept.scattered, all.scattered],
+      [kept.mapped, all.mapped],
+    ] as const) {
+      expect(n / total).toBeGreaterThan(0.38);
+      expect(n / total).toBeLessThan(0.62);
+    }
     half.module.setDensity(1);
-    expect(half.module.getStats().scattered).toBe(all);
+    expect(half.module.getStats()).toMatchObject({ mapped: all.mapped, scattered: all.scattered });
   });
 
   it('pitched: draws no tree beyond the far cutoff, and shrinks those near it', async () => {

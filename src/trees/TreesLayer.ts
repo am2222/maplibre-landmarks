@@ -24,7 +24,7 @@ export class TreesLayer extends ModuleLayer {
     this.trees.setTheme(theme);
   }
 
-  /** Share of scattered trees drawn, 0–1. */
+  /** Share of trees drawn, 0–1 (mapped and scattered). */
   setDensity(density: number): void {
     this.trees.setDensity(density);
   }

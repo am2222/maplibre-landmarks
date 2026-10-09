@@ -42,8 +42,8 @@ export interface TreesOptions {
   /** Milliseconds a newly shown tree takes to rise from the ground (default 400; 0: no rise). */
   riseMs?: number;
   /**
-   * Share of scattered trees drawn, 0–1 (default 0.6): a fixed subset per tree, so changing it
-   * only adds or removes trees. Mapped trees are always drawn.
+   * Share of trees drawn, 0–1 (default 0.6), mapped and scattered alike: a fixed subset per
+   * tree, so changing it only adds or removes trees.
    */
   density?: number;
   /** Trees per m² by landuse kind; false disables scattering. */
@@ -202,7 +202,7 @@ export class TreesModule implements LayerModule {
     };
     for (const { t, near } of ordered) {
       if (near > cutoff || near > far) break;
-      for (const m of t.mapped) if (add(m)) mapped++;
+      for (const m of t.mapped) if (m.thin < this.density && add(m)) mapped++;
       for (const p of t.scatter()) if (p.thin < keep && add(p)) scattered++;
       // Tighten the cutoff as candidates grow (recomputed when their number doubles).
       if (candidates.length >= cutoffAt) {
@@ -295,7 +295,7 @@ export class TreesModule implements LayerModule {
     else this.themeOption = theme;
   }
 
-  /** Share of scattered trees drawn, 0–1 (see `density`). */
+  /** Share of trees drawn, 0–1 (see `density`). */
   setDensity(density: number): void {
     this.density = clamp01(density);
     if (this.lastView) this.update(this.lastView);
