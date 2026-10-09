@@ -24,6 +24,7 @@
           <button data-tab="roofs">Roofs</button>
           <button data-tab="trees">Trees</button>
           <button data-tab="water">Water</button>
+          <button data-tab="power">Power</button>
           <button data-tab="fog">Fog</button>
           <button data-tab="labels">Labels</button>
         </nav>
@@ -169,6 +170,14 @@
             <input id="water-max" type="range" min="20000" max="600000" step="20000" value="300000"
           /></label>
           <p class="stats" id="water-stats"></p>
+        </section>
+
+        <section class="controls" data-controls="power">
+          <label class="switch"
+            ><input type="checkbox" data-toggle="power" /> Show power lines</label
+          >
+          <p class="hint">Pylons and wires from Overture's base tiles (a second remote tileset).</p>
+          <p class="stats" id="power-stats"></p>
         </section>
 
         <section class="controls" data-controls="fog">

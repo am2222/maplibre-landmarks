@@ -2,11 +2,13 @@
 
 3D for [MapLibre GL JS](https://maplibre.org), rendered with [three.js](https://threejs.org):
 [Open Landmarks](https://open-landmarks.benmaps.fr) models, real roof shapes, trees,
-volumetric fog and animated water, on one shared 3D core.
+volumetric fog, animated water and power lines, on one shared 3D core.
 
 **[Documentation](https://am2222.github.io/maplibre-landmarks/)** ·
 **[Live demo](https://am2222.github.io/maplibre-landmarks/demo/)** ·
 **[Roof gallery](https://am2222.github.io/maplibre-landmarks/demo/roofs-gallery.html)**
+
+[![Paris at dusk: the Eiffel Tower model over the Seine, with fog, water, trees and 3D buildings](docs/public/skyline.jpg)](https://am2222.github.io/maplibre-landmarks/demo/?theme=dusk&fog=70#16/48.856/2.2905/60/78)
 
 ## Install
 
@@ -25,7 +27,7 @@ map.on('load', () => {
 });
 ```
 
-Roofs, trees, fog and water: see the [guide](https://am2222.github.io/maplibre-landmarks/guide/getting-started).
+Roofs, trees, fog, water and power lines: see the [guide](https://am2222.github.io/maplibre-landmarks/guide/getting-started).
 
 ## Development
 

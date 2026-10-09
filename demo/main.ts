@@ -6,6 +6,7 @@ import {
   FogLayer,
   LabelOcclusion,
   LandmarksLayer,
+  PowerLinesLayer,
   RoofsLayer,
   setTheme,
   THEMES,
@@ -42,6 +43,9 @@ const OVERTURE_BUILDINGS =
 // Start-up settings from the page URL (the docs embed a dusk skyline):
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`.
 const params = new URLSearchParams(location.search);
+// Power lines: Overture's base theme (only fetched while the power layer is on).
+const OVERTURE_BASE =
+  'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/base.pmtiles';
 const roofsParam = params.get('roofs');
 const themeParam = params.get('theme');
 const localRoofsUrl = roofsParam
@@ -64,6 +68,7 @@ const style = () =>
     ...state,
     roofsUrl: state.roofData === 'local' && localRoofsUrl ? localRoofsUrl : OVERTURE_BUILDINGS,
     roofParts: roofParts(),
+    powerUrl: toggle('power').checked ? OVERTURE_BASE : undefined,
     protomaps: pmtilesUrl
       ? `pmtiles://${pmtilesUrl}`
       : `https://api.protomaps.com/tiles/v4.json?key=${key}`,
@@ -87,6 +92,8 @@ let roofs: RoofsLayer | undefined;
 let trees: TreesLayer | undefined;
 let water: WaterLayer | undefined;
 let fog: FogLayer | undefined;
+let power: PowerLinesLayer | undefined;
+
 let occlusion: LabelOcclusion | undefined;
 let models: LandmarkInfo[] = [];
 
@@ -180,6 +187,19 @@ function addWater() {
   map.addLayer(water, i === -1 ? undefined : layers[i + 1]?.id);
 }
 
+/** Power lines from Overture's base tiles (the style adds the source while they are on). */
+function addPower() {
+  remove('power');
+  // Without its source yet: restyle, and the style reload adds this layer (restoreLayers).
+  if (!map.getSource('overture-base')) return restyle();
+  power = new PowerLinesLayer({
+    id: 'power',
+    source: 'overture-base',
+    onError: (err) => console.warn('[power]', err),
+  });
+  map.addLayer(power, before3D());
+}
+
 function addFog() {
   remove('fog');
   fog = new FogLayer({
@@ -204,6 +224,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   trees: { add: addTrees, id: () => 'trees' },
   water: { add: addWater, id: () => 'water-3d' },
   fog: { add: addFog, id: () => 'fog' },
+  power: { add: addPower, id: () => 'power' },
   labels: { add: addLabels, id: () => occlusion?.id },
 };
 
@@ -421,6 +442,9 @@ setInterval(() => {
     r && toggle('roofs').checked
       ? `${r.buildings} roofs · ${r.triangles.toLocaleString()} triangles (zoom 15+)`
       : '';
+  const p = power?.getStats();
+  $('power-stats').textContent =
+    p && toggle('power').checked ? `${p.supports} supports · ${p.spans} spans (zoom 14+)` : '';
   const w = water?.getStats();
   $('water-stats').textContent =
     w && toggle('water').checked
