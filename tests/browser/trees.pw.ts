@@ -69,11 +69,13 @@ test('draws mapped and scattered trees, animates wind and follows the theme', as
 
   const stats = await page.evaluate(() => window.__stats());
   expect(stats.mapped).toBe(50);
-  expect(stats.polygonsFilled).toBe(1); // park: no mapped trees
-  expect(stats.polygonsSkipped).toBe(1); // forest: already full of mapped trees
+  // Counted per tile piece: each polygon here spans four tiles.
+  expect(stats.polygonsFilled).toBe(4); // park: no mapped trees
+  expect(stats.polygonsSkipped).toBe(4); // forest: already full of mapped trees
   expect(stats.scattered).toBeGreaterThan(8);
   expect(stats.drawn).toBe(stats.mapped + stats.scattered);
 
+  await page.waitForTimeout(800); // new trees rise from the ground over riseMs (400 ms)
   const day = await sample(page);
   expect(day.green).toBeGreaterThan(0.005);
 

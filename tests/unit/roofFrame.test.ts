@@ -57,6 +57,14 @@ describe('roof frame', () => {
     expect(south.v[1]).toBeCloseTo(1, 9); // +z is south
   });
 
+  it('snaps a tagged direction to the nearest wall within the tolerance', () => {
+    const tilted = rect(40, 20, 3); // walls 3° off the axes
+    const faces = (f: ReturnType<typeof roofFrame>) => (Math.atan2(f.v[1], f.v[0]) * 180) / Math.PI;
+    expect(faces(roofFrame(tilted, 90, undefined, 10))).toBeCloseTo(3, 6); // east, snapped
+    expect(faces(roofFrame(tilted, 90, undefined, 0.5))).toBeCloseTo(0, 6); // exact: kept
+    expect(faces(roofFrame(tilted, 90))).toBeCloseTo(0, 6);
+  });
+
   it('round-trips frame coordinates', () => {
     const f = roofFrame(rect(30, 12, 17, 3, 4));
     const p: Vec2 = [7.5, -2.25];

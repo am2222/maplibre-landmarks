@@ -8,6 +8,17 @@ export interface TreeUniforms {
   uFoliage: { value: Color };
   uFoliageJitter: { value: number };
   uTrunk: { value: Color };
+  /** 0..1: trees grow out of the ground as the map zooms in past the layer's minZoom. */
+  uGrow: { value: number };
+  /** Seconds a newly shown tree takes to rise from the ground (0: appears at full size). */
+  uRise: { value: number };
+  /**
+   * Far cutoff (pitched views): trees shrink into the ground over the last `uCutoffFade` metres
+   * before `uCutoff` from the view centre `uCenter` (batch-local x, z).
+   */
+  uCutoff: { value: number };
+  uCutoffFade: { value: number };
+  uCenter: { value: Vector2 };
 }
 
 /** Downwind unit vector in local XZ for a wind blowing FROM `directionDeg` (clockwise from north). */
@@ -22,21 +33,36 @@ attribute float aShade;
 attribute float aHeight;
 attribute float aTint;
 attribute float aPhase;
+attribute float aBorn;
 varying float vPart;
 varying float vShade;
 varying float vTint;
 uniform float uTime;
 uniform vec2 uWindDir;
 uniform float uWindStrength;
+uniform float uGrow;
+uniform float uRise;
+uniform float uCutoff;
+uniform float uCutoffFade;
+uniform vec2 uCenter;
 `;
 
 const PROJECT_WITH_WIND = /* glsl */ `
-vec4 mvPosition = vec4( transformed, 1.0 );
+// Scaled about the tree's base (local origin) before placement: trees rise from the ground,
+// with the zoom (uGrow) and, eased out, over uRise seconds after they first show.
+float risen = uRise > 0.0 ? clamp( ( uTime - aBorn ) / uRise, 0.0, 1.0 ) : 1.0;
+risen = 1.0 - pow( 1.0 - risen, 3.0 );
 #ifdef USE_INSTANCING
-  mvPosition = instanceMatrix * mvPosition;
   vec3 treeOrigin = instanceMatrix[3].xyz;
 #else
   vec3 treeOrigin = vec3( 0.0 );
+#endif
+// Near the far cutoff trees sink, each at its own distance (no hard line), like Mapbox's cutoff.
+float far = length( treeOrigin.xz - uCenter ) + ( aTint - 0.5 ) * uCutoffFade * 0.5;
+float kept = 1.0 - smoothstep( uCutoff - uCutoffFade, uCutoff, far );
+vec4 mvPosition = vec4( transformed * ( uGrow * risen * kept ), 1.0 );
+#ifdef USE_INSTANCING
+  mvPosition = instanceMatrix * mvPosition;
 #endif
 float treeY = max( mvPosition.y - treeOrigin.y, 0.0 );
 float phase = aPhase; // absolute-position phase from the CPU: stable across pans
@@ -73,6 +99,11 @@ export function createTreeMaterial() {
     uFoliage: { value: new Color() },
     uFoliageJitter: { value: 0.3 },
     uTrunk: { value: new Color() },
+    uGrow: { value: 1 },
+    uRise: { value: 0 },
+    uCutoff: { value: 1e9 },
+    uCutoffFade: { value: 1 },
+    uCenter: { value: new Vector2() },
   };
   const material = new MeshStandardMaterial({ flatShading: true, roughness: 0.9, metalness: 0 });
   material.userData.treeUniforms = uniforms;
@@ -89,7 +120,7 @@ export function createTreeMaterial() {
       .replace('#include <common>', `#include <common>\n${FRAGMENT_DECL}`)
       .replace('#include <color_fragment>', PALETTE_COLOR);
   };
-  material.customProgramCacheKey = () => 'trees-v1';
+  material.customProgramCacheKey = () => 'trees-v3';
 
   const setTheme = (theme: Theme) => {
     const p = THEMES[theme].palette;

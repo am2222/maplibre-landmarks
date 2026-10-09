@@ -4,7 +4,7 @@ import type {
   StyleSpecification,
 } from 'maplibre-gl';
 import { layers, namedFlavor } from '@protomaps/basemaps';
-import type { Theme } from '../src/index';
+import { buildingBase, buildingHeight, type Theme } from '../src/index';
 
 export type Basemap = 'streets' | 'satellite';
 export type Projection = 'mercator' | 'globe';
@@ -51,6 +51,27 @@ const SATELLITE = {
     'Imagery © <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics and the GIS User Community',
 };
 
+/** Labels laid along the ground (street names, one-way arrows, river names). */
+const onGround = (l: LayerSpecification) =>
+  l.type === 'symbol' && String(l.layout?.['symbol-placement'] ?? 'point').startsWith('line');
+
+/**
+ * Street names and arrows before every other label, so the 3D layers can go between them: they
+ * lie on the ground and buildings and trees in front cover them, while point labels (places,
+ * POIs) stay on top.
+ */
+function groundLabelsFirst(styleLayers: LayerSpecification[]): LayerSpecification[] {
+  const ground = styleLayers.filter(onGround);
+  const rest = styleLayers.filter((l) => !onGround(l));
+  const at = rest.findIndex((l) => l.type === 'symbol');
+  const i = at === -1 ? rest.length : at;
+  return [...rest.slice(0, i), ...ground, ...rest.slice(i)];
+}
+
+/** Where 3D layers go: right under the first label that is not on the ground. */
+export const firstPointLabel = (styleLayers: { id: string; type: string }[]) =>
+  styleLayers.find((l) => l.type === 'symbol' && !onGround(l as LayerSpecification))?.id;
+
 /** Wall layers under the roofs. */
 export const roofWalls = (roofParts: boolean) =>
   roofParts ? ['roof-buildings-3d', 'roof-parts-3d'] : ['roof-buildings-3d'];
@@ -65,10 +86,11 @@ export const roofWalls = (roofParts: boolean) =>
 function withBuildings(styleLayers: LayerSpecification[], o: StyleOptions): LayerSpecification[] {
   const flat = styleLayers.find((l) => l.id === 'buildings' && l.type === 'fill');
   if (!flat || flat.type !== 'fill') return styleLayers;
+  // Overture walls: the heights the roofs use (tagged, else floor counts), so roofs sit on them.
   const paint = (): FillExtrusionLayerSpecification['paint'] => ({
     'fill-extrusion-color': flat.paint?.['fill-color'] ?? '#d9d4ce',
-    'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
-    'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+    'fill-extrusion-height': buildingHeight() as never,
+    'fill-extrusion-base': buildingBase() as never,
   });
   if (o.roofData !== 'none') {
     const walls: LayerSpecification[] = [
@@ -91,7 +113,7 @@ function withBuildings(styleLayers: LayerSpecification[], o: StyleOptions): Laye
         minzoom: 14,
         paint: paint(),
       });
-    const firstLabel = styleLayers.findIndex((l) => l.type === 'symbol');
+    const firstLabel = styleLayers.findIndex((l) => l.id === firstPointLabel(styleLayers));
     const at = firstLabel === -1 ? styleLayers.length : firstLabel;
     return [...styleLayers.slice(0, at), ...walls, ...styleLayers.slice(at)];
   }
@@ -105,7 +127,7 @@ function withBuildings(styleLayers: LayerSpecification[], o: StyleOptions): Laye
     paint: { ...paint(), 'fill-extrusion-opacity': 0.9 },
   };
   const rest = styleLayers.filter((l) => l !== flat);
-  const firstSymbol = rest.findIndex((l) => l.type === 'symbol');
+  const firstSymbol = rest.findIndex((l) => l.id === firstPointLabel(rest));
   const at = firstSymbol === -1 ? rest.length : firstSymbol;
   return [...rest.slice(0, at), extruded, ...rest.slice(at)];
 }
@@ -150,16 +172,13 @@ export function styleFor(o: StyleOptions): StyleSpecification {
   const flavor = FLAVOR[o.theme];
   let styleLayers = layers('protomaps', namedFlavor(flavor), { lang: 'en' });
   if (o.basemap === 'satellite') styleLayers = onSatellite(styleLayers);
-  styleLayers = withHillshade(withBuildings(styleLayers, o), o);
+  styleLayers = withHillshade(withBuildings(groundLabelsFirst(styleLayers), o), o);
   return {
     version: 8,
     glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',
     sprite: `https://protomaps.github.io/basemaps-assets/sprites/v4/${flavor}`,
     projection: { type: o.projection },
-    // Atmosphere around the globe, fading out as the map flattens.
-    ...(o.projection === 'globe'
-      ? { sky: { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 6, 1, 8, 0] } }
-      : {}),
+    // The sky (colours, globe atmosphere) comes from the theme: setTheme(map, theme, { sky: true }).
     ...(o.terrain ? { terrain: { source: 'terrain', exaggeration: 1 } } : {}),
     sources: {
       protomaps: {

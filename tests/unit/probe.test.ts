@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Matrix4 } from 'three';
 import { OcclusionProbe } from '../../src/labels/probe';
 import { fakeGl } from './fakeGl';
@@ -8,21 +8,20 @@ const A = { key: 'a', lngLat: [2.29, 48.85] as [number, number], elevation: 2.5 
 const B = { key: 'b', lngLat: [2.3, 48.86] as [number, number], elevation: 2.5 };
 
 describe('OcclusionProbe', () => {
-  it('draws one query per target and restores every piece of GL state', () => {
+  it('draws one query per target without reading GL state back (no GPU round trips)', () => {
     const f = fakeGl();
     const probe = new OcclusionProbe(f.gl);
     probe.setTargets([A, B]);
+    // Each state read is a synchronous round trip to the GPU process in Chrome. MapLibre marks
+    // its whole GL state dirty after a custom layer renders, so there is nothing to restore.
+    const reads = vi.spyOn(f.gl, 'getParameter');
+    const enabledReads = vi.spyOn(f.gl, 'isEnabled');
     probe.draw(MAIN, 4);
+    expect(reads).not.toHaveBeenCalled();
+    expect(enabledReads).not.toHaveBeenCalled();
     expect(f.drawn.map((d) => d.first)).toEqual([0, 1]);
-    expect(f.state).toMatchObject({
-      program: f.mapleState.program,
-      vao: f.mapleState.vao,
-      buffer: f.mapleState.buffer,
-      colorMask: [true, true, true, true],
-      depthMask: true,
-      depthTest: false,
-      depthFunc: f.raw.LESS,
-    });
+    // Probe points only test depth: no colour or depth writes.
+    expect(f.state).toMatchObject({ colorMask: [false, false, false, false], depthMask: false });
     expect(probe.pending).toBe(true);
   });
 

@@ -1,12 +1,5 @@
 import polygonClipping, { type Polygon } from 'polygon-clipping';
-import { polygonsOf } from '../core/geometry';
 import type { LngLat } from '../core/types';
-
-export interface SourceFeatureLike {
-  id?: number | string | null;
-  geometry: { type: string; coordinates: unknown };
-  properties?: Record<string, unknown> | null;
-}
 
 export interface Footprint {
   id: number | string;
@@ -73,75 +66,42 @@ function vertexAverage(rings: number[][][]): LngLat {
   return n ? [x / n, y / n] : [0, 0];
 }
 
-type Union = typeof polygonClipping.union;
+export type Union = typeof polygonClipping.union;
 
-/** Groups vector-tile pieces by feature id and unions them back into whole footprints. */
-export class FootprintIndex {
-  private cache = new Map<string, Footprint>();
+/** Identity of a building's pieces (order-independent). */
+export const signatureOf = (pieces: number[][][][]): string =>
+  pieces
+    .map((p) => JSON.stringify(p))
+    .sort()
+    .join('|');
 
-  constructor(
-    private readonly union: Union = polygonClipping.union,
-    private readonly onError?: (key: string, err: unknown) => void,
-  ) {}
-  /** Pieces skipped in the last update for lacking an id. */
-  missingIds = 0;
-
-  update(
-    features: SourceFeatureLike[],
-    keep: (properties: Record<string, unknown>) => boolean,
-  ): Map<string, Footprint> {
-    this.missingIds = 0;
-    const groups = new Map<
-      string,
-      { id: number | string; pieces: number[][][][]; properties: Record<string, unknown> }
-    >();
-    for (const f of features) {
-      // Properties first: reading `geometry` decodes and projects the tile geometry.
-      const properties = f.properties ?? {};
-      if (!keep(properties)) continue;
-      const polygons = polygonsOf(f.geometry);
-      if (!polygons.length) continue;
-      if (f.id === undefined || f.id === null) {
-        this.missingIds++;
-        continue;
-      }
-      const key = String(f.id);
-      let g = groups.get(key);
-      if (!g) groups.set(key, (g = { id: f.id, pieces: [], properties }));
-      g.pieces.push(...polygons);
-    }
-    const next = new Map<string, Footprint>();
-    for (const [key, g] of groups) {
-      const signature = g.pieces
-        .map((p) => JSON.stringify(p))
-        .sort()
-        .join('|');
-      const cached = this.cache.get(key);
-      if (cached?.signature === signature) {
-        next.set(key, cached);
-        continue;
-      }
-      const [first, ...rest] = g.pieces as unknown as Polygon[];
-      let polygons: number[][][][];
-      try {
-        polygons = (rest.length ? this.union(first!, ...rest) : [first!]) as number[][][][];
-      } catch (err) {
-        // The clipper can fail on near-coincident pieces: keep the biggest one, not nothing.
-        this.onError?.(key, err);
-        polygons = [largest(g.pieces)];
-      }
-      if (!polygons.length) continue;
-      next.set(key, {
-        id: g.id,
-        key,
-        polygons,
-        properties: g.properties,
-        centroid: centroidOf(polygons),
-        terrainPoint: vertexAverage(largest(polygons)),
-        signature,
-      });
-    }
-    this.cache = next;
-    return next;
+/** A building's tile pieces unioned back into its whole footprint. */
+export function mergeFootprint(
+  key: string,
+  id: number | string,
+  pieces: number[][][][],
+  properties: Record<string, unknown>,
+  signature: string,
+  union: Union = polygonClipping.union,
+  onError?: (key: string, err: unknown) => void,
+): Footprint | undefined {
+  const [first, ...rest] = pieces as unknown as Polygon[];
+  let polygons: number[][][][];
+  try {
+    polygons = (rest.length ? union(first!, ...rest) : [first!]) as number[][][][];
+  } catch (err) {
+    // The clipper can fail on near-coincident pieces: keep the biggest one, not nothing.
+    onError?.(key, err);
+    polygons = [largest(pieces)];
   }
+  if (!polygons.length) return undefined;
+  return {
+    id,
+    key,
+    polygons,
+    properties,
+    centroid: centroidOf(polygons),
+    terrainPoint: vertexAverage(largest(polygons)),
+    signature,
+  };
 }

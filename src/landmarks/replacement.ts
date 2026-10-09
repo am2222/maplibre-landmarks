@@ -4,6 +4,7 @@ import { sameValue, scaleBy, stripWrappers } from '../core/expressions';
 import { pointInPolygons, polygonsOf, type Ring } from '../core/geometry';
 import { notifyExemptionsChanged } from '../labels/exemptions';
 import { EARTH_RADIUS_M } from '../core/mercator';
+import { TileFeed, tileBounds, type FeedFeature, type FeedMap } from '../core/tileFeed';
 import type { LandmarkEntry } from './catalogue';
 import { entryKey } from './discovery';
 
@@ -14,6 +15,8 @@ export type ReplacementTarget = Pick<
   | 'getPaintProperty'
   | 'setPaintProperty'
   | 'querySourceFeatures'
+  | 'getSource'
+  | 'getBounds'
   | 'setFeatureState'
   | 'removeFeatureState'
   | 'on'
@@ -142,6 +145,13 @@ function areaOf(polygons: number[][][][]): number {
   return total;
 }
 
+/** Bounds of a tile key, padded by a tenth of a tile (features reach into the tile buffer). */
+function paddedTileBounds(key: string): Bbox {
+  const [w, south, e, n] = tileBounds(key);
+  const [dx, dy] = [(e - w) * 0.1, (n - south) * 0.1];
+  return [w - dx, south - dy, e + dx, n + dy];
+}
+
 /** Share (0..1) of a building's area inside a footprint; 0 when it cannot be computed. */
 function shareInside(building: number[][][][], footprint: number[][][][]): number {
   const area = areaOf(building);
@@ -175,6 +185,16 @@ interface Claimed {
   owners: string[];
 }
 
+type Region = { key: string; footprints: number[][][][]; bbox: Bbox; ids: (number | string)[] };
+
+/** A target source (and source layer) followed tile by tile. */
+interface Followed {
+  target: Target;
+  feed: TileFeed;
+  /** Claims found in each held tile. */
+  tiles: Map<string, Map<string, Claimed>>;
+}
+
 /**
  * Hides basemap buildings under loaded landmarks with feature-state (repaint only, no tile
  * re-parse). Each target layer's paint is wrapped once so a feature's fade scales it away.
@@ -188,12 +208,15 @@ export class BuildingReplacement {
   private claimed = new Map<string, Claimed>();
   /** Fade value last written to each feature. */
   private applied = new Map<string, FeatureIdentifier & { fade: number }>();
-  private regions: {
-    key: string;
-    footprints: number[][][][];
-    bbox: Bbox;
-    ids: (number | string)[];
-  }[] = [];
+  private regions: Region[] = [];
+  /** Per target source (`source/layer`): its tile feed and the claims found per tile. */
+  private readonly followed = new Map<string, Followed>();
+  /** Claims from the ids each model lists, by source key. */
+  private idClaims = new Map<string, Claimed>();
+  /** Claims changed since `claimed` was last assembled. */
+  private claimsChanged = false;
+  /** Set while this class settles its feeds: arrivals and drops are written right after. */
+  private arrived?: Set<string>;
   /** Keys of the claimed features last written (listeners hear when the set changes). */
   private claimedKey = '';
   private fades = new Map<string, number>();
@@ -213,6 +236,7 @@ export class BuildingReplacement {
     const key = [...this.fades.keys()].sort().join('|');
     if (key !== this.lastKey) {
       this.lastKey = key;
+      const before = this.regions;
       this.regions = items.map(({ entry }) => {
         const footprints = footprintOf(entry, this.insetM);
         return {
@@ -226,7 +250,7 @@ export class BuildingReplacement {
         this.map.on('sourcedata', this.onSourceData);
         this.listening = true;
       }
-      this.rescan();
+      this.rescan(before);
     }
     this.apply();
   }
@@ -234,6 +258,11 @@ export class BuildingReplacement {
   /** Forget state tied to a replaced style without touching the map. */
   reset(): void {
     this.originals.clear();
+    // A swapped style may carry other tiles: start the feeds over.
+    for (const f of this.followed.values()) {
+      f.feed.reset();
+      f.tiles.clear();
+    }
     this.claimed.clear();
     this.applied.clear();
     this.lastKey = '';
@@ -244,6 +273,9 @@ export class BuildingReplacement {
     clearTimeout(this.timer);
     if (this.listening) this.map.off('sourcedata', this.onSourceData);
     this.listening = false;
+    for (const f of this.followed.values()) f.feed.dispose();
+    this.followed.clear();
+    this.idClaims.clear();
     for (const f of this.applied.values())
       this.safely(() => this.map.removeFeatureState(f, FADE_STATE));
     this.applied.clear();
@@ -314,56 +346,137 @@ export class BuildingReplacement {
     this.originals.set(layerId, props);
   }
 
-  /** Work out which basemap features each landmark claims (on model-set change or new tiles). */
-  private rescan(): void {
-    const next = new Map<string, Claimed>();
-    const claim = (k: string, feature: FeatureIdentifier, owner: string) => {
-      const c = next.get(k);
-      if (!c) next.set(k, { feature, owners: [owner] });
-      else if (!c.owners.includes(owner)) c.owners.push(owner);
-    };
-    const scanned = new Set<string>();
+  /**
+   * The landmarks changed: claim the listed ids, follow each target source tile by tile, and
+   * check again only the held tiles under a landmark that came or went.
+   */
+  private rescan(before: Region[]): void {
+    const wanted = new Set<string>();
+    this.idClaims = new Map();
     for (const t of this.targets()) {
       const sourceKey = `${t.source}/${t.sourceLayer ?? ''}`;
-      if (!this.regions.length || scanned.has(sourceKey)) continue;
-      scanned.add(sourceKey);
-      const at = (id: number | string): FeatureIdentifier => ({
-        source: t.source,
-        sourceLayer: t.sourceLayer,
-        id,
-      });
+      if (!this.regions.length || wanted.has(sourceKey)) continue;
+      wanted.add(sourceKey);
       // Ids Open Landmarks lists for each model (authoritative for Protomaps builds)...
       for (const r of this.regions)
-        for (const id of r.ids) claim(`${sourceKey}/${id}`, at(id), r.key);
-      // ...plus anything whose centre falls inside an inset footprint (newer OSM, other basemaps).
-      const features = this.map.querySourceFeatures(
-        t.source,
-        t.sourceLayer ? { sourceLayer: t.sourceLayer } : {},
-      );
-      for (const f of features) {
-        if (f.id === undefined || f.id === null) continue;
-        const geometry = f.geometry as { type: string; coordinates: unknown };
-        const centre = centreOf(geometry);
-        if (!centre) continue;
-        let polygons: number[][][][] | undefined;
-        for (const r of this.regions) {
-          let inside = pointInPolygons(centre, r.footprints);
-          if (!inside) {
-            // ...or mostly inside it (parts straddling the outline).
-            polygons ??= polygonsOf(geometry);
-            inside =
-              overlaps(bboxOf(polygons), r.bbox) &&
-              shareInside(polygons, r.footprints) >= MOSTLY_INSIDE;
-          }
-          if (inside) claim(`${sourceKey}/${f.id}`, at(f.id), r.key);
-        }
+        for (const id of r.ids) claimInto(this.idClaims, `${sourceKey}/${id}`, at(t, id), r.key);
+    }
+    for (const [sourceKey, f] of this.followed)
+      if (!wanted.has(sourceKey)) {
+        f.feed.dispose();
+        this.followed.delete(sourceKey);
+      }
+    // ...plus buildings inside a footprint, per tile: tiles arriving now are checked as they come.
+    // Landmarks that came or went (a tile under one that stayed has its claims already).
+    const keys = (rs: Region[]) => new Set(rs.map((r) => r.key));
+    const [was, now] = [keys(before), keys(this.regions)];
+    const changed = [
+      ...before.filter((r) => !now.has(r.key)),
+      ...this.regions.filter((r) => !was.has(r.key)),
+    ].map((r) => r.bbox);
+    for (const sourceKey of wanted) {
+      const f = this.follow(sourceKey);
+      const arrived = (this.arrived = new Set<string>());
+      try {
+        f.feed.settle();
+      } finally {
+        this.arrived = undefined;
+      }
+      for (const key of f.feed.keys()) {
+        if (arrived.has(key)) continue;
+        const bounds = paddedTileBounds(key);
+        if (changed.some((b) => overlaps(bounds, b)))
+          this.checkTile(f, key, f.feed.featuresOf(key));
       }
     }
+    this.claimsChanged = true;
+  }
+
+  /** The tile feed of a target source, made on first use. */
+  private follow(sourceKey: string): Followed {
+    const known = this.followed.get(sourceKey);
+    if (known) return known;
+    const target = this.targets().find((t) => `${t.source}/${t.sourceLayer ?? ''}` === sourceKey)!;
+    const tiles = new Map<string, Map<string, Claimed>>();
+    const followed: Followed = {
+      target,
+      tiles,
+      feed: new TileFeed(this.map as unknown as FeedMap, {
+        source: target.source,
+        ...(target.sourceLayer ? { sourceLayer: target.sourceLayer } : {}),
+        // Tiles far from every landmark are not read; a landmark arriving later reads them.
+        wants: (key) => this.near(key),
+        onTile: (key, features) => {
+          this.checkTile(followed, key, features);
+          this.claimsChanged = true;
+          // Arrivals during a rescan are written by it; later ones soon.
+          if (this.arrived) this.arrived.add(key);
+          else this.schedule();
+        },
+        onDrop: (key) => {
+          if (tiles.delete(key)) this.claimsChanged = true;
+          if (!this.arrived) this.schedule();
+        },
+      }),
+    };
+    this.followed.set(sourceKey, followed);
+    return followed;
+  }
+
+  /** A tile (padded by its buffer) reaches a current landmark. */
+  private near(key: string): boolean {
+    const tile = paddedTileBounds(key);
+    return this.regions.some((r) => overlaps(tile, r.bbox));
+  }
+
+  /** The buildings of one tile under the current landmarks (centre inside, or mostly inside). */
+  private checkTile(f: Followed, key: string, features: FeedFeature[] | undefined): void {
+    f.tiles.delete(key);
+    // A whole tile far from every landmark: skip without decoding its buildings.
+    const tile = paddedTileBounds(key);
+    const regions = this.regions.filter((r) => overlaps(tile, r.bbox));
+    if (!regions.length || !features) return;
+    const claims = new Map<string, Claimed>();
+    const sourceKey = `${f.target.source}/${f.target.sourceLayer ?? ''}`;
+    for (const feature of features) {
+      if (feature.id === undefined || feature.id === null) continue;
+      const geometry = feature.geometry;
+      const centre = centreOf(geometry);
+      if (!centre) continue;
+      // Dense tiles hold thousands of buildings, nearly all far from any landmark: reject
+      // them by their bounds before the outline tests.
+      const polygons = polygonsOf(geometry);
+      const box = bboxOf(polygons);
+      for (const r of regions) {
+        if (!overlaps(box, r.bbox)) continue;
+        const inside =
+          pointInPolygons(centre, r.footprints) ||
+          shareInside(polygons, r.footprints) >= MOSTLY_INSIDE;
+        if (inside)
+          claimInto(claims, `${sourceKey}/${feature.id}`, at(f.target, feature.id), r.key);
+      }
+    }
+    if (claims.size) f.tiles.set(key, claims);
+  }
+
+  /** Listed ids plus every held tile's claims (a building in two tiles is claimed once). */
+  private assemble(): void {
+    const next = new Map<string, Claimed>();
+    const merge = (claims: Map<string, Claimed>) => {
+      for (const [k, c] of claims)
+        for (const owner of c.owners) claimInto(next, k, c.feature, owner);
+    };
+    merge(this.idClaims);
+    for (const f of this.followed.values()) for (const claims of f.tiles.values()) merge(claims);
     this.claimed = next;
   }
 
   /** Write each claimed feature's fade (the strongest of its owners); clear released ones. */
   private apply(): void {
+    if (this.claimsChanged) {
+      this.claimsChanged = false;
+      this.assemble();
+    }
     for (const [k, f] of this.applied) {
       if (!this.claimed.has(k)) {
         this.map.removeFeatureState(f, FADE_STATE);
@@ -391,16 +504,27 @@ export class BuildingReplacement {
       this.layerIds.map((id) => (this.map.getLayer(id) as { source?: string } | undefined)?.source),
     );
     if (!e.sourceId || !sources.has(e.sourceId)) return;
+    this.schedule();
+  };
+
+  /** Soon: let the feeds settle (tiles gone, fallback diffs), then write the claims. */
+  private schedule(): void {
     clearTimeout(this.timer);
     this.timer = setTimeout(
       () =>
         this.safely(() => {
-          this.rescan();
+          // Tiles arriving while settling are written right after, not scheduled again.
+          this.arrived = new Set();
+          try {
+            for (const f of this.followed.values()) f.feed.settle();
+          } finally {
+            this.arrived = undefined;
+          }
           this.apply();
         }),
       RESCAN_DEBOUNCE_MS,
     );
-  };
+  }
 
   private safely(fn: () => void): void {
     try {
@@ -409,4 +533,21 @@ export class BuildingReplacement {
       // The style was torn down (setStyle / map.remove).
     }
   }
+}
+
+const at = (t: Target, id: number | string): FeatureIdentifier => ({
+  source: t.source,
+  sourceLayer: t.sourceLayer,
+  id,
+});
+
+function claimInto(
+  claims: Map<string, Claimed>,
+  key: string,
+  feature: FeatureIdentifier,
+  owner: string,
+): void {
+  const c = claims.get(key);
+  if (!c) claims.set(key, { feature, owners: [owner] });
+  else if (!c.owners.includes(owner)) c.owners.push(owner);
 }

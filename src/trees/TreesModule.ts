@@ -1,23 +1,17 @@
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
-import { localPosition } from '../core/mercator';
+import { farCutoffM, tileNearestM } from '../core/cutoff';
+import { localPosition, originAt } from '../core/mercator';
 import type { Theme } from '../core/theme';
 import type { Bounds, LngLat, Origin, ViewState } from '../core/types';
 import { padBounds, padMetres } from '../landmarks/discovery';
+import { TileFeed } from '../core/tileFeed';
 import { TreeBatches } from './batches';
-import {
-  collectMapped,
-  collectPolygons,
-  pieceKey,
-  PointIndex,
-  type MappedTree,
-  type PolygonGroup,
-} from './collect';
 import { createTreeMaterial } from './material';
 import { disposePrepared, prepareModel, type PreparedModel } from './models/prepare';
 import { birch, conifer, deciduous } from './models/procedural';
 import type { TreeModel } from './models/types';
-import { scatterPiece, shouldScatter, type ScatterPoint } from './scatter';
-import { selectTrees, type PlacedTree } from './select';
+import { distanceFrom, kthSmallest, selectTrees, type Candidate, type PlacedTree } from './select';
+import { TreeTiles } from './tileStore';
 
 export interface TreesWind {
   strength?: number;
@@ -32,8 +26,26 @@ export interface TreesOptions {
   models?: TreeModel[];
   weights?: Record<string, number>;
   maxTrees?: number;
+  /** Trees appear from this zoom (default 14, with the 3D buildings). */
   minZoom?: number;
+  /**
+   * Scattered trees are thinned below this zoom (default 16): a quarter of them at two zooms
+   * below, half at one. A fixed subset per tree, so zooming in only adds trees.
+   */
+  fullDensityZoom?: number;
   lodDistanceM?: number;
+  /**
+   * Pitched views (past 45°) draw this layer only to about three screen heights from the view
+   * centre and skip tiles beyond, as Mapbox does (default true).
+   */
+  farCutoff?: boolean;
+  /** Milliseconds a newly shown tree takes to rise from the ground (default 400; 0: no rise). */
+  riseMs?: number;
+  /**
+   * Share of trees drawn, 0–1 (default 0.6), mapped and scattered alike: a fixed subset per
+   * tree, so changing it only adds or removes trees.
+   */
+  density?: number;
   /** Trees per m² by landuse kind; false disables scattering. */
   scatter?: Record<string, number> | false;
   scatterSkipRatio?: number;
@@ -55,14 +67,20 @@ export interface TreeStats {
   piecesScattered: number;
 }
 
+const clamp01 = (v: number) => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 1));
 const DEFAULT_WEIGHTS: Record<string, number> = { deciduous: 0.6, conifer: 0.2, birch: 0.2 };
 const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 60, wood: 1 / 60, park: 1 / 400 };
-/** Cached scattered tile pieces (each ≤ one basemap tile). */
-const PIECE_CACHE_LIMIT = 2048;
 const SOURCE_DEBOUNCE_MS = 200;
 
 const inBounds = ([lng, lat]: LngLat, [w, s, e, n]: Bounds) =>
   lng >= w && lng <= e && lat >= s && lat <= n;
+
+/** Distance from `center` to the nearest point of a bounding box (0 when inside it). */
+const nearestDistance = (
+  [w, s, e, n]: [number, number, number, number],
+  [lng, lat]: LngLat,
+  distance: (p: [number, number]) => number,
+) => distance([Math.min(Math.max(lng, w), e), Math.min(Math.max(lat, s), n)]);
 
 export class TreesModule implements LayerModule {
   private ctx?: ModuleContext;
@@ -71,7 +89,12 @@ export class TreesModule implements LayerModule {
   private models: { model: TreeModel; prepared: PreparedModel }[] = [];
   private lastView?: ViewState;
   private anchor: LngLat = [0, 0];
-  private readonly pieceCache = new Map<string, ScatterPoint[]>();
+  private lastDrawn: string[] = [];
+  /** Trees per tile, fed by the source's tiles as they load. */
+  private tiles?: TreeTiles;
+  private feeds: TileFeed[] = [];
+  /** Pieces scattered before this update (stats report the new ones). */
+  private scatteredBefore = 0;
   private stats: TreeStats = {
     mapped: 0,
     scattered: 0,
@@ -84,6 +107,9 @@ export class TreesModule implements LayerModule {
     piecesScattered: 0,
   };
   private wind: Required<TreesWind>;
+  private density: number;
+  /** Far cutoff of the last update (metres from the view centre; Infinity when off). */
+  private cutoff = Number.POSITIVE_INFINITY;
   private themeOption?: Theme;
   private sourceErrorReported = false;
   private disposed = false;
@@ -95,7 +121,9 @@ export class TreesModule implements LayerModule {
       directionDeg: opts.wind?.directionDeg ?? 250,
     };
     this.themeOption = opts.theme;
+    this.density = clamp01(opts.density ?? 0.6);
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
+    this.look.uniforms.uRise.value = Math.max(0, opts.riseMs ?? 400) / 1000;
   }
 
   onAdd(ctx: ModuleContext): void {
@@ -109,6 +137,7 @@ export class TreesModule implements LayerModule {
     this.look.setTheme(ctx.core.theme);
     this.batches = new TreeBatches(this.look.material, this.opts.maxTrees ?? 4000);
     ctx.scene.add(this.batches.group);
+    this.createFeeds(ctx);
     ctx.map.on('sourcedata', this.onSourceData);
     ctx.map.on('terrain', this.onTerrain);
     void this.loadModels();
@@ -119,98 +148,115 @@ export class TreesModule implements LayerModule {
     const ctx = this.ctx;
     if (!ctx || !this.batches || !this.models.length) return;
     const t0 = performance.now();
-    if (view.zoom < (this.opts.minZoom ?? 16)) {
+    if (view.zoom < (this.opts.minZoom ?? 14)) {
+      for (const feed of this.feeds) feed.suspend();
       this.write([], view);
       return;
     }
     if (!ctx.map.getSource(this.opts.source)) {
       this.reportSource(new Error(`Source "${this.opts.source}" not found`));
+      for (const feed of this.feeds) feed.suspend();
       this.write([], view);
       return;
     }
-    const layers = { points: 'pois', polygons: 'landuse', ...this.opts.sourceLayers };
-    const scatter = this.opts.scatter === false ? {} : (this.opts.scatter ?? DEFAULT_SCATTER);
-    let mapped: MappedTree[];
-    let polygons: PolygonGroup[];
+    this.cutoff = this.opts.farCutoff === false ? Number.POSITIVE_INFINITY : farCutoffM(view);
+    const u = this.look.uniforms;
+    u.uCutoff.value = Number.isFinite(this.cutoff) ? this.cutoff : 1e9;
+    u.uCutoffFade.value = Number.isFinite(this.cutoff) ? this.cutoff * 0.25 : 1;
     try {
-      mapped = collectMapped(ctx.map, this.opts.source, layers.points);
-      polygons = collectPolygons(ctx.map, this.opts.source, layers.polygons, Object.keys(scatter));
+      for (const feed of this.feeds) feed.settle();
     } catch (err) {
       this.reportSource(err);
       this.write([], view);
       return;
     }
-
-    const index = new PointIndex(mapped);
-    const scattered = new Map<string, ScatterPoint>();
-    let filled = 0;
-    let skipped = 0;
-    let piecesScattered = 0;
-    let usedPieces = 0;
-    for (const g of polygons) {
-      const density = scatter[g.kind]!;
-      const inside = index.countInside(g.pieces);
-      const fill = shouldScatter(g.pieces, density, inside, this.opts.scatterSkipRatio ?? 0.25);
-      let added = 0;
-      if (fill) {
-        // Cache per tile piece: a newly loaded tile only scatters its own piece.
-        for (const piece of g.pieces) {
-          const key = `${g.kind}|${density}|${pieceKey(piece)}`;
-          let points = this.pieceCache.get(key);
-          if (!points) {
-            points = scatterPiece(g.kind, piece, density);
-            piecesScattered++;
-          }
-          this.pieceCache.delete(key); // LRU: re-insert as most recent
-          this.pieceCache.set(key, points);
-          usedPieces++;
-          for (const p of points) {
-            scattered.set(p.key, p);
-            added++;
-          }
-        }
-      }
-      if (added) filled++;
-      else skipped++;
-    }
-    // Evict after the loop so pieces in use this update are never thrown out mid-way.
-    const limit = Math.max(PIECE_CACHE_LIMIT, usedPieces);
-    for (const key of this.pieceCache.keys()) {
-      if (this.pieceCache.size <= limit) break;
-      this.pieceCache.delete(key);
-    }
-
+    this.scatteredBefore = this.tiles!.piecesScattered;
+    const tiles = this.tiles!.tiles();
+    const zoomKeep = Math.min(
+      1,
+      Math.max(0.25, 2 ** (view.zoom - (this.opts.fullDensityZoom ?? 16))),
+    );
+    const keep = zoomKeep * this.density;
+    const maxTrees = this.opts.maxTrees ?? 4000;
     const padded = padBounds(view.bounds, padMetres(view.pitch, 30));
-    const candidates = [...mapped, ...scattered.values()].filter((c) => inBounds(c.lngLat, padded));
+    const distance = distanceFrom(view.center);
+    const candidates: Candidate[] = [];
+    const seen = new Set<string>();
+    let mapped = 0;
+    let scattered = 0;
+    // Nearest tiles first. Only the nearest maxTrees are drawn, so once that many candidates are
+    // in, a tile whose bounds lie beyond the current maxTrees-th distance cannot add a drawn tree:
+    // it and every farther one are skipped (a low camera sees woods to the horizon).
+    const ordered = tiles
+      .map((t) => ({ t, near: nearestDistance(t.bounds, view.center, distance) }))
+      .sort((a, b) => a.near - b.near);
+    let cutoff = Number.POSITIVE_INFINITY;
+    let cutoffAt = maxTrees;
+    const far = this.cutoff;
+    const add = (c: Candidate) => {
+      if (seen.has(c.key)) return false; // the same tree in a parent and a child tile
+      seen.add(c.key);
+      if (far !== Number.POSITIVE_INFINITY && distance(c.lngLat) > far) return true;
+      if (inBounds(c.lngLat, padded)) candidates.push(c);
+      return true;
+    };
+    for (const { t, near } of ordered) {
+      if (near > cutoff || near > far) break;
+      for (const m of t.mapped) if (m.thin < this.density && add(m)) mapped++;
+      for (const p of t.scatter()) if (p.thin < keep && add(p)) scattered++;
+      // Tighten the cutoff as candidates grow (recomputed when their number doubles).
+      if (candidates.length >= cutoffAt) {
+        cutoff = kthSmallest(
+          candidates.map((c) => distance(c.lngLat)),
+          maxTrees,
+        );
+        cutoffAt = candidates.length * 2;
+      }
+    }
+
     const selected = selectTrees(candidates, view.center, {
-      maxTrees: this.opts.maxTrees ?? 4000,
+      maxTrees,
       lodDistanceM: this.opts.lodDistanceM ?? 300,
       weights: this.models.map(
         ({ model }) => this.opts.weights?.[model.id] ?? DEFAULT_WEIGHTS[model.id] ?? 1,
       ),
       variants: this.models.map(({ prepared }) => prepared.variants.length),
     });
+    this.lastDrawn = selected.map((t) => t.key);
+    const counts = this.tiles!.pieceCounts();
     this.write(selected, view);
     this.stats = {
       ...this.stats,
-      mapped: mapped.length,
-      scattered: scattered.size,
-      polygonsFilled: filled,
-      polygonsSkipped: skipped,
-      piecesScattered,
+      mapped,
+      scattered,
+      polygonsFilled: counts.filled,
+      polygonsSkipped: counts.skipped,
+      piecesScattered: this.tiles!.piecesScattered - this.scatteredBefore,
       updateMs: performance.now() - t0,
     };
   }
 
   place(origin: Origin): void {
     if (!this.batches) return;
+    // Like zoom-interpolated building heights: full size one zoom after minZoom.
+    const zoom = this.ctx?.map.getZoom() ?? Number.POSITIVE_INFINITY;
+    const grow = Math.min(1, Math.max(0, zoom - (this.opts.minZoom ?? 14)));
+    this.look.uniforms.uGrow.value = grow;
     this.batches.group.position.set(...localPosition(origin, this.anchor, 0));
+    const centre = this.ctx?.map.getCenter?.();
+    if (centre) {
+      const [x, , z] = localPosition(originAt(this.anchor), [centre.lng, centre.lat], 0);
+      this.look.uniforms.uCenter.value.set(x, z);
+    }
     this.batches.group.updateMatrixWorld(true);
   }
 
   frame(timeMs: number): boolean {
-    this.look.uniforms.uTime.value = timeMs / 1000;
-    return this.wind.strength > 0 && (this.batches?.drawn ?? 0) > 0;
+    const t = timeMs / 1000;
+    this.look.uniforms.uTime.value = t;
+    if (!(this.batches?.drawn ?? 0)) return false;
+    const rising = t < this.batches!.lastBorn + this.look.uniforms.uRise.value;
+    return rising || this.wind.strength > 0;
   }
 
   themeChanged(theme: Theme): void {
@@ -219,6 +265,8 @@ export class TreesModule implements LayerModule {
   }
 
   styleChanged(attached: boolean): void {
+    // A swapped style may carry other tiles: start the feeds over.
+    for (const feed of this.feeds) feed.reset();
     if (attached && this.lastView) this.update(this.lastView);
   }
 
@@ -228,13 +276,15 @@ export class TreesModule implements LayerModule {
     const ctx = this.ctx;
     ctx?.map.off('sourcedata', this.onSourceData);
     ctx?.map.off('terrain', this.onTerrain);
+    for (const feed of this.feeds) feed.dispose();
+    this.feeds = [];
+    this.tiles = undefined;
     if (this.batches) {
       ctx?.scene.remove(this.batches.group);
       this.batches.dispose(); // disposes every prepared geometry it holds
     }
     this.look.material.dispose();
     this.models = [];
-    this.pieceCache.clear();
     this.batches = undefined;
     this.ctx = undefined;
   }
@@ -245,14 +295,84 @@ export class TreesModule implements LayerModule {
     else this.themeOption = theme;
   }
 
+  /** Share of trees drawn, 0–1 (see `density`). */
+  setDensity(density: number): void {
+    this.density = clamp01(density);
+    if (this.lastView) this.update(this.lastView);
+  }
+
   setWind(wind: TreesWind): void {
     this.wind = { ...this.wind, ...wind };
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
     this.ctx?.requestRepaint();
   }
 
+  /** Keys of the trees drawn by the last update. */
+  drawnKeys(): string[] {
+    return this.lastDrawn;
+  }
+
   getStats(): TreeStats {
     return { ...this.stats };
+  }
+
+  /** Mapped trees and green polygons, delivered tile by tile into the per-tile store. */
+  private createFeeds(ctx: ModuleContext): void {
+    const layers = { points: 'pois', polygons: 'landuse', ...this.opts.sourceLayers };
+    const scatter = this.opts.scatter === false ? {} : (this.opts.scatter ?? DEFAULT_SCATTER);
+    const tiles = (this.tiles = new TreeTiles({
+      scatter,
+      skipRatio: this.opts.scatterSkipRatio ?? 0.25,
+    }));
+    const changed = () => this.schedule();
+    // Two feeds share each tile key: each one sets and drops only its own half of the tile.
+    const feed = (
+      sourceLayer: string,
+      filter: unknown[],
+      set: (k: string, f: never) => void,
+      drop: (k: string) => void,
+    ) =>
+      new TileFeed(ctx.map, {
+        source: this.opts.source,
+        ...(sourceLayer ? { sourceLayer } : {}),
+        filter,
+        // Tiles wholly beyond the far cutoff are not read until it reaches them.
+        wants: (key) =>
+          key === '*' || !this.lastView || tileNearestM(key, this.lastView.center) <= this.cutoff,
+        onTile: (key, features) => {
+          set(key, features as never);
+          changed();
+        },
+        onDrop: (key) => {
+          drop(key);
+          changed();
+        },
+      });
+    this.feeds = [
+      feed(
+        layers.points,
+        ['==', ['get', 'kind'], 'tree'],
+        (k, f) => tiles.setPoints(k, f),
+        (k) => tiles.dropPoints(k),
+      ),
+    ];
+    const kinds = Object.keys(scatter);
+    if (kinds.length)
+      this.feeds.push(
+        feed(
+          layers.polygons,
+          ['in', ['get', 'kind'], ['literal', kinds]],
+          (k, f) => tiles.setPolygons(k, f),
+          (k) => tiles.dropPolygons(k),
+        ),
+      );
+  }
+
+  private schedule(): void {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      if (this.lastView) this.update(this.lastView);
+    }, SOURCE_DEBOUNCE_MS);
   }
 
   private async loadModels(): Promise<void> {
@@ -296,10 +416,7 @@ export class TreesModule implements LayerModule {
     const relevant =
       e.sourceId === this.opts.source || (!!terrainSource && e.sourceId === terrainSource);
     if (!relevant || !this.lastView) return;
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      if (this.lastView) this.update(this.lastView);
-    }, SOURCE_DEBOUNCE_MS);
+    this.schedule();
   };
 
   private reportSource(err: unknown): void {

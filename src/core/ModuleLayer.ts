@@ -13,6 +13,7 @@ export function viewStateOf(map: MlMap): ViewState {
     bearing: map.getBearing(),
     center: [c.lng, c.lat],
     bounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()],
+    heightPx: map.getContainer?.().clientHeight || undefined,
   };
 }
 

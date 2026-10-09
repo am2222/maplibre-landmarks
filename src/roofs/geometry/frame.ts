@@ -65,6 +65,31 @@ export function frameAlong(ring: Vec2[], u: Vec2): RoofFrame {
   };
 }
 
+/**
+ * The facing `v` turned to the nearest wall normal when one lies within `maxDeg`: a tagged
+ * direction is only as precise as it was written, and roofs face their walls.
+ */
+function snapToWall(ring: Vec2[], v: Vec2, maxDeg: number): Vec2 {
+  if (!(maxDeg > 0)) return v;
+  let best = v;
+  let bestAngle = (maxDeg * Math.PI) / 180;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!;
+    const b = ring[(i + 1) % ring.length]!;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 0.5) continue; // jitter, not a wall
+    // Both normals of the wall; keep the one on v's side.
+    let n: Vec2 = [-(b[1] - a[1]) / len, (b[0] - a[0]) / len];
+    if (n[0] * v[0] + n[1] * v[1] < 0) n = [-n[0], -n[1]];
+    const angle = Math.acos(Math.min(1, n[0] * v[0] + n[1] * v[1]));
+    if (angle < bestAngle) {
+      bestAngle = angle;
+      best = n;
+    }
+  }
+  return best;
+}
+
 /** Long axis of the minimum-area oriented box (rotating calipers over the hull edges). */
 function longAxis(ring: Vec2[]): Vec2 {
   const hull = convexHull(ring);
@@ -89,9 +114,11 @@ export function roofFrame(
   ring: Vec2[],
   direction?: number,
   orientation?: 'along' | 'across',
+  /** Degrees the direction may turn to line up with a wall (see RoofProps.directionSnap). */
+  snapDeg = 0,
 ): RoofFrame {
   if (direction !== undefined) {
-    const v = bearingVector(direction);
+    const v = snapToWall(ring, bearingVector(direction), snapDeg);
     return frameAlong(ring, [v[1], -v[0]]); // perp(u) === v
   }
   const long = longAxis(ring);

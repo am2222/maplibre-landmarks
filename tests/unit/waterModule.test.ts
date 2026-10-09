@@ -31,6 +31,7 @@ const RIVER = { kind: 'water', kind_detail: 'river' };
 
 function fakeMap() {
   const handlers = new Map<string, (e?: unknown) => void>();
+  const listeners = new Map<string, ((e?: unknown) => void)[]>();
   const map = {
     handlers,
     polygons: [] as unknown[],
@@ -38,8 +39,16 @@ function fakeMap() {
     source: { type: 'vector', vectorLayerIds: ['water'] } as object | undefined,
     terrain: null as object | null,
     elevation: (_ll: [number, number]) => 0 as number | null,
-    on: vi.fn((t: string, fn: (e?: unknown) => void) => handlers.set(t, fn)),
-    off: vi.fn((t: string) => handlers.delete(t)),
+    // Several listeners per event (the module and its tile feeds); handlers.get(t) calls them all.
+    on: vi.fn((t: string, fn: (e?: unknown) => void) => {
+      listeners.set(t, [...(listeners.get(t) ?? []), fn]);
+      handlers.set(t, (e?: unknown) => [...(listeners.get(t) ?? [])].forEach((f) => f(e)));
+    }),
+    off: vi.fn((t: string, fn?: (e?: unknown) => void) => {
+      const list = (listeners.get(t) ?? []).filter((f) => f !== fn);
+      listeners.set(t, list);
+      if (!list.length) handlers.delete(t);
+    }),
     getSource: (id: string) => (id === 'protomaps' ? map.source : undefined),
     querySourceFeatures: vi.fn((_s: string, o: { filter?: unknown }) =>
       JSON.stringify(o.filter).includes('LineString') ? map.lines : map.polygons,
@@ -62,6 +71,23 @@ function setup(over: object = {}) {
 const attr = (g: BufferGeometry, name: string) =>
   Array.from(g.getAttribute(name).array as Float32Array);
 const ys = (g: BufferGeometry) => attr(g, 'position').filter((_, i) => i % 3 === 1);
+
+/** A tile arriving as MapLibre announces it: its own polygons (and river lines). */
+function emitTile(
+  map: ReturnType<typeof fakeMap>,
+  canonical: { z: number; x: number; y: number },
+  polygons: unknown[],
+  lines: unknown[] = [],
+) {
+  map.handlers.get('sourcedata')!({
+    sourceId: 'protomaps',
+    tile: {
+      tileID: { canonical },
+      querySourceFeatures: (result: unknown[], params: { filter?: unknown }) =>
+        result.push(...(JSON.stringify(params.filter).includes('LineString') ? lines : polygons)),
+    },
+  });
+}
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -263,6 +289,99 @@ describe('WaterModule', () => {
     expect(module.getStats().pieces).toBe(6400);
     expect(first).toBeLessThan(1500);
     expect(again).toBeLessThan(500);
+  });
+
+  it('builds each tile once: updating reads nothing from the source (tiles arrive by event)', () => {
+    const { map, module } = setup();
+    module.update(view()); // seeds (nothing loaded yet)
+    emitTile(map, { z: 15, x: 1, y: 1 }, [poly([rect(-50, -50, 100, 100)], LAKE)]);
+    map.querySourceFeatures.mockClear();
+    module.update(view());
+    expect(map.querySourceFeatures).not.toHaveBeenCalled();
+    expect(module.getStats().pieces).toBe(1);
+  });
+
+  it('merges again only when tiles change or the view moves 2 km away', () => {
+    const { map, module } = setup();
+    module.update(view());
+    emitTile(map, { z: 15, x: 1, y: 1 }, [poly([rect(-50, -50, 100, 100)], LAKE)]);
+    module.update(view());
+    const geometry = () => module.body!.geometry.getAttribute('position');
+    const first = geometry();
+    module.update(view({ center: [LNG + 0.01, LAT] })); // ~730 m
+    expect(geometry()).toBe(first);
+    module.update(view({ center: [LNG + 0.03, LAT] })); // ~2.2 km: re-centred
+    expect(geometry()).not.toBe(first);
+  });
+
+  it('zoomed out below minZoom: holds no tiles and ignores arriving ones', () => {
+    const { map, module } = setup();
+    module.update(view());
+    emitTile(map, { z: 15, x: 1, y: 1 }, [poly([rect(-50, -50, 100, 100)], LAKE)]);
+    module.update(view({ zoom: 11 }));
+    const query = vi.fn();
+    map.handlers.get('sourcedata')!({
+      sourceId: 'protomaps',
+      tile: { tileID: { canonical: { z: 11, x: 1, y: 1 } }, querySourceFeatures: query },
+    });
+    expect(query).not.toHaveBeenCalled();
+    map.polygons = [poly([rect(-50, -50, 100, 100)], LAKE)];
+    module.update(view()); // back in: seeded from what is loaded
+    expect(module.getStats().pieces).toBe(1);
+  });
+
+  it('keeps a reloaded tile drawn (the same tile object announced again)', () => {
+    const { map, module } = setup();
+    module.update(view());
+    const lake = [poly([rect(-50, -50, 100, 100)], LAKE)];
+    const tile = {
+      tileID: { canonical: { z: 15, x: 1, y: 1 } },
+      querySourceFeatures: (result: unknown[], params: { filter?: unknown }) =>
+        result.push(...(JSON.stringify(params.filter).includes('LineString') ? [] : lake)),
+    };
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps', tile });
+    module.update(view());
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps', tile }); // reload
+    module.update(view());
+    expect(module.getStats().pieces).toBe(1);
+  });
+
+  it('picks the nearest pieces again on a short move when the budget leaves some out', () => {
+    const { map, module } = setup({ maxTriangles: 10 });
+    map.polygons = [
+      poly([rect(-50, -50, 100, 100)], LAKE),
+      poly([rect(1450, -50, 100, 100)], { kind: 'swimming_pool' }),
+    ];
+    module.update(view());
+    const styles = () => new Set(attr(module.body!.geometry, 'aStyle'));
+    expect(styles()).toEqual(new Set([1])); // the lake under the view
+    module.update(view({ center: [LNG + 1500 * M_LNG, LAT] })); // 1.5 km: within the 2 km
+    expect(styles()).not.toContain(1); // the east water, now the nearest
+  });
+
+  it('draws a lake once while a parent and a child tile both hold it', () => {
+    const { map, module } = setup();
+    module.update(view());
+    const x15 = Math.floor(((LNG + 180) / 360) * 2 ** 15);
+    const r = (LAT * Math.PI) / 180;
+    const y15 = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** 15);
+    // The parent's copy is simplified differently from the child's (its own signature).
+    emitTile(map, { z: 14, x: x15 >> 1, y: y15 >> 1 }, [poly([rect(-20, -20, 40, 41)], LAKE)]);
+    emitTile(map, { z: 15, x: x15, y: y15 }, [poly([rect(-20, -20, 40, 40)], LAKE)]);
+    module.update(view());
+    expect(module.getStats().pieces).toBe(1);
+  });
+
+  it('drops the foam on a tile cut once the neighbouring tile arrives', () => {
+    const { map, module } = setup();
+    module.update(view());
+    emitTile(map, { z: 15, x: 1, y: 1 }, [poly([rect(-100, -50, 100, 100)], LAKE)]);
+    module.update(view());
+    // Alone, the west half's cut edge looks like a shore: 4 ribbons.
+    expect(module.shore!.geometry.getAttribute('position').count).toBe(16);
+    emitTile(map, { z: 15, x: 2, y: 1 }, [poly([rect(0, -50, 100, 100)], LAKE)]);
+    module.update(view());
+    expect(module.shore!.geometry.getAttribute('position').count).toBe(24); // 2 × 3 edges
   });
 
   it('removes its meshes and listeners', () => {

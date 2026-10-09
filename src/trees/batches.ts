@@ -30,6 +30,10 @@ export class TreeBatches {
   private near: InstancedMesh[][] = [];
   private far: InstancedMesh[] = [];
   private total = 0;
+  /** When each drawn tree first appeared (seconds, the shader's clock): it rises from then. */
+  private born = new Map<string, number>();
+  /** Latest appearance time written (trees still rise until this plus the rise time). */
+  lastBorn = Number.NEGATIVE_INFINITY;
 
   constructor(
     private readonly material: Material,
@@ -50,7 +54,9 @@ export class TreeBatches {
     trees: PlacedTree[],
     anchor: [number, number],
     elevation: (p: [number, number]) => number = () => 0,
+    now = performance.now() / 1000,
   ): { near: number; far: number; drawn: number } {
+    const born = new Map<string, number>();
     const all = this.meshes();
     for (const mesh of all) mesh.count = 0;
     const origin = originAt(anchor);
@@ -75,6 +81,11 @@ export class TreeBatches {
         i,
         swayPhase(t.lngLat),
       );
+      // A tree already drawn keeps its time (a LOD switch does not make it rise again).
+      const at = this.born.get(t.key) ?? now;
+      born.set(t.key, at);
+      if (at === now) this.lastBorn = now;
+      (mesh.geometry.getAttribute('aBorn') as InstancedBufferAttribute).setX(i, at);
       mesh.count = i + 1;
       if (t.far) far++;
       else near++;
@@ -83,7 +94,9 @@ export class TreeBatches {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.geometry.getAttribute('aTint').needsUpdate = true;
       mesh.geometry.getAttribute('aPhase').needsUpdate = true;
+      mesh.geometry.getAttribute('aBorn').needsUpdate = true;
     }
+    this.born = born;
     this.total = near + far;
     return { near, far, drawn: this.total };
   }
@@ -99,6 +112,10 @@ export class TreeBatches {
     );
     geometry.setAttribute(
       'aPhase',
+      new InstancedBufferAttribute(new Float32Array(this.capacity), 1),
+    );
+    geometry.setAttribute(
+      'aBorn',
       new InstancedBufferAttribute(new Float32Array(this.capacity), 1),
     );
     const mesh = new InstancedMesh(geometry, this.material, this.capacity);

@@ -29,18 +29,55 @@ export function pickModel(weights: number[], u: number): number {
   return weights.length - 1;
 }
 
+/** Distance in metres from `center` (equirectangular at the centre's latitude). */
+export function distanceFrom(center: [number, number]): (lngLat: [number, number]) => number {
+  const kx = METRES_PER_DEG * Math.cos((center[1] * Math.PI) / 180);
+  return ([lng, lat]) => Math.hypot((lng - center[0]) * kx, (lat - center[1]) * METRES_PER_DEG);
+}
+
+/** The k-th smallest value (1-based), by quickselect on a copy: O(n) on average. */
+export function kthSmallest(values: ArrayLike<number>, k: number): number {
+  const a = Float64Array.from(values);
+  let lo = 0;
+  let hi = a.length - 1;
+  const target = k - 1;
+  while (lo < hi) {
+    const pivot = a[(lo + hi) >> 1]!;
+    let i = lo;
+    let j = hi;
+    while (i <= j) {
+      while (a[i]! < pivot) i++;
+      while (a[j]! > pivot) j--;
+      if (i <= j) {
+        const t = a[i]!;
+        a[i++] = a[j]!;
+        a[j--] = t;
+      }
+    }
+    if (target <= j) hi = j;
+    else if (target >= i) lo = i;
+    else break;
+  }
+  return a[target]!;
+}
+
 /** Nearest `maxTrees` to `center`; far beyond `lodDistanceM`; look derived from the key only. */
 export function selectTrees(
   candidates: Candidate[],
   center: [number, number],
   opts: { maxTrees: number; lodDistanceM: number; weights: number[]; variants: number[] },
 ): PlacedTree[] {
-  const kx = METRES_PER_DEG * Math.cos((center[1] * Math.PI) / 180);
-  return candidates
-    .map((c) => ({
-      c,
-      d: Math.hypot((c.lngLat[0] - center[0]) * kx, (c.lngLat[1] - center[1]) * METRES_PER_DEG),
-    }))
+  const distance = distanceFrom(center);
+  const d = candidates.map((c) => distance(c.lngLat));
+  // Only the nearest maxTrees matter: cut at the maxTrees-th distance before sorting (ties at
+  // the cut are kept, then ordered by key like the full sort).
+  const cut =
+    candidates.length > opts.maxTrees ? kthSmallest(d, opts.maxTrees) : Number.POSITIVE_INFINITY;
+  const near: { c: Candidate; d: number }[] = [];
+  candidates.forEach((c, i) => {
+    if (d[i]! <= cut) near.push({ c, d: d[i]! });
+  });
+  return near
     .sort((a, b) => a.d - b.d || (a.c.key < b.c.key ? -1 : 1))
     .slice(0, opts.maxTrees)
     .map(({ c, d }) => {

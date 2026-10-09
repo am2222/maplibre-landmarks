@@ -62,7 +62,14 @@ function minOfMax(terms: Plane[][]): Plane[][] {
 }
 
 /** The surface of a profile roof (spec section 5.2). */
-export function profilePlanes(shape: ProfileShape, H: number, L: number, W: number): Profile {
+export function profilePlanes(
+  shape: ProfileShape,
+  H: number,
+  L: number,
+  W: number,
+  /** Side-hipped roofs: the end (+1: u = +L, -1: u = −L) left gabled; both hipped if unknown. */
+  gableEnd?: 1 | -1,
+): Profile {
   const gable: Plane[] = [
     [0, -H / W, H],
     [0, H / W, H],
@@ -87,6 +94,15 @@ export function profilePlanes(shape: ProfileShape, H: number, L: number, W: numb
       return one([...gable, [-H / W, 0, (H * L) / W], [H / W, 0, (H * L) / W]]);
     case 'half_hipped':
       return one([...gable, [-H / W, 0, H / 2 + (H * L) / W], [H / W, 0, H / 2 + (H * L) / W]]);
+    case 'side_hipped':
+    case 'side_half_hipped': {
+      // A hip (from half height when half-hipped) at every end but the gabled one.
+      const lift = shape === 'side_half_hipped' ? H / 2 : 0;
+      const hips: Plane[] = [];
+      if (gableEnd !== 1) hips.push([-H / W, 0, lift + (H * L) / W]);
+      if (gableEnd !== -1) hips.push([H / W, 0, lift + (H * L) / W]);
+      return one([...gable, ...hips]);
+    }
     case 'hipped_and_gabled': {
       // Hips up to half height, then a small vertical gable at each end up to the ridge.
       const h0 = H / 2;

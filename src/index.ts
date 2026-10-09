@@ -26,9 +26,19 @@ export {
   type FrameProjection,
   type RendererFactory,
   type RendererLike,
+  type SetThemeOptions,
   type ThemeListener,
 } from './core/ThreeCore';
-export { THEME_NAMES, THEMES, type Theme, type ThemePalette, type ThemeValues } from './core/theme';
+export {
+  SKY_COLORS,
+  THEME_NAMES,
+  THEMES,
+  themeSky,
+  type SkyColors,
+  type Theme,
+  type ThemePalette,
+  type ThemeValues,
+} from './core/theme';
 export { cameraMatrix, localPosition, originAt } from './core/mercator';
 export type { Bounds, LngLat, Origin, ViewState } from './core/types';
 export { LabelOcclusion, type LabelOcclusionOptions } from './labels/LabelOcclusion';
@@ -46,7 +56,7 @@ export type { TreeModel, TreeParts } from './trees/models/types';
 export { RoofsLayer, type RoofsLayerOptions } from './roofs/RoofsLayer';
 export { RoofsModule, type RoofsOptions } from './roofs/RoofsModule';
 export { ROOF_STATE } from './roofs/walls';
-export { DEFAULT_FIELDS, type Fields } from './roofs/schema';
+export { buildingBase, buildingHeight, DEFAULT_FIELDS, FLOOR_M, type Fields } from './roofs/schema';
 export { FogLayer, type FogLayerOptions } from './fog/FogLayer';
 export { FogModule, type FogOptions, type FogWind } from './fog/FogModule';
 export { WaterLayer, type WaterLayerOptions } from './water/WaterLayer';

@@ -1,6 +1,6 @@
 import { roofRGB, toRGB } from '../colors';
 import type { ProfileShape, RoofProps } from '../schema';
-import { roofFrame, type RoofFrame, type Vec2 } from './frame';
+import { roofFrame, toFrame, type RoofFrame, type Vec2 } from './frame';
 import { MeshBuilder, type RoofMesh } from './mesh';
 import { buildProfileRoof, profilePlanes, sawtoothTeeth } from './profiles';
 import { domeRoof, onionRoof, pyramidRoof } from './radial';
@@ -16,7 +16,14 @@ const TAN_30 = Math.tan(Math.PI / 6);
 const ROUNDED = new Set(['dome', 'onion', 'round']);
 const MIN_DEFAULT_M = 0.5;
 /** Shapes whose end slopes assume the ridge runs along the longer side. */
-const LONG_RIDGE = new Set(['hipped', 'half_hipped', 'hipped_and_gabled', 'mansard']);
+const LONG_RIDGE = new Set([
+  'hipped',
+  'half_hipped',
+  'side_hipped',
+  'side_half_hipped',
+  'hipped_and_gabled',
+  'mansard',
+]);
 
 /** Horizontal run of the roof faces, for a `roof_angle`. */
 function pitchRun(shape: string, frame: Pick<RoofFrame, 'L' | 'W'>): number {
@@ -67,11 +74,20 @@ function area(ring: Vec2[]): number {
  * The roof for one building (local metres, base at y = 0), or null when it gets none.
  * `variance` shifts the roof colour's lightness (see `colorVariance`).
  */
-export function buildRoof(props: RoofProps, polygons: Vec2[][][], variance = 0): BuiltRoof | null {
+export function buildRoof(
+  props: RoofProps,
+  polygons: Vec2[][][],
+  variance = 0,
+  /**
+   * Side-hipped roofs: where other parts touch this one. When they all touch the same end, that
+   * end stays gabled (as OSM2World decides); otherwise both ends are hipped.
+   */
+  attached: Vec2[] = [],
+): BuiltRoof | null {
   const outers = polygons.map((rings) => open(rings[0] ?? []));
   const outer = outers.reduce((best, r) => (area(r) > area(best) ? r : best), outers[0] ?? []);
   if (outer.length < 3 || area(outer) < 1e-6) return null;
-  let frame = roofFrame(outer, props.direction, props.orientation);
+  let frame = roofFrame(outer, props.direction, props.orientation, props.directionSnap);
   if (LONG_RIDGE.has(props.shape) && frame.L < frame.W) {
     // Hips are symmetric: turn the frame so the ridge is on the long side and the roof
     // reaches its height (with u ⟂ v kept: v = perp(u)).
@@ -87,7 +103,6 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][], variance = 0):
   const H = resolveRoofHeight(props, frame);
   if (H === null || !(H > 0)) return null;
   const roof = roofRGB(props.roofColor, variance);
-  const radius = Math.min(frame.L, frame.W);
   const b = new MeshBuilder();
   switch (props.shape) {
     case 'pyramidal':
@@ -97,14 +112,21 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][], variance = 0):
       pyramidRoof(b, outer, frame.origin, H, roof);
       return { mesh: b.build(), roofHeight: H };
     case 'dome':
-      domeRoof(b, frame.origin, radius, H, roof);
+      domeRoof(b, outer, frame.origin, Math.min(frame.L, frame.W), H, roof);
       return { mesh: b.build(), roofHeight: H };
     case 'onion':
-      onionRoof(b, frame.origin, radius, H, roof);
+      onionRoof(b, outer, frame.origin, Math.min(frame.L, frame.W), H, roof);
       return { mesh: b.build(), roofHeight: H };
     default: {
       const shape = props.shape as ProfileShape;
-      const profile = profilePlanes(shape, H, frame.L, frame.W);
+      const ends = new Set(
+        attached
+          .map((p) => toFrame(frame, p)[0])
+          .filter((u) => Math.abs(u) > frame.L / 2) // not along a long side
+          .map(Math.sign),
+      );
+      const gableEnd = ends.size === 1 ? ([...ends][0] as 1 | -1) : undefined;
+      const profile = profilePlanes(shape, H, frame.L, frame.W, gableEnd);
       return {
         mesh: buildProfileRoof(polygons, frame, profile, roof, toRGB(props.wallColor)),
         roofHeight: H,

@@ -93,4 +93,19 @@ describe('TreeBatches', () => {
     expect(first).toBeGreaterThanOrEqual(0);
     expect(first).toBeLessThan(2 * Math.PI);
   });
+
+  it('records when each tree first appeared, kept while it stays drawn', () => {
+    const b = new TreeBatches(new MeshBasicMaterial(), 4);
+    b.setModels([model('a', 1)]);
+    const mesh = b.group.children[0] as InstancedMesh;
+    const born = (i: number) => mesh.geometry.getAttribute('aBorn').getX(i);
+    b.write([tree({ key: 'a' })], C, undefined, 10);
+    expect(born(0)).toBe(10);
+    b.write([tree({ key: 'a' }), tree({ key: 'b' })], C, undefined, 12);
+    expect([born(0), born(1)]).toEqual([10, 12]);
+    b.write([tree({ key: 'b' })], C, undefined, 13); // 'a' left
+    b.write([tree({ key: 'a' }), tree({ key: 'b' })], C, undefined, 14);
+    expect([born(0), born(1)]).toEqual([14, 12]); // 'a' rises again
+    expect(b.lastBorn).toBe(14);
+  });
 });

@@ -10,12 +10,14 @@ body {
 #map {
   position: absolute;
   inset: 0;
+  /* Space behind the globe (the flat map covers it): the atmosphere glows against it. */
+  background: radial-gradient(circle at 50% 45%, #1b2a4a 0%, #0a1020 60%, #05070f 100%);
 }
 #panel {
   position: absolute;
   top: 12px;
   left: 12px;
-  width: 280px;
+  width: 290px;
   max-height: calc(100% - 24px);
   overflow: auto;
   background: #fffffff2;
@@ -24,49 +26,104 @@ body {
 }
 #panel header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  padding: 12px 14px 4px;
+  gap: 8px;
+  padding: 10px 12px 6px;
 }
 #panel h1 {
-  font-size: 15px;
+  font-size: 14px;
   margin: 0;
+  white-space: nowrap;
 }
-#panel nav a {
+#panel header nav {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+#panel header nav a {
   margin-left: 8px;
   font-size: 12px;
   color: #3c6e8f;
 }
-.group {
-  padding: 8px 14px 10px;
-  border-top: 1px solid #e4e7eb;
-}
-.group h2 {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+#panel header nav button {
+  margin-left: 6px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
   color: #616e7c;
-  margin: 2px 0 6px;
 }
-.group label {
+#panel.collapsed #panel-body {
+  display: none;
+}
+#panel.collapsed #collapse {
+  transform: rotate(-90deg);
+}
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid #e4e7eb;
+}
+.tabs button {
+  position: relative;
+  padding: 3px 9px;
+  border: 1px solid #d9dee3;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.tabs button:hover {
+  border-color: #3c6e8f;
+}
+.tabs button.active {
+  background: #24506b;
+  border-color: #24506b;
+  color: #fff;
+}
+/* A dot on layer tabs whose layer is on. */
+.tabs button.on::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3fae6a;
+  border: 1px solid #fff;
+}
+.controls {
+  padding: 8px 14px 12px;
+}
+.controls label {
   display: block;
   margin: 6px 0;
 }
-.group label select,
-.group label input[type='range'] {
+.controls label select,
+.controls label input[type='range'] {
   display: block;
   width: 100%;
   margin-top: 2px;
 }
-.group label output {
+.controls label output {
   float: right;
   color: #616e7c;
   font-variant-numeric: tabular-nums;
 }
-.group label.check {
+.controls label.check,
+.controls label.switch {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.controls label.switch {
+  font-weight: 600;
+  margin-top: 0;
 }
 .row {
   display: flex;
@@ -75,12 +132,13 @@ body {
 }
 .row > label {
   flex: 1;
+  min-width: 0;
 }
 .places {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
+  margin-bottom: 4px;
 }
 .places button {
   padding: 3px 8px;
@@ -88,40 +146,10 @@ body {
   border-radius: 12px;
   background: #fff;
   cursor: pointer;
+  font-size: 12px;
 }
 .places button:hover {
   border-color: #3c6e8f;
-}
-.layers {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.layers li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.layers button {
-  flex: 1;
-  text-align: left;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  cursor: pointer;
-  font: inherit;
-}
-.layers button:hover {
-  background: #f0f4f8;
-}
-.layers button.active {
-  background: #e3eef6;
-  color: #24506b;
-  font-weight: 600;
-}
-.controls h2 {
-  color: #24506b;
 }
 .stats,
 .hint {
@@ -130,6 +158,8 @@ body {
   font-size: 12px;
 }
 #models {
+  max-height: 180px;
+  overflow: auto;
   padding-left: 18px;
   margin: 6px 0 0;
 }

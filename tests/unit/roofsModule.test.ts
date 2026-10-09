@@ -34,6 +34,7 @@ const feature = (id: number | undefined, coordinates: number[][][], properties: 
 
 function fakeMap() {
   const handlers = new Map<string, (e?: unknown) => void>();
+  const listeners = new Map<string, ((e?: unknown) => void)[]>();
   const paint: Record<string, unknown> = { 'fill-extrusion-height': ['get', 'height'] };
   const states = new Map<unknown, Record<string, unknown>>();
   let layer = true;
@@ -44,8 +45,16 @@ function fakeMap() {
     features: [] as ReturnType<typeof feature>[],
     setLayer: (on: boolean) => (layer = on),
     terrain: null as object | null,
-    on: vi.fn((t: string, fn: (e?: unknown) => void) => handlers.set(t, fn)),
-    off: vi.fn((t: string) => handlers.delete(t)),
+    // Several listeners per event (the module and its tile feeds); handlers.get(t) calls them all.
+    on: vi.fn((t: string, fn: (e?: unknown) => void) => {
+      listeners.set(t, [...(listeners.get(t) ?? []), fn]);
+      handlers.set(t, (e?: unknown) => [...(listeners.get(t) ?? [])].forEach((f) => f(e)));
+    }),
+    off: vi.fn((t: string, fn?: (e?: unknown) => void) => {
+      const list = (listeners.get(t) ?? []).filter((f) => f !== fn);
+      listeners.set(t, list);
+      if (!list.length) handlers.delete(t);
+    }),
     vectorLayerIds: undefined as string[] | undefined,
     getSource: (id: string) => (id === 'b' ? { vectorLayerIds: map.vectorLayerIds } : undefined),
     querySourceFeatures: vi.fn((_s: string, _o?: object) => map.features),
@@ -75,6 +84,29 @@ function setup(over: object = {}) {
 const roofMesh = (scene: Scene) => scene.children[0] as Mesh<BufferGeometry>;
 const stateOf = (m: ReturnType<typeof fakeMap>, id: number) =>
   m.states.get(id)?.[ROOF_STATE] as number | undefined;
+
+/**
+ * MapLibre's tile manager for source 'b': the tiles it renders now, each answering for its own
+ * features (as `tile.querySourceFeatures` does).
+ */
+function renderTiles(map: ReturnType<typeof fakeMap>, tiles: Record<string, unknown[]>) {
+  const list = Object.entries(tiles).map(([key, features]) => {
+    const [z, x, y] = key.split('/').map(Number);
+    return {
+      tileID: { canonical: { z, x, y } },
+      querySourceFeatures: vi.fn((result: unknown[]) => result.push(...features)),
+    };
+  });
+  // One manager per source (MapLibre keeps it while the source lives): only its tiles change.
+  const style = ((map as { style?: { tileManagers: Record<string, object> } }).style ??= {
+    tileManagers: {},
+  });
+  style.tileManagers.b = Object.assign(style.tileManagers.b ?? {}, {
+    getRenderableIds: () => list.map((_, i) => i),
+    getTileByID: (i: number) => list[i],
+  });
+  return list;
+}
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -134,6 +166,63 @@ describe('RoofsModule', () => {
     expect(module.getStats().buildings).toBe(1);
   });
 
+  it('puts the roof back in the same frame a landmark lets its building go', () => {
+    const { map, module } = setup();
+    map.features = [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'hipped' })];
+    const [lng, lat] = [2.2945 + 10 * M_LNG, 48.8584 + 10 * M_LAT];
+    const d = 0.001;
+    const around = [
+      [lng - d, lat - d],
+      [lng + d, lat - d],
+      [lng + d, lat + d],
+      [lng - d, lat + d],
+      [lng - d, lat - d],
+    ];
+    setExemptionSource(map, 'landmarks', () => [[around]]);
+    module.update(view());
+    expect(module.getStats().buildings).toBe(0);
+    setExemptionSource(map, 'landmarks', null); // landmark layer turned off
+    // No debounce: the wall would show at full height until the roof comes back.
+    expect(module.getStats().buildings).toBe(1);
+    expect(stateOf(map, 1)).toBeGreaterThan(0);
+  });
+
+  it('pitched: roofs no building beyond the far cutoff, nor reads its tile', () => {
+    const { map, module } = setup();
+    const far = renderTiles(map, {
+      '15/16592/11272': [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })],
+      '15/16610/11272': [feature(2, rectAt(2000, 0, 20, 20), { height: 20, roof_shape: 'dome' })],
+    })[1]!;
+    module.update(view({ zoom: 17, pitch: 70, heightPx: 900 })); // cutoff ~1.06 km
+    expect(map.states.has(2)).toBe(false);
+    expect(far.querySourceFeatures).not.toHaveBeenCalled();
+    expect(stateOf(map, 1)).toBeGreaterThan(0);
+    module.update(view({ zoom: 17, pitch: 30, heightPx: 900 }));
+    expect(stateOf(map, 2)).toBeGreaterThan(0);
+  });
+
+  it('roofs past the cutoff when farCutoff is off', () => {
+    const { map, module } = setup({ farCutoff: false });
+    map.features = [feature(2, rectAt(2000, 0, 20, 20), { height: 20, roof_shape: 'dome' })];
+    module.update(view({ zoom: 17, pitch: 70, heightPx: 900 }));
+    expect(stateOf(map, 2)).toBeGreaterThan(0);
+  });
+
+  it('gables a side-hipped wing at the end where it meets another part', () => {
+    const { map, scene, module } = setup();
+    map.features = [
+      // 20 × 10 m wing, roof 16–20 m, touching a lower building at its east end.
+      feature(1, rectAt(0, 0, 20, 10), { height: 20, roof_shape: 'side_hipped', roof_height: 4 }),
+      feature(2, rectAt(20, 0, 10, 10), { height: 10, roof_shape: 'pyramidal' }),
+    ];
+    module.update(view());
+    const p = Array.from(roofMesh(scene).geometry.getAttribute('position').array);
+    // Ridge points of the wing (the only vertices at 20 m), east-west extent in metres.
+    const ridge = p.filter((_, i) => i % 3 === 0 && Math.abs(p[i + 1]! - 20) < 1e-3);
+    const span = Math.max(...ridge) - Math.min(...ridge);
+    expect(span).toBeCloseTo(15, 1); // hipped west (5 m in), gabled east (to the wall)
+  });
+
   it('draws only the nearest maxBuildings', () => {
     const { map, module } = setup({ maxBuildings: 1 });
     map.features = [
@@ -155,6 +244,69 @@ describe('RoofsModule', () => {
     expect(module.getStats().buildings).toBe(0);
     map.handlers.get('sourcedata')!({ sourceId: 'b' });
     vi.advanceTimersByTime(200);
+    expect(module.getStats().buildings).toBe(1);
+  });
+
+  it('builds a split building from the tiles holding it, as each tile comes and goes', () => {
+    const { map, module } = setup();
+    // 40 × 30 m building cut in two pieces, one per tile.
+    const west = feature(1, rectAt(0, 0, 20.5, 30), { height: 30, roof_shape: 'gabled' });
+    const east = feature(1, rectAt(19.5, 0, 20.5, 30), { height: 30, roof_shape: 'gabled' });
+    renderTiles(map, { '15/16592/11272': [west] });
+    module.update(view());
+    expect(stateOf(map, 1)).toBeCloseTo(10.25 * TAN_30, 1); // the west piece alone (20.5 m)
+    renderTiles(map, { '15/16592/11272': [west], '15/16593/11272': [east] });
+    module.update(view());
+    expect(stateOf(map, 1)).toBeCloseTo(15 * TAN_30, 1); // whole: W = 15
+    renderTiles(map, { '15/16593/11272': [east] });
+    module.update(view());
+    expect(stateOf(map, 1)).toBeCloseTo(10.25 * TAN_30, 1); // the east piece alone
+    renderTiles(map, {});
+    module.update(view());
+    expect(map.states.has(1)).toBe(false);
+    expect(module.getStats().buildings).toBe(0);
+    expect(map.querySourceFeatures).not.toHaveBeenCalled();
+  });
+
+  it('keeps a reloaded tile roofed, with its new data', () => {
+    const { map, module } = setup();
+    const [tile] = renderTiles(map, {
+      '15/16592/11272': [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })],
+    });
+    module.update(view());
+    tile!.querySourceFeatures.mockImplementation((result: unknown[]) =>
+      result.push(
+        feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' }),
+        feature(2, rectAt(100, 0, 20, 20), { height: 20, roof_shape: 'dome' }),
+      ),
+    );
+    map.handlers.get('sourcedata')!({ sourceId: 'b', tile }); // reload
+    module.update(view());
+    expect(module.getStats().buildings).toBe(2);
+  });
+
+  it('reads each tile once: updating again queries no tile', () => {
+    const { map, module } = setup();
+    const [tile] = renderTiles(map, {
+      '15/16592/11272': [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })],
+    });
+    module.update(view());
+    module.update(view({ center: [2.2946, 48.8585] }));
+    expect(tile!.querySourceFeatures).toHaveBeenCalledTimes(1);
+    expect(module.getStats().buildings).toBe(1);
+  });
+
+  it('holds no tiles while zoomed out below minZoom', () => {
+    const { map, module } = setup();
+    const [tile] = renderTiles(map, {
+      '15/16592/11272': [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })],
+    });
+    module.update(view());
+    module.update(view({ zoom: 13 }));
+    expect(module.getStats().buildings).toBe(0);
+    expect(map.states.has(1)).toBe(false);
+    module.update(view());
+    expect(tile!.querySourceFeatures).toHaveBeenCalledTimes(2); // re-read on the way back in
     expect(module.getStats().buildings).toBe(1);
   });
 

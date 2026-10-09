@@ -45,7 +45,12 @@ How values are read:
   all roof, like a spire, can be).
 - **`roof_angle`** must be between 0 and 90 (exclusive).
 - **`roof_direction`** takes degrees clockwise from north, or a 16-point compass value
-  (`N`, `NNE`, … `NNW`).
+  (`N`, `NNE`, … `NNW`). It snaps to the nearest wall within the precision it was written with,
+  as OSM2World does: 45° for compass letters, 10° for whole degrees, 0.5° for decimals.
+- Numbers written with a decimal comma (`3,5`) are read as `3.5`.
+- Without **`height`**, `num_floors` gives it (3 m a floor, plus `roof_height` when tagged), and
+  `min_floor` gives `min_height`. Use `buildingHeight()` / `buildingBase()` for the walls so they
+  match.
 - **`roof_orientation`** other than `along` / `across` is ignored.
 - **`has_parts`** accepts `true`, `1`, `"true"` or `"yes"`.
 - **Shape names** are matched case-insensitively, and `_` / `-` are interchangeable
@@ -91,6 +96,8 @@ Roofs are laid out on the outline's tight bounding box, with the ridge along one
 | `saltbox`           | Gable with the ridge off-centre (moved by a third of the half-width), so one slope is longer        | yes         |
 | `hipped`            | Four slopes; the ridge is shortened by the hips at each end                                         | yes         |
 | `half_hipped`       | Gable ends up to half height, small hips above (jerkinhead)                                         | yes         |
+| `side_hipped`       | Hipped at one end, gabled at the end where other parts are attached (both ends hipped if unknown)   | no          |
+| `side_half_hipped`  | The same with a half hip                                                                            | no          |
 | `hipped_and_gabled` | Hips up to half height, small vertical gables above (Dutch gable)                                   | no          |
 | `gambrel`           | Barn roof: steep lower part on both long sides, shallower upper part; gable ends                    | yes         |
 | `mansard`           | Gambrel profile on all four sides                                                                   | yes         |
@@ -116,8 +123,6 @@ wall colour; sloped faces take the roof colour.
 | `pyramid`                                    | `pyramidal`   | Synonym                                                                  |
 | `pitched`                                    | `gabled`      | Synonym                                                                  |
 | `lean_to`, `monopitch`, `shed`               | `skillion`    | Synonyms                                                                 |
-| `side_hipped`                                | `hipped`      | OSM doesn't say which end is hipped, so both ends are                    |
-| `side_half-hipped`                           | `half_hipped` | Same, both ends                                                          |
 | `gabled_height_moved`, `gabled_irregular`    | `saltbox`     | Uneven gable; no OSM tag says where the ridge sits, so a fixed offset is used |
 | `double_saltbox`, `quadruple_saltbox`        | `mansard`     | Close, not exact                                                         |
 

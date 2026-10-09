@@ -8,13 +8,21 @@ import {
   LandmarksLayer,
   RoofsLayer,
   setTheme,
+  THEMES,
   TreesLayer,
   WaterLayer,
   type LandmarkInfo,
   type Theme,
 } from '../src/index';
-import { $, initTabs, range, toggle } from './panel';
-import { roofWalls, styleFor, type Basemap, type Projection, type RoofData } from './style';
+import { $, initCollapse, initTabs, range, syncTabDots, toggle } from './panel';
+import {
+  firstPointLabel,
+  roofWalls,
+  styleFor,
+  type Basemap,
+  type Projection,
+  type RoofData,
+} from './style';
 
 setWorkerUrl(workerUrl);
 addProtocol('pmtiles', new Protocol().tile);
@@ -31,24 +39,30 @@ if (!key && !pmtilesUrl) {
 // `?roofs=/my-roofs.pmtiles` overrides it for one visit; paths resolve against the page).
 const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
-const roofsParam = new URLSearchParams(location.search).get('roofs');
+// Start-up settings from the page URL (the docs embed a dusk skyline):
+// `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`.
+const params = new URLSearchParams(location.search);
+const roofsParam = params.get('roofs');
+const themeParam = params.get('theme');
 const localRoofsUrl = roofsParam
   ? new URL(roofsParam, location.href).href
   : (import.meta.env.VITE_ROOFS_PMTILES as string | undefined);
 
 const state = {
-  theme: 'day' as Theme,
+  theme: (themeParam && themeParam in THEMES ? themeParam : 'day') as Theme,
   basemap: 'streets' as Basemap,
   projection: 'mercator' as Projection,
   terrain: false,
-  roofData: 'overture' as RoofData,
+  // A `?roofs=` tileset is what the visit is for: start on it.
+  roofData: (roofsParam ? 'local' : 'overture') as RoofData,
 };
+/** Overture-schema tilesets (the official one, or `?roofs=`): buildings and parts in two layers. */
 const roofParts = () =>
-  state.roofData === 'overture' || (state.roofData === 'local' && !localRoofsUrl);
+  state.roofData === 'overture' || (state.roofData === 'local' && (!localRoofsUrl || !!roofsParam));
 const style = () =>
   styleFor({
     ...state,
-    roofsUrl: roofParts() ? OVERTURE_BUILDINGS : localRoofsUrl!,
+    roofsUrl: state.roofData === 'local' && localRoofsUrl ? localRoofsUrl : OVERTURE_BUILDINGS,
     roofParts: roofParts(),
     protomaps: pmtilesUrl
       ? `pmtiles://${pmtilesUrl}`
@@ -76,7 +90,8 @@ let fog: FogLayer | undefined;
 let occlusion: LabelOcclusion | undefined;
 let models: LandmarkInfo[] = [];
 
-const firstSymbol = () => map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+/** The first label above the 3D layers (street names lie under them, see style.ts). */
+const firstSymbol = () => firstPointLabel(map.getStyle().layers);
 /** 3D layers go under the fog (it blends over them), or under the labels without fog. */
 const before3D = () => (map.getLayer('fog') ? 'fog' : firstSymbol());
 /** Removing a layer restores what it changed (hidden buildings, shortened walls). */
@@ -101,6 +116,9 @@ function addLandmarks() {
     channel: $<HTMLSelectElement>('channel').value as 'latest' | 'preview',
     replaceBuildings:
       state.roofData !== 'none' ? ['buildings', ...roofWalls(roofParts())] : ['buildings'],
+    showFrom: select('landmark-show-from').value as 'extrusions' | 'catalogue',
+    maxResident: landmarkMax.value(),
+    fadeMs: landmarkFade.value(),
     onModelsChanged: renderModels,
     onError: (err, ctx) => console.warn('[landmarks]', ctx, err),
   });
@@ -116,6 +134,8 @@ function addRoofs() {
     sourceLayer: 'building',
     extrusionLayer: roofWalls(roofParts()),
     wallColors: $<HTMLInputElement>('wall-colors').checked,
+    farCutoff: $<HTMLInputElement>('roof-cutoff').checked,
+    maxBuildings: roofMax.value(),
     onError: (err) => console.warn('[roofs]', err),
   });
   map.addLayer(roofs, before3D());
@@ -127,6 +147,11 @@ function addTrees() {
     id: 'trees',
     source: 'protomaps',
     wind: { strength: treeWind.value(), directionDeg: treeWindDir.value() },
+    density: treeDensity.value(),
+    maxTrees: treeMax.value(),
+    lodDistanceM: treeLod.value(),
+    riseMs: treeRise.value(),
+    farCutoff: $<HTMLInputElement>('tree-cutoff').checked,
     onError: (err, ctx) => console.warn('[trees]', ctx, err),
   });
   map.addLayer(trees, before3D());
@@ -143,6 +168,7 @@ function addWater() {
     source: 'protomaps',
     sourceLayer: 'water',
     waves: waves.value(),
+    maxTriangles: waterMax.value(),
   });
   const layers = map.getStyle().layers;
   let i = layers.findIndex((l) => l.id === 'water');
@@ -183,6 +209,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
 
 function setLayer(name: string, on: boolean) {
   toggle(name).checked = on;
+  syncTabDots();
   if (on) LAYERS[name]!.add();
   else {
     const id = LAYERS[name]!.id();
@@ -201,9 +228,12 @@ function restoreLayers() {
 
 // ---- Panel --------------------------------------------------------------------------------
 
-initTabs('landmarks');
+initTabs('map');
+initCollapse();
+if (params.get('panel') === '0') $('collapse').click();
 for (const name of Object.keys(LAYERS))
   toggle(name).addEventListener('change', () => setLayer(name, toggle(name).checked));
+syncTabDots();
 
 const degrees = (v: number) => `${v}°`;
 const treeWind = range('tree-wind', (v) => trees?.setWind({ strength: v }));
@@ -222,6 +252,44 @@ const fogWind = range(
   (v) => `${v} m/s`,
 );
 const fogWindDir = range('fog-wind-dir', (v) => fog?.setWind({ direction: v }), degrees);
+if (params.has('fog')) {
+  const height = Number(params.get('fog'));
+  if (height > 0) fogHeight.set(height);
+  toggle('fog').checked = true; // added with the other layers on load
+  syncTabDots();
+}
+
+/** A range that rebuilds its layer when let go (the option is fixed at construction). */
+const rebuilding = (id: string, layer: string, format?: (v: number) => string) => {
+  const r = range(id, () => {}, format);
+  $(id).addEventListener('change', () => {
+    if (toggle(layer).checked) LAYERS[layer]!.add();
+  });
+  return r;
+};
+const ms = (v: number) => `${v} ms`;
+const metres = (v: number) => `${v} m`;
+const count = (v: number) => v.toLocaleString();
+const treeDensity = range(
+  'tree-density',
+  (v) => trees?.setDensity(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+const treeMax = rebuilding('tree-max', 'trees', count);
+const treeLod = rebuilding('tree-lod', 'trees', metres);
+const treeRise = rebuilding('tree-rise', 'trees', ms);
+const roofMax = rebuilding('roof-max', 'roofs', count);
+const waterMax = rebuilding('water-max', 'water', count);
+const landmarkMax = rebuilding('landmark-max', 'landmarks');
+const landmarkFade = rebuilding('landmark-fade', 'landmarks', ms);
+range('max-pitch', (v) => map.setMaxPitch(v), degrees);
+for (const [id, layer] of [
+  ['tree-cutoff', 'trees'],
+  ['roof-cutoff', 'roofs'],
+] as const)
+  $<HTMLInputElement>(id).onchange = () => {
+    if (toggle(layer).checked) LAYERS[layer]!.add();
+  };
 
 /**
  * Apply a new style (a diffed swap: custom layers survive). When the roof walls change, the
@@ -230,7 +298,7 @@ const fogWindDir = range('fog-wind-dir', (v) => fog?.setWind({ direction: v }), 
 function restyle(wallsChange = false) {
   if (wallsChange) remove('roofs');
   map.setStyle(style());
-  setTheme(map, state.theme);
+  setTheme(map, state.theme, { sky: true });
   if (wallsChange)
     map.once('style.load', () => {
       if (toggle('roofs').checked) addRoofs();
@@ -239,6 +307,7 @@ function restyle(wallsChange = false) {
 }
 
 const select = (id: string) => $<HTMLSelectElement>(id);
+select('theme').value = state.theme;
 select('theme').onchange = () => {
   state.theme = select('theme').value as Theme;
   restyle();
@@ -255,12 +324,16 @@ $<HTMLInputElement>('terrain').onchange = () => {
   state.terrain = $<HTMLInputElement>('terrain').checked;
   restyle();
 };
+select('landmark-show-from').onchange = () => {
+  if (toggle('landmarks').checked) addLandmarks();
+};
 select('channel').onchange = () => {
   if (toggle('landmarks').checked) addLandmarks();
 };
 // Without a local tileset, "Local file" has nothing to load.
 if (!localRoofsUrl)
   select('roof-data').querySelector<HTMLOptionElement>('[value=local]')!.disabled = true;
+select('roof-data').value = state.roofData;
 select('roof-data').onchange = () => {
   state.roofData = select('roof-data').value as RoofData;
   restyle(true);
@@ -331,7 +404,7 @@ for (const button of document.querySelectorAll<HTMLElement>('[data-place]'))
 // ---- Map lifecycle --------------------------------------------------------------------------
 
 map.on('load', () => {
-  setTheme(map, state.theme);
+  setTheme(map, state.theme, { sky: true });
   restoreLayers();
 });
 // A full (non-diffed) style swap drops custom layers: put back the ones switched on.

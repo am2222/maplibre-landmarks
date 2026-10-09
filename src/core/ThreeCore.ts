@@ -1,6 +1,6 @@
 import type { Map as MlMap } from 'maplibre-gl';
 import { Camera, Scene, WebGLRenderer, type Object3D } from 'three';
-import { createLightRig, type LightRig, type Theme } from './theme';
+import { createLightRig, themeSky, type LightRig, type Theme } from './theme';
 import { cameraMatrix, originAt } from './mercator';
 import type { Origin } from './types';
 
@@ -69,7 +69,15 @@ export function releaseCore(map: CoreMap): void {
 }
 
 /** Switch every plugin layer on `map` to `theme` (remembered if no layer is added yet). */
-export function setTheme(map: object, theme: Theme): void {
+export interface SetThemeOptions {
+  /** Also set the map's sky (colours and globe atmosphere) from the theme: see `themeSky`. */
+  sky?: boolean;
+}
+
+export function setTheme(map: object, theme: Theme, options: SetThemeOptions = {}): void {
+  // The sky first: layers reacting to the theme (the fog's horizon haze) build on it.
+  const sky = (map as Partial<Pick<MlMap, 'setSky'>>).setSky;
+  if (options.sky && typeof sky === 'function') sky.call(map, themeSky(theme));
   const core = cores.get(map);
   if (core) core.setTheme(theme);
   else pendingThemes.set(map, theme);

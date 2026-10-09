@@ -1,4 +1,5 @@
 import type { Map as MlMap } from 'maplibre-gl';
+import { TileFeed, type FeedFeature, type FeedMap } from '../core/tileFeed';
 import {
   BufferGeometry,
   Color,
@@ -17,7 +18,7 @@ import { localPosition, mercatorUnitsPerMetre, originAt } from '../core/mercator
 import { THEMES, type Theme } from '../core/theme';
 import type { LngLat, Origin, ViewState } from '../core/types';
 import { noiseOrigin } from '../fog/slices';
-import { FlowIndex, segmentsOf } from './flow';
+import { FlowIndex, segmentsOf, type Segment } from './flow';
 import { buildPiece, latitudeOf, longitudeOf, type WaterPiece } from './geometry';
 import { flatLevel, levelGroups } from './levels';
 import { TIME_PERIOD_S, WATER_FRAGMENT, WATER_VERTEX } from './shaders';
@@ -52,11 +53,6 @@ export interface WaterUniforms {
   uWaves: IUniform<number>;
 }
 
-interface SourceFeatureLike {
-  geometry: { type: string; coordinates: unknown };
-  properties?: Record<string, unknown> | null;
-}
-
 /** A polygon piece from the source (one part of one tile's feature). */
 interface Entry {
   /** Own signature plus the neighbours' (tile cuts depend on them). */
@@ -85,6 +81,8 @@ interface Built {
 }
 
 const REBUILD_DEBOUNCE_MS = 150;
+/** The merged mesh is re-centred once the view moves this far (float precision). */
+const REANCHOR_M = 2000;
 const FLOW_RADIUS_M = 300;
 /** Above the ground so the water never flickers against the draped fill. */
 const LIFT_M = 0.3;
@@ -164,14 +162,20 @@ export class WaterModule implements LayerModule {
   private timer?: ReturnType<typeof setTimeout>;
   private anchor?: LngLat;
   private cache = new Map<string, Built | null>();
-  /** Grid over the pieces of the current rebuild. */
-  private grid?: EntryGrid;
   private drawn: Built[] = [];
   private lastFrame?: number;
   private waves: number;
   private readonly source: string;
   private readonly sourceLayer: string;
   private readonly reported = new Set<string>();
+  private feeds?: { polygons: TileFeed; lines: TileFeed; vector: boolean };
+  /** Polygon pieces and river segments of each held tile, built when the tile arrives. */
+  private readonly tilePieces = new Map<string, Entry[]>();
+  private readonly tileLines = new Map<string, Segment[]>();
+  /** Tiles or ground changed since the last merge. */
+  private dirty = true;
+  /** The last selection left pieces out (triangle budget): moving can change the nearest. */
+  private overBudget = false;
 
   constructor(private readonly options: WaterOptions = {}) {
     this.source = options.source ?? 'protomaps';
@@ -254,6 +258,9 @@ export class WaterModule implements LayerModule {
 
   styleChanged(attached: boolean): void {
     this.cache.clear();
+    this.feeds?.polygons.reset();
+    this.feeds?.lines.reset();
+    this.dirty = true;
     if (attached) this.schedule();
   }
 
@@ -274,6 +281,7 @@ export class WaterModule implements LayerModule {
     const ctx = this.ctx;
     if (!ctx) return;
     clearTimeout(this.timer);
+    this.disposeFeeds();
     ctx.map.off('sourcedata', this.onSourceData);
     ctx.map.off('terrain', this.onTerrain);
     for (const m of [this.body, this.shore]) {
@@ -318,6 +326,7 @@ export class WaterModule implements LayerModule {
   };
 
   private forgetGround(): void {
+    this.dirty = true;
     for (const b of this.cache.values()) {
       if (!b) continue;
       b.ground = undefined;
@@ -330,41 +339,101 @@ export class WaterModule implements LayerModule {
     const view = this.view;
     if (!ctx || !view) return;
     const map = ctx.map;
-    let drawn: Built[] = [];
     const source = map.getSource(this.source) as
       { type?: string; vectorLayerIds?: string[] } | undefined;
+    const feeds = source && view.zoom >= (this.options.minZoom ?? 12) && this.feedsFor(source);
     if (!source) this.report('source', new Error(`source "${this.source}" not found`));
-    else if (view.zoom >= (this.options.minZoom ?? 12)) drawn = this.collect(map, view, source);
-    this.drawn = drawn;
+    if (!feeds) {
+      // Inactive: hold no tiles (they would pile up unseen) until drawing again.
+      this.feeds?.polygons.suspend();
+      this.feeds?.lines.suspend();
+      this.dirty = true;
+      this.drawn = [];
+    } else {
+      try {
+        feeds.polygons.settle();
+        feeds.lines.settle();
+      } catch (err) {
+        this.report('settle', err);
+      }
+      // Nothing arrived, dropped or changed height, everything fit the budget (so the nearest
+      // pieces cannot change), and the mesh is still centred enough.
+      if (
+        !this.dirty &&
+        !this.overBudget &&
+        this.anchor &&
+        metresBetween(this.anchor, view.center) < REANCHOR_M
+      )
+        return;
+      this.dirty = false;
+      this.drawn = this.collect(view);
+    }
     this.merge(map, view);
     ctx.requestRepaint();
   }
 
-  private collect(
-    map: MlMap,
-    view: ViewState,
-    source: { type?: string; vectorLayerIds?: string[] },
-  ): Built[] {
+  /** The tile feeds of the water layer (made once the source is usable). */
+  private feedsFor(source: { type?: string; vectorLayerIds?: string[] }) {
     const vector = source.type === 'vector';
     if (vector && source.vectorLayerIds && !source.vectorLayerIds.includes(this.sourceLayer)) {
       this.report(
         'sourceLayer',
         new Error(`source "${this.source}" has no layer "${this.sourceLayer}"`),
       );
-      return [];
+      return undefined;
     }
-    const query = (filter: unknown[]) =>
-      map.querySourceFeatures(this.source, {
+    if (this.feeds?.vector === vector) return this.feeds;
+    this.disposeFeeds();
+    // Each feed sets and drops only its own half of a tile (they share tile keys).
+    const feed = <T>(filter: unknown[], store: Map<string, T>, read: (f: FeedFeature[]) => T) =>
+      new TileFeed(this.ctx!.map as unknown as FeedMap, {
+        source: this.source,
         ...(vector ? { sourceLayer: this.sourceLayer } : {}),
-        filter: filter as never,
-      }) as unknown as SourceFeatureLike[];
-    this.grid = undefined;
-    const entries = this.entries(query(POLYGONS));
+        filter,
+        onTile: (key, features) => {
+          store.set(key, read(features));
+          this.dirty = true;
+          this.schedule();
+        },
+        onDrop: (key) => {
+          store.delete(key);
+          this.dirty = true;
+          this.schedule();
+        },
+      });
+    this.feeds = {
+      vector,
+      polygons: feed(POLYGONS, this.tilePieces, (f) => this.piecesOf(f)),
+      lines: feed(FLOW_LINES, this.tileLines, segmentsOf),
+    };
+    return this.feeds;
+  }
+
+  private disposeFeeds(): void {
+    this.feeds?.polygons.dispose();
+    this.feeds?.lines.dispose();
+    this.feeds = undefined;
+    this.tilePieces.clear();
+    this.tileLines.clear();
+    this.dirty = true;
+  }
+
+  /** The held tiles' pieces, nearest first within the triangle budget; built pieces are reused. */
+  private collect(view: ViewState): Built[] {
+    const seen = new Map<string, Entry>();
+    const polygons = this.feeds?.polygons;
+    for (const [key, list] of this.tilePieces)
+      for (const e of list) {
+        // A parent's piece where its children are loaded: they draw it (no doubled shore).
+        if (seen.has(e.sig) || polygons?.shadowed(key, e.bounds)) continue;
+        seen.set(e.sig, e);
+      }
+    const entries = [...seen.values()];
+    const grid = this.linkNeighbours(entries);
     const flow = new FlowIndex(
-      segmentsOf(query(FLOW_LINES)),
+      [...this.tileLines.values()].flat(),
       FLOW_RADIUS_M * mercatorUnitsPerMetre(view.center[1]),
     );
-    const grid = this.grid ?? new EntryGrid(entries);
     const waterAt = (ll: LngLat): Entry | undefined =>
       grid.near([...ll, ...ll]).find((e) => pointInPolygons(ll, [e.rings]));
     // Nearest first: distance from the view centre to each piece's bounds (0 when inside).
@@ -377,12 +446,16 @@ export class WaterModule implements LayerModule {
     const cache = new Map<string, Built | null>();
     const out: Built[] = [];
     let triangles = 0;
+    this.overBudget = false;
     for (const e of entries) {
       let built = this.cache.get(e.key);
       if (built === undefined) built = this.build(e, waterAt, flow);
       cache.set(e.key, built);
       if (!built) continue;
-      if (triangles + built.piece.triangles > max) break;
+      if (triangles + built.piece.triangles > max) {
+        this.overBudget = true;
+        break;
+      }
       triangles += built.piece.triangles;
       out.push(built);
     }
@@ -390,8 +463,8 @@ export class WaterModule implements LayerModule {
     return out;
   }
 
-  /** Polygon pieces (deduplicated), keyed by their own and their neighbours' signatures. */
-  private entries(features: SourceFeatureLike[]): Entry[] {
+  /** A tile's polygon pieces (deduplicated); keys are set when pieces are linked. */
+  private piecesOf(features: FeedFeature[]): Entry[] {
     const seen = new Map<string, Entry>();
     for (const f of features) {
       const props = f.properties ?? {};
@@ -404,7 +477,14 @@ export class WaterModule implements LayerModule {
         if (!seen.has(sig)) seen.set(sig, { key: sig, sig, style, props: propsKey, rings, bounds });
       }
     }
-    const list = [...seen.values()];
+    return [...seen.values()];
+  }
+
+  /**
+   * Key each piece by its own and its neighbours' signatures: a piece is rebuilt only when
+   * something across its tile cuts changed (a neighbouring tile arrived or left).
+   */
+  private linkNeighbours(list: Entry[]): EntryGrid {
     const grid = new EntryGrid(list);
     const keys = list.map((e) =>
       [
@@ -417,8 +497,7 @@ export class WaterModule implements LayerModule {
       ].join('§'),
     );
     list.forEach((e, i) => (e.key = keys[i]!));
-    this.grid = grid;
-    return list;
+    return grid;
   }
 
   private build(
@@ -528,6 +607,12 @@ export class WaterModule implements LayerModule {
     if (this.options.onError) this.options.onError(err);
     else console.warn('[maplibre-landmarks] water', err);
   }
+}
+
+/** Approximate ground distance between two lng/lat points. */
+function metresBetween(a: LngLat, b: LngLat): number {
+  const k = Math.cos((((a[1] + b[1]) / 2) * Math.PI) / 180);
+  return Math.hypot((a[0] - b[0]) * k, a[1] - b[1]) * 111_320;
 }
 
 interface Parts {

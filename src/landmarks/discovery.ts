@@ -86,10 +86,16 @@ export function selectWanted(
   maxResident: number,
   /** Never show models below this zoom (e.g. where the extrusions they replace start). */
   minZoom = 0,
+  /** Also wait for each landmark's own catalogue zoom (false: `minZoom` alone decides). */
+  ownMinZoom = true,
 ): Wanted[] {
   const padded = padBounds(view.bounds, padMetres(view.pitch, cat.maxHeightM));
   return entries
-    .filter((e) => view.zoom >= Math.max(e.minZoom, minZoom) && intersectsWrapped(padded, e.bounds))
+    .filter(
+      (e) =>
+        view.zoom >= (ownMinZoom ? Math.max(e.minZoom, minZoom) : minZoom) &&
+        intersectsWrapped(padded, e.bounds),
+    )
     .map((e) => ({ e, d: distanceM(view.center, e.anchor) }))
     .sort((a, b) => a.d - b.d || a.e.id.localeCompare(b.e.id))
     .slice(0, maxResident)
