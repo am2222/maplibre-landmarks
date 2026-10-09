@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.1.0...maplibre-landmarks-v0.2.0) (2026-10-09)
+
+
+### Miscellaneous Chores
+
+* release 0.2.0 ([367a521](https://github.com/am2222/maplibre-landmarks/commit/367a5214587c831571f14885e24ba94e24edf833))
+
 ## 0.1.0 (2026-10-09)
 
 
