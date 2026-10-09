@@ -61,6 +61,8 @@ export { RoofsLayer, type RoofsLayerOptions } from './roofs/RoofsLayer';
 export { RoofsModule, type RoofsOptions } from './roofs/RoofsModule';
 export { ROOF_STATE } from './roofs/walls';
 export { buildingBase, buildingHeight, DEFAULT_FIELDS, FLOOR_M, type Fields } from './roofs/schema';
+export { CloudsLayer, type CloudsLayerOptions } from './clouds/CloudsLayer';
+export { CloudsModule, type CloudsOptions, type CloudsWind } from './clouds/CloudsModule';
 export { FogLayer, type FogLayerOptions } from './fog/FogLayer';
 export { FogModule, type FogOptions, type FogWind } from './fog/FogModule';
 export { WaterLayer, type WaterLayerOptions } from './water/WaterLayer';

@@ -28,6 +28,7 @@ export default defineConfig({
           { text: 'Trees', link: '/guide/trees' },
           { text: 'Power lines', link: '/guide/power' },
           { text: 'Volumetric fog', link: '/guide/fog' },
+          { text: 'Volumetric clouds', link: '/guide/clouds' },
           { text: 'Water', link: '/guide/water' },
         ],
       },

@@ -11,6 +11,7 @@ const pages = [
   'guide/roof-attributes.html',
   'guide/trees.html',
   'guide/fog.html',
+  'guide/clouds.html',
   'guide/water.html',
   'guide/development.html',
   'demo/index.html',
