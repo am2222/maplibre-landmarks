@@ -5,7 +5,6 @@
 import type { Vec2 } from './frame';
 import type { MeshBuilder, RGB, Vec3 } from './mesh';
 
-const SEGMENTS = 32;
 const DOME_STEPS = 12;
 /** OSMBuildings' onion profile: radius scale and height scale per ring. */
 const ONION: [r: number, h: number][] = [
@@ -19,17 +18,30 @@ const ONION: [r: number, h: number][] = [
   [0, 1],
 ];
 
-/** Surface of revolution around `center`: `profile` holds radius scales and heights. */
-function lathe(b: MeshBuilder, [cx, cz]: Vec2, R: number, profile: [number, number][], color: RGB) {
-  const at = (r: number, h: number, s: number): Vec3 => {
-    const a = (s / SEGMENTS) * 2 * Math.PI;
-    return [cx + R * r * Math.sin(a), h, cz + R * r * Math.cos(a)];
-  };
+/**
+ * Rings of the outline scaled toward `center` (radius scale and height per ring in `profile`):
+ * a surface of revolution on a round outline, and on any other the same profile stretched to
+ * meet every wall (a half-round apse gets a half dome, not a circle that misses part of it).
+ */
+function lathe(
+  b: MeshBuilder,
+  outer: Vec2[],
+  [cx, cz]: Vec2,
+  profile: [number, number][],
+  color: RGB,
+) {
+  const at = ([x, z]: Vec2, r: number, h: number): Vec3 => [
+    cx + (x - cx) * r,
+    h,
+    cz + (z - cz) * r,
+  ];
   for (let i = 0; i + 1 < profile.length; i++) {
     const [r0, h0] = profile[i]!;
     const [r1, h1] = profile[i + 1]!;
-    for (let s = 0; s < SEGMENTS; s++) {
-      b.quad(at(r0, h0, s), at(r0, h0, s + 1), at(r1, h1, s + 1), at(r1, h1, s), color);
+    for (let k = 0; k < outer.length; k++) {
+      const p = outer[k]!;
+      const q = outer[(k + 1) % outer.length]!;
+      b.quad(at(p, r0, h0), at(q, r0, h0), at(q, r1, h1), at(p, r1, h1), color);
     }
   }
 }
@@ -43,20 +55,20 @@ export function pyramidRoof(b: MeshBuilder, outer: Vec2[], [cx, cz]: Vec2, H: nu
   }
 }
 
-export function domeRoof(b: MeshBuilder, center: Vec2, R: number, H: number, color: RGB) {
+export function domeRoof(b: MeshBuilder, outer: Vec2[], center: Vec2, H: number, color: RGB) {
   const profile: [number, number][] = [];
   for (let i = 0; i <= DOME_STEPS; i++) {
     const t = (i / DOME_STEPS) * (Math.PI / 2);
     profile.push([Math.cos(t), H * Math.sin(t)]);
   }
-  lathe(b, center, R, profile, color);
+  lathe(b, outer, center, profile, color);
 }
 
-export function onionRoof(b: MeshBuilder, center: Vec2, R: number, H: number, color: RGB) {
+export function onionRoof(b: MeshBuilder, outer: Vec2[], center: Vec2, H: number, color: RGB) {
   lathe(
     b,
+    outer,
     center,
-    R,
     ONION.map(([r, h]) => [r, h * H]),
     color,
   );

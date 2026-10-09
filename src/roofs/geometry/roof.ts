@@ -87,7 +87,6 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][], variance = 0):
   const H = resolveRoofHeight(props, frame);
   if (H === null || !(H > 0)) return null;
   const roof = roofRGB(props.roofColor, variance);
-  const radius = Math.min(frame.L, frame.W);
   const b = new MeshBuilder();
   switch (props.shape) {
     case 'pyramidal':
@@ -97,10 +96,10 @@ export function buildRoof(props: RoofProps, polygons: Vec2[][][], variance = 0):
       pyramidRoof(b, outer, frame.origin, H, roof);
       return { mesh: b.build(), roofHeight: H };
     case 'dome':
-      domeRoof(b, frame.origin, radius, H, roof);
+      domeRoof(b, outer, frame.origin, H, roof);
       return { mesh: b.build(), roofHeight: H };
     case 'onion':
-      onionRoof(b, frame.origin, radius, H, roof);
+      onionRoof(b, outer, frame.origin, H, roof);
       return { mesh: b.build(), roofHeight: H };
     default: {
       const shape = props.shape as ProfileShape;

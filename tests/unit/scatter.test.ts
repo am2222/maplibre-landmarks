@@ -154,7 +154,8 @@ describe('scatter performance (review #1)', () => {
     expect(pts.length / ((3300 * 2600) / 60)).toBeGreaterThan(0.85);
     // Shared CI runners are several times slower than a laptop; the regression this guards
     // against took ~3.2 s.
-    expect(ms).toBeLessThan(process.env.CI ? 1500 : 400); // was ~3.2 s before the row-edge filter
+    // Locally the whole suite runs in parallel too: 400 ms alone, up to ~600 ms alongside it.
+    expect(ms).toBeLessThan(process.env.CI ? 1500 : 1000); // was ~3.2 s before the row-edge filter
   });
 
   it('scatterPiece matches scatterPolygon for a single piece', () => {
