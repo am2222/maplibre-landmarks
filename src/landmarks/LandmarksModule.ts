@@ -46,6 +46,13 @@ export interface LandmarksOptions extends DecoderOptions {
   replaceBuildings?: string[];
   replacementInsetM?: number;
   maxResident?: number;
+  /**
+   * When models appear. 'extrusions' (default): from the zoom the replaced fill-extrusion layers
+   * appear at, so a landmark shows up with the 3D buildings around it (the catalogue's zoom when
+   * no extrusion layer is replaced). 'catalogue': each landmark's own zoom. A number: that zoom.
+   * Never below zoom 14.
+   */
+  showFrom?: number | 'extrusions' | 'catalogue';
   maxCached?: number;
   maxCacheBytes?: number;
   theme?: Theme;
@@ -237,8 +244,17 @@ export class LandmarksModule implements LayerModule {
       this.index ??= new CellIndex(cat, this.fetchFn);
       const entries = await this.index.entries(cellsForView(view, cat));
       if (run !== this.run) return;
-      const floor = this.replacement?.extrusionMinZoom() ?? 0;
-      this.residency.setWanted(selectWanted(entries, view, cat, this.opts.maxResident ?? 8, floor));
+      const extrusions = this.replacement?.extrusionMinZoom() ?? 0;
+      const mode = this.opts.showFrom ?? 'extrusions';
+      const [floor, own] =
+        typeof mode === 'number'
+          ? [mode, false]
+          : mode === 'extrusions' && extrusions > 0
+            ? [extrusions, false]
+            : [extrusions, true];
+      this.residency.setWanted(
+        selectWanted(entries, view, cat, this.opts.maxResident ?? 8, floor, own),
+      );
     } catch (err) {
       if (!isAbort(err)) this.report(err, { stage });
     }

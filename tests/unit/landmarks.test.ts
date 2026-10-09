@@ -157,6 +157,34 @@ describe('LandmarksModule', () => {
     expect(s.f.calls).toEqual([]);
   });
 
+  it('shows landmarks from the zoom the extrusions they replace appear at', async () => {
+    const s = setup();
+    s.map.getLayer = (id: string) =>
+      id === 'buildings'
+        ? ({
+            id,
+            type: 'fill-extrusion',
+            source: 'protomaps',
+            sourceLayer: 'buildings',
+            minzoom: 14,
+          } as never)
+        : undefined;
+    s.module.update(view({ zoom: 14.5 })); // the catalogue's own minZoom is 15
+    await flush();
+    expect(s.loads).toHaveLength(1);
+  });
+
+  it('keeps the catalogue zoom when asked, or uses a fixed one', async () => {
+    const own = setup({ showFrom: 'catalogue' });
+    own.module.update(view({ zoom: 14.5 }));
+    await flush();
+    expect(own.loads).toHaveLength(0);
+    const fixed = setup({ showFrom: 14.2 });
+    fixed.module.update(view({ zoom: 14.5 }));
+    await flush();
+    expect(fixed.loads).toHaveLength(1);
+  });
+
   it('discovers, loads and adds a landmark to the scene', async () => {
     const s = setup();
     const object = await loadEiffel(s);

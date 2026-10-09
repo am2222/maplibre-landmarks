@@ -26,6 +26,7 @@ map.on('load', () => {
 | `baseUrl`                     | `https://open-landmarks.benmaps.fr` | API origin                                                                                                      |
 | `replaceBuildings`            | `[]`                                | Basemap layer ids whose buildings hand over to loaded models (extrusions sink into the ground, flat fills fade) |
 | `replacementInsetM`           | `1.5`                               | Footprint inset so neighbours sharing a wall stay visible                                                       |
+| `showFrom` | `'extrusions'` | When models appear: with the replaced fill-extrusion layers' `minzoom`, `'catalogue'` (each landmark's own zoom) or a zoom (never below 14) |
 | `maxResident`                 | `8`                                 | Models kept on the GPU                                                                                          |
 | `maxCached` / `maxCacheBytes` | `12` / 32 MB                        | Parsed models kept off-screen                                                                                   |
 | `theme`                       | —                                   | `'day'`, `'dawn'`, `'dusk'` or `'night'`; sets the map-wide theme (see `setTheme`)                              |

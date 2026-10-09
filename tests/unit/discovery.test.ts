@@ -84,6 +84,12 @@ describe('selectWanted', () => {
     expect(selectWanted([e], view({ zoom: 14.5 }), cat(), 8, 14)).toEqual([]); // own minZoom wins
   });
 
+  it('can show every landmark from a set zoom, ignoring its own (with the extrusions)', () => {
+    const e = entry('a', { minZoom: 15 });
+    expect(selectWanted([e], view({ zoom: 14.5 }), cat(), 8, 14, false)).toHaveLength(1);
+    expect(selectWanted([e], view({ zoom: 13.5 }), cat(), 8, 14, false)).toEqual([]);
+  });
+
   const near = entry('near');
   const far = entry('far', { anchor: [2.3, 48.86], bounds: [2.299, 48.859, 2.301, 48.861] });
   const late = entry('late', { minZoom: 18 });
