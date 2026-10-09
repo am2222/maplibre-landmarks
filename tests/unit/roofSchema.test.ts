@@ -9,6 +9,8 @@ import {
   toRGB,
 } from '../../src/roofs/colors';
 import {
+  buildingBase,
+  buildingHeight,
   DEFAULT_FIELDS,
   normaliseShape,
   readRoofProps,
@@ -24,9 +26,9 @@ describe('roof shapes', () => {
     expect(normaliseShape('half-hipped')).toBe('half_hipped');
     expect(normaliseShape('double_saltbox')).toBe('mansard');
     expect(normaliseShape('quadruple_saltbox')).toBe('mansard');
-    expect(normaliseShape('side_hipped')).toBe('hipped');
+    expect(normaliseShape('side_hipped')).toBe('side_hipped');
     expect(normaliseShape('pyramid')).toBe('pyramidal');
-    expect(normaliseShape('side_half-hipped')).toBe('half_hipped');
+    expect(normaliseShape('side_half-hipped')).toBe('side_half_hipped');
     expect(normaliseShape('hipped-and-gabled')).toBe('hipped_and_gabled');
     expect(normaliseShape('gabled_height_moved')).toBe('saltbox');
     expect(normaliseShape('bellcast_gable')).toBe('bellcast_gable');
@@ -74,6 +76,30 @@ describe('readRoofProps', () => {
     expect(read({ roof_shape: 'gabled' })).toBeNull();
     expect(read({ height: 10, min_height: 10, roof_shape: 'gabled' })).toBeNull();
     expect(read({ height: 20, roof_shape: 'flat' })).toBeNull();
+  });
+
+  it('falls back to floor counts for heights (3 m a floor, roof on top), and reads 3,5', () => {
+    expect(read({ num_floors: 4, roof_shape: 'gabled' })).toMatchObject({
+      height: 12,
+      minHeight: 0,
+    });
+    expect(read({ num_floors: 4, roof_height: 3, roof_shape: 'gabled' })!.height).toBe(15);
+    expect(read({ num_floors: 4, min_floor: 1, roof_shape: 'gabled' })!.minHeight).toBe(3);
+    expect(read({ height: 20, num_floors: 4, roof_shape: 'gabled' })!.height).toBe(20); // tagged wins
+    expect(read({ height: '12,5', roof_height: '3,5', roof_shape: 'gabled' })).toMatchObject({
+      height: 12.5,
+      roofHeight: 3.5,
+    });
+  });
+
+  it('snaps a tagged direction to a wall within its precision (letters 45°, degrees 10°, decimals 0.5°)', () => {
+    const snap = (roof_direction: unknown) =>
+      read({ height: 9, roof_shape: 'gabled', roof_direction })!.directionSnap;
+    expect(snap('NE')).toBe(45);
+    expect(snap(90)).toBe(10);
+    expect(snap('90')).toBe(10);
+    expect(snap('92.5')).toBe(0.5);
+    expect(snap(undefined)).toBeUndefined();
   });
 
   it('parses numbers, compass directions and orientation', () => {
@@ -155,5 +181,38 @@ describe('colours', () => {
     const pairs = materialPairs();
     expect(pairs[pairs.indexOf('slate') + 1]).toBe('#666666');
     expect(pairs[pairs.indexOf('tiles') + 1]).toBe('#f08060');
+  });
+});
+
+describe('buildingHeight / buildingBase', () => {
+  it('give the walls the heights the roofs use (tagged, then floors, then a default)', async () => {
+    const { expression } = await import('@maplibre/maplibre-gl-style-spec');
+    const evaluate = (expr: unknown, properties: Record<string, unknown>) => {
+      const parsed = expression.createExpression(
+        expr as never,
+        {
+          type: 'number',
+          'property-type': 'data-driven',
+          expression: { interpolated: true, parameters: ['zoom', 'feature'] },
+        } as never,
+      );
+      if (parsed.result !== 'success') throw new Error(parsed.value.map((e) => e.message).join());
+      return parsed.value.evaluate({ zoom: 16 }, { type: 'Polygon', properties } as never);
+    };
+    expect(evaluate(buildingHeight(), { height: 20, num_floors: 4 })).toBe(20);
+    expect(evaluate(buildingHeight(), { num_floors: 4, roof_height: 3 })).toBe(15);
+    expect(evaluate(buildingHeight(), {})).toBe(10);
+    expect(evaluate(buildingHeight(DEFAULT_FIELDS, 6), {})).toBe(6);
+    expect(evaluate(buildingBase(), { min_floor: 2 })).toBe(6);
+    expect(evaluate(buildingBase(), { min_height: 4, min_floor: 2 })).toBe(4);
+    expect(evaluate(buildingBase(), {})).toBe(0);
+    for (const props of [
+      { num_floors: 4, roof_height: 3, roof_shape: 'gabled' },
+      { min_floor: 2, num_floors: 5, roof_shape: 'gabled' },
+    ])
+      expect(read(props)).toMatchObject({
+        height: evaluate(buildingHeight(), props),
+        minHeight: evaluate(buildingBase(), props),
+      });
   });
 });

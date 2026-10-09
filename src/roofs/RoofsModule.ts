@@ -16,6 +16,7 @@ import type { LngLat, Origin, ViewState } from '../core/types';
 import { exemptionsFor, offExemptionsChanged, onExemptionsChanged } from '../labels/exemptions';
 import { FADE_STATE } from '../landmarks/replacement';
 import { colorVariance } from './colors';
+import { contactPoints } from './attached';
 import { BuildingPieces } from './buildingPieces';
 import type { Footprint } from './footprints';
 import type { Vec2 } from './geometry/frame';
@@ -356,9 +357,18 @@ export class RoofsModule implements LayerModule {
     const next = new Map<string, Drawn>();
     for (const { sourceLayer, key, f } of nearest) {
       const props = readRoofProps(f.properties, this.fields, gable)!;
+      // Side-hipped roofs stay gabled where other parts are attached.
+      const attached =
+        props.shape === 'side_hipped' || props.shape === 'side_half_hipped'
+          ? contactPoints(
+              f.polygons,
+              found.filter((o) => o.f !== f).map((o) => o.f.polygons),
+            )
+          : [];
+      const signature = attached.length ? `${f.signature}#${attached.join(';')}` : f.signature;
       let entry = this.roofs.get(key);
-      if (!entry || entry.signature !== f.signature) {
-        entry = { signature: f.signature, built: this.build(f, props) };
+      if (!entry || entry.signature !== signature) {
+        entry = { signature, built: this.build(f, props, attached) };
       }
       roofs.set(key, entry);
       if (entry.built) next.set(key, { sourceLayer, footprint: f, props, built: entry.built });
@@ -367,7 +377,7 @@ export class RoofsModule implements LayerModule {
     return next;
   }
 
-  private build(f: Footprint, props: RoofProps): BuiltRoof | null {
+  private build(f: Footprint, props: RoofProps, attached: LngLat[] = []): BuiltRoof | null {
     try {
       const origin = originAt(f.centroid);
       const local: Vec2[][][] = f.polygons.map((rings) =>
@@ -378,7 +388,11 @@ export class RoofsModule implements LayerModule {
           }),
         ),
       );
-      return buildRoof(props, local, colorVariance(f.id));
+      const touching = attached.map((p): Vec2 => {
+        const [x, , z] = localPosition(origin, p);
+        return [x, z];
+      });
+      return buildRoof(props, local, colorVariance(f.id), touching);
     } catch (err) {
       this.report(`roof:${f.key}`, err);
       return null;

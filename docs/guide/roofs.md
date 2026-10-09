@@ -43,6 +43,22 @@ Buildings without a roof shape keep their flat extrusion. Options: `minZoom` (15
 `maxBuildings` (2000), `wallColors` (false), `gableColor` (`#d9d4ce`), `farCutoff` (true:
 pitched views roof buildings only up to about three screen heights away), `onError`.
 
+Buildings without a `height` take it from `num_floors` (3 m a floor, `FLOOR_M`) plus a tagged
+`roof_height`, and their base from `min_floor`. Give the wall layer the same heights so roofs sit
+on their walls:
+
+```ts
+import { buildingBase, buildingHeight } from 'maplibre-landmarks';
+
+map.addLayer({
+  id: 'walls',
+  type: 'fill-extrusion',
+  source: 'overture',
+  'source-layer': 'building',
+  paint: { 'fill-extrusion-height': buildingHeight(), 'fill-extrusion-base': buildingBase() },
+});
+```
+
 **Overture's official tiles (no build step).** Each Overture release publishes worldwide
 building tiles (PMTiles, z5–14) with these attributes and numeric feature ids, buildings and
 building parts in separate layers. Most roof tags sit on parts, so give both wall layers:
@@ -96,7 +112,7 @@ source built from raw OSM tags can draw more. See
 Full attribute and shape reference: [Roof attributes](./roof-attributes).
 
 **OSM aliases.** `_` and `-` spellings are interchangeable. Drawn as the nearest shape:
-`side_hipped` → hipped; `side_half-hipped` → half_hipped; `gabled_height_moved`,
+`gabled_height_moved`,
 `gabled_irregular` → saltbox; `double_saltbox`, `quadruple_saltbox` → mansard; `pitched` →
 gabled; `lean_to`, `monopitch`, `shed` → skillion; `pyramid` → pyramidal; Overture's
 `spherical` → dome. `flat`, `many` and unknown values get no roof. `sawtooth` draws ~8 m teeth

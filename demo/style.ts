@@ -4,7 +4,7 @@ import type {
   StyleSpecification,
 } from 'maplibre-gl';
 import { layers, namedFlavor } from '@protomaps/basemaps';
-import type { Theme } from '../src/index';
+import { buildingBase, buildingHeight, type Theme } from '../src/index';
 
 export type Basemap = 'streets' | 'satellite';
 export type Projection = 'mercator' | 'globe';
@@ -65,10 +65,11 @@ export const roofWalls = (roofParts: boolean) =>
 function withBuildings(styleLayers: LayerSpecification[], o: StyleOptions): LayerSpecification[] {
   const flat = styleLayers.find((l) => l.id === 'buildings' && l.type === 'fill');
   if (!flat || flat.type !== 'fill') return styleLayers;
+  // Overture walls: the heights the roofs use (tagged, else floor counts), so roofs sit on them.
   const paint = (): FillExtrusionLayerSpecification['paint'] => ({
     'fill-extrusion-color': flat.paint?.['fill-color'] ?? '#d9d4ce',
-    'fill-extrusion-height': ['coalesce', ['get', 'height'], 10],
-    'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+    'fill-extrusion-height': buildingHeight() as never,
+    'fill-extrusion-base': buildingBase() as never,
   });
   if (o.roofData !== 'none') {
     const walls: LayerSpecification[] = [

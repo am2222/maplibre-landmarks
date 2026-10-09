@@ -127,6 +127,25 @@ describe('buildRoof', () => {
     }
   });
 
+  it('side-hipped: gabled at the end toward the attached part, hipped at the other', () => {
+    for (const shape of ['side_hipped', 'side_half_hipped'] as const) {
+      const at = (...attached: Vec2[]) => {
+        const { mesh } = buildRoof(props({ shape, roofHeight: 4 }), [[rect(20, 10)]], 0, attached)!;
+        const p = mesh.positions;
+        // Highest point at each end (x = ±10).
+        const top = (x: number) =>
+          Math.max(...p.filter((_, i) => i % 3 === 1 && Math.abs(p[i - 1]! - x) < 1e-6));
+        return [top(-10), top(10)];
+      };
+      const half = shape === 'side_half_hipped' ? 2 : 0;
+      expect(at([10, 1])).toEqual([half, 4].map((v) => expect.closeTo(v, 6)));
+      expect(at([-10, 1])).toEqual([4, half].map((v) => expect.closeTo(v, 6)));
+      expect(at()).toEqual([half, half].map((v) => expect.closeTo(v, 6))); // unknown: both hipped
+      expect(at([10, 0], [-10, 0])).toEqual([half, half].map((v) => expect.closeTo(v, 6))); // both ends
+      expect(at([10, 1], [0, 5])).toEqual([half, 4].map((v) => expect.closeTo(v, 6))); // side ignored
+    }
+  });
+
   it('a part that is all roof keeps its full dome', () => {
     const built = buildRoof(props({ shape: 'dome', minHeight: 40, height: 60, roofHeight: 20 }), [
       [rect(20, 20)],

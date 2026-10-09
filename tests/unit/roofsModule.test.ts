@@ -208,6 +208,21 @@ describe('RoofsModule', () => {
     expect(stateOf(map, 2)).toBeGreaterThan(0);
   });
 
+  it('gables a side-hipped wing at the end where it meets another part', () => {
+    const { map, scene, module } = setup();
+    map.features = [
+      // 20 × 10 m wing, roof 16–20 m, touching a lower building at its east end.
+      feature(1, rectAt(0, 0, 20, 10), { height: 20, roof_shape: 'side_hipped', roof_height: 4 }),
+      feature(2, rectAt(20, 0, 10, 10), { height: 10, roof_shape: 'pyramidal' }),
+    ];
+    module.update(view());
+    const p = Array.from(roofMesh(scene).geometry.getAttribute('position').array);
+    // Ridge points of the wing (the only vertices at 20 m), east-west extent in metres.
+    const ridge = p.filter((_, i) => i % 3 === 0 && Math.abs(p[i + 1]! - 20) < 1e-3);
+    const span = Math.max(...ridge) - Math.min(...ridge);
+    expect(span).toBeCloseTo(15, 1); // hipped west (5 m in), gabled east (to the wall)
+  });
+
   it('draws only the nearest maxBuildings', () => {
     const { map, module } = setup({ maxBuildings: 1 });
     map.features = [
