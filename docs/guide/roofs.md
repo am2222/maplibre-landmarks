@@ -40,7 +40,8 @@ add `filter: ['!=', ['get', 'has_parts'], true]` to your extrusion layer.
 
 Other sources map their names with `fields`, e.g. `fields: { roof_shape: 'roof:shape' }`.
 Buildings without a roof shape keep their flat extrusion. Options: `minZoom` (15),
-`maxBuildings` (2000), `wallColors` (false), `gableColor` (`#d9d4ce`), `onError`.
+`maxBuildings` (2000), `wallColors` (false), `gableColor` (`#d9d4ce`), `farCutoff` (true:
+pitched views roof buildings only up to about three screen heights away), `onError`.
 
 **Overture's official tiles (no build step).** Each Overture release publishes worldwide
 building tiles (PMTiles, z5–14) with these attributes and numeric feature ids, buildings and

@@ -187,6 +187,27 @@ describe('RoofsModule', () => {
     expect(stateOf(map, 1)).toBeGreaterThan(0);
   });
 
+  it('pitched: roofs no building beyond the far cutoff, nor reads its tile', () => {
+    const { map, module } = setup();
+    const far = renderTiles(map, {
+      '15/16592/11272': [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'dome' })],
+      '15/16610/11272': [feature(2, rectAt(2000, 0, 20, 20), { height: 20, roof_shape: 'dome' })],
+    })[1]!;
+    module.update(view({ zoom: 17, pitch: 70, heightPx: 900 })); // cutoff ~1.06 km
+    expect(map.states.has(2)).toBe(false);
+    expect(far.querySourceFeatures).not.toHaveBeenCalled();
+    expect(stateOf(map, 1)).toBeGreaterThan(0);
+    module.update(view({ zoom: 17, pitch: 30, heightPx: 900 }));
+    expect(stateOf(map, 2)).toBeGreaterThan(0);
+  });
+
+  it('roofs past the cutoff when farCutoff is off', () => {
+    const { map, module } = setup({ farCutoff: false });
+    map.features = [feature(2, rectAt(2000, 0, 20, 20), { height: 20, roof_shape: 'dome' })];
+    module.update(view({ zoom: 17, pitch: 70, heightPx: 900 }));
+    expect(stateOf(map, 2)).toBeGreaterThan(0);
+  });
+
   it('draws only the nearest maxBuildings', () => {
     const { map, module } = setup({ maxBuildings: 1 });
     map.features = [

@@ -23,12 +23,14 @@ wind stops the repaint loop.
 | `maxTrees` / `minZoom` / `lodDistanceM` | `4000` / `14` / `300`                       | Budget (trees appear with the 3D buildings at zoom 14)                    |
 | `fullDensityZoom`                       | `16`                                        | Below it scattered trees are thinned: ¼ two zooms below, ½ one zoom below |
 | `scatter`                               | `{ forest: 1/60, wood: 1/60, park: 1/400 }` | Trees per m² by landuse kind; `false` = points only                       |
+| `density` | `0.6` | Share of scattered trees drawn (a fixed subset; mapped trees always) |
+| `farCutoff` | `true` | Pitched views (past 45°) draw trees only to about three screen heights away, sinking them near the edge, and skip tiles beyond |
 | `riseMs` | `400` | A newly shown tree rises from the ground over this time (`0`: appears at once) |
 | `scatterSkipRatio`                      | `0.25`                                      | Don't scatter a tile piece whose mapped trees reach this share of its target |
 | `wind`                                  | `{ strength: 1, directionDeg: 250 }`        | Direction the wind blows from                                             |
 | `theme`                                 | —                                           | Sets the map-wide theme                                                   |
 
-Methods: `setWind(wind)`, `setTheme(theme)`, `getStats()`.
+Methods: `setWind(wind)`, `setDensity(density)`, `setTheme(theme)`, `getStats()`.
 
 ## Custom tree models
 

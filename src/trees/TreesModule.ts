@@ -1,5 +1,6 @@
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
-import { localPosition } from '../core/mercator';
+import { farCutoffM, tileNearestM } from '../core/cutoff';
+import { localPosition, originAt } from '../core/mercator';
 import type { Theme } from '../core/theme';
 import type { Bounds, LngLat, Origin, ViewState } from '../core/types';
 import { padBounds, padMetres } from '../landmarks/discovery';
@@ -33,8 +34,18 @@ export interface TreesOptions {
    */
   fullDensityZoom?: number;
   lodDistanceM?: number;
+  /**
+   * Pitched views (past 45°) draw this layer only to about three screen heights from the view
+   * centre and skip tiles beyond, as Mapbox does (default true).
+   */
+  farCutoff?: boolean;
   /** Milliseconds a newly shown tree takes to rise from the ground (default 400; 0: no rise). */
   riseMs?: number;
+  /**
+   * Share of scattered trees drawn, 0–1 (default 0.6): a fixed subset per tree, so changing it
+   * only adds or removes trees. Mapped trees are always drawn.
+   */
+  density?: number;
   /** Trees per m² by landuse kind; false disables scattering. */
   scatter?: Record<string, number> | false;
   scatterSkipRatio?: number;
@@ -56,6 +67,7 @@ export interface TreeStats {
   piecesScattered: number;
 }
 
+const clamp01 = (v: number) => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 1));
 const DEFAULT_WEIGHTS: Record<string, number> = { deciduous: 0.6, conifer: 0.2, birch: 0.2 };
 const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 60, wood: 1 / 60, park: 1 / 400 };
 const SOURCE_DEBOUNCE_MS = 200;
@@ -95,6 +107,9 @@ export class TreesModule implements LayerModule {
     piecesScattered: 0,
   };
   private wind: Required<TreesWind>;
+  private density: number;
+  /** Far cutoff of the last update (metres from the view centre; Infinity when off). */
+  private cutoff = Number.POSITIVE_INFINITY;
   private themeOption?: Theme;
   private sourceErrorReported = false;
   private disposed = false;
@@ -106,6 +121,7 @@ export class TreesModule implements LayerModule {
       directionDeg: opts.wind?.directionDeg ?? 250,
     };
     this.themeOption = opts.theme;
+    this.density = clamp01(opts.density ?? 0.6);
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
     this.look.uniforms.uRise.value = Math.max(0, opts.riseMs ?? 400) / 1000;
   }
@@ -143,6 +159,10 @@ export class TreesModule implements LayerModule {
       this.write([], view);
       return;
     }
+    this.cutoff = this.opts.farCutoff === false ? Number.POSITIVE_INFINITY : farCutoffM(view);
+    const u = this.look.uniforms;
+    u.uCutoff.value = Number.isFinite(this.cutoff) ? this.cutoff : 1e9;
+    u.uCutoffFade.value = Number.isFinite(this.cutoff) ? this.cutoff * 0.25 : 1;
     try {
       for (const feed of this.feeds) feed.settle();
     } catch (err) {
@@ -152,7 +172,11 @@ export class TreesModule implements LayerModule {
     }
     this.scatteredBefore = this.tiles!.piecesScattered;
     const tiles = this.tiles!.tiles();
-    const keep = Math.min(1, Math.max(0.25, 2 ** (view.zoom - (this.opts.fullDensityZoom ?? 16))));
+    const zoomKeep = Math.min(
+      1,
+      Math.max(0.25, 2 ** (view.zoom - (this.opts.fullDensityZoom ?? 16))),
+    );
+    const keep = zoomKeep * this.density;
     const maxTrees = this.opts.maxTrees ?? 4000;
     const padded = padBounds(view.bounds, padMetres(view.pitch, 30));
     const distance = distanceFrom(view.center);
@@ -168,14 +192,16 @@ export class TreesModule implements LayerModule {
       .sort((a, b) => a.near - b.near);
     let cutoff = Number.POSITIVE_INFINITY;
     let cutoffAt = maxTrees;
+    const far = this.cutoff;
     const add = (c: Candidate) => {
       if (seen.has(c.key)) return false; // the same tree in a parent and a child tile
       seen.add(c.key);
+      if (far !== Number.POSITIVE_INFINITY && distance(c.lngLat) > far) return true;
       if (inBounds(c.lngLat, padded)) candidates.push(c);
       return true;
     };
     for (const { t, near } of ordered) {
-      if (near > cutoff) break;
+      if (near > cutoff || near > far) break;
       for (const m of t.mapped) if (add(m)) mapped++;
       for (const p of t.scatter()) if (p.thin < keep && add(p)) scattered++;
       // Tighten the cutoff as candidates grow (recomputed when their number doubles).
@@ -217,6 +243,11 @@ export class TreesModule implements LayerModule {
     const grow = Math.min(1, Math.max(0, zoom - (this.opts.minZoom ?? 14)));
     this.look.uniforms.uGrow.value = grow;
     this.batches.group.position.set(...localPosition(origin, this.anchor, 0));
+    const centre = this.ctx?.map.getCenter?.();
+    if (centre) {
+      const [x, , z] = localPosition(originAt(this.anchor), [centre.lng, centre.lat], 0);
+      this.look.uniforms.uCenter.value.set(x, z);
+    }
     this.batches.group.updateMatrixWorld(true);
   }
 
@@ -264,6 +295,12 @@ export class TreesModule implements LayerModule {
     else this.themeOption = theme;
   }
 
+  /** Share of scattered trees drawn, 0–1 (see `density`). */
+  setDensity(density: number): void {
+    this.density = clamp01(density);
+    if (this.lastView) this.update(this.lastView);
+  }
+
   setWind(wind: TreesWind): void {
     this.wind = { ...this.wind, ...wind };
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
@@ -299,6 +336,9 @@ export class TreesModule implements LayerModule {
         source: this.opts.source,
         ...(sourceLayer ? { sourceLayer } : {}),
         filter,
+        // Tiles wholly beyond the far cutoff are not read until it reaches them.
+        wants: (key) =>
+          key === '*' || !this.lastView || tileNearestM(key, this.lastView.center) <= this.cutoff,
         onTile: (key, features) => {
           set(key, features as never);
           changed();

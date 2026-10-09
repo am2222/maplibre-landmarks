@@ -101,6 +101,9 @@ function addLandmarks() {
     channel: $<HTMLSelectElement>('channel').value as 'latest' | 'preview',
     replaceBuildings:
       state.roofData !== 'none' ? ['buildings', ...roofWalls(roofParts())] : ['buildings'],
+    showFrom: select('landmark-show-from').value as 'extrusions' | 'catalogue',
+    maxResident: landmarkMax.value(),
+    fadeMs: landmarkFade.value(),
     onModelsChanged: renderModels,
     onError: (err, ctx) => console.warn('[landmarks]', ctx, err),
   });
@@ -116,6 +119,8 @@ function addRoofs() {
     sourceLayer: 'building',
     extrusionLayer: roofWalls(roofParts()),
     wallColors: $<HTMLInputElement>('wall-colors').checked,
+    farCutoff: $<HTMLInputElement>('roof-cutoff').checked,
+    maxBuildings: roofMax.value(),
     onError: (err) => console.warn('[roofs]', err),
   });
   map.addLayer(roofs, before3D());
@@ -127,6 +132,11 @@ function addTrees() {
     id: 'trees',
     source: 'protomaps',
     wind: { strength: treeWind.value(), directionDeg: treeWindDir.value() },
+    density: treeDensity.value(),
+    maxTrees: treeMax.value(),
+    lodDistanceM: treeLod.value(),
+    riseMs: treeRise.value(),
+    farCutoff: $<HTMLInputElement>('tree-cutoff').checked,
     onError: (err, ctx) => console.warn('[trees]', ctx, err),
   });
   map.addLayer(trees, before3D());
@@ -143,6 +153,7 @@ function addWater() {
     source: 'protomaps',
     sourceLayer: 'water',
     waves: waves.value(),
+    maxTriangles: waterMax.value(),
   });
   const layers = map.getStyle().layers;
   let i = layers.findIndex((l) => l.id === 'water');
@@ -226,6 +237,38 @@ const fogWind = range(
 );
 const fogWindDir = range('fog-wind-dir', (v) => fog?.setWind({ direction: v }), degrees);
 
+/** A range that rebuilds its layer when let go (the option is fixed at construction). */
+const rebuilding = (id: string, layer: string, format?: (v: number) => string) => {
+  const r = range(id, () => {}, format);
+  $(id).addEventListener('change', () => {
+    if (toggle(layer).checked) LAYERS[layer]!.add();
+  });
+  return r;
+};
+const ms = (v: number) => `${v} ms`;
+const metres = (v: number) => `${v} m`;
+const count = (v: number) => v.toLocaleString();
+const treeDensity = range(
+  'tree-density',
+  (v) => trees?.setDensity(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+const treeMax = rebuilding('tree-max', 'trees', count);
+const treeLod = rebuilding('tree-lod', 'trees', metres);
+const treeRise = rebuilding('tree-rise', 'trees', ms);
+const roofMax = rebuilding('roof-max', 'roofs', count);
+const waterMax = rebuilding('water-max', 'water', count);
+const landmarkMax = rebuilding('landmark-max', 'landmarks');
+const landmarkFade = rebuilding('landmark-fade', 'landmarks', ms);
+range('max-pitch', (v) => map.setMaxPitch(v), degrees);
+for (const [id, layer] of [
+  ['tree-cutoff', 'trees'],
+  ['roof-cutoff', 'roofs'],
+] as const)
+  $<HTMLInputElement>(id).onchange = () => {
+    if (toggle(layer).checked) LAYERS[layer]!.add();
+  };
+
 /**
  * Apply a new style (a diffed swap: custom layers survive). When the roof walls change, the
  * roofs and landmarks are rebuilt for the new walls.
@@ -257,6 +300,9 @@ select('projection').onchange = () => {
 $<HTMLInputElement>('terrain').onchange = () => {
   state.terrain = $<HTMLInputElement>('terrain').checked;
   restyle();
+};
+select('landmark-show-from').onchange = () => {
+  if (toggle('landmarks').checked) addLandmarks();
 };
 select('channel').onchange = () => {
   if (toggle('landmarks').checked) addLandmarks();

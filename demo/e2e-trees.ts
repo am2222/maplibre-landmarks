@@ -92,6 +92,7 @@ map.once('load', () => {
     source: 't',
     sourceLayers: { points: '', polygons: '' },
     minZoom: 15,
+    density: 1, // the scene checks scattering itself, not thinning
     theme: 'day',
     onError: (err, ctx) => window.__errors.push(`${ctx.stage}: ${String(err)}`),
   });

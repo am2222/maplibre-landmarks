@@ -9,6 +9,7 @@ import {
 import { pointInPolygons } from '../core/geometry';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
 import { localPosition, originAt } from '../core/mercator';
+import { farCutoffM, tileNearestM } from '../core/cutoff';
 import { OwnedPaint } from '../core/ownedPaint';
 import { TileFeed, type FeedMap } from '../core/tileFeed';
 import type { LngLat, Origin, ViewState } from '../core/types';
@@ -42,12 +43,18 @@ export interface RoofsOptions {
   fields?: Partial<Fields>;
   minZoom?: number;
   maxBuildings?: number;
+  /**
+   * Pitched views (past 45°) draw this layer only to about three screen heights from the view
+   * centre and skip tiles beyond, as Mapbox does (default true).
+   */
+  farCutoff?: boolean;
   wallColors?: boolean;
   gableColor?: string;
   onError?: (err: unknown) => void;
 }
 
 const REBUILD_DEBOUNCE_MS = 150;
+const M_PER_DEG = 111_320;
 
 interface Drawn {
   /** Source layer the footprint came from (ids repeat across layers). */
@@ -73,6 +80,8 @@ export class RoofsModule implements LayerModule {
   private readonly pieces: BuildingPieces;
   /** One tile feed per source layer drawn by a wrapped extrusion layer ('' when none). */
   private readonly feeds = new Map<string, TileFeed>();
+  /** Far cutoff of the last rebuild (metres from the view centre; Infinity when off). */
+  private cutoff = Number.POSITIVE_INFINITY;
   /** Terrain changed since the last merge. */
   private groundChanged = false;
   /** Built roofs by layer-qualified footprint key, rebuilt when the footprint's pieces change. */
@@ -235,6 +244,7 @@ export class RoofsModule implements LayerModule {
     const source = map.getSource(this.options.source) as { vectorLayerIds?: string[] } | undefined;
     if (!source) this.report('source', new Error(`source "${this.options.source}" not found`));
     const active = source && view.zoom >= (this.options.minZoom ?? 15) ? ready : [];
+    this.cutoff = this.options.farCutoff === false ? Number.POSITIVE_INFINITY : farCutoffM(view);
     const feeds = this.syncFeeds(active, source?.vectorLayerIds);
     if (feeds.length) {
       try {
@@ -294,6 +304,9 @@ export class RoofsModule implements LayerModule {
       source: this.options.source,
       ...(layer ? { sourceLayer: layer } : {}),
       filter,
+      // Tiles wholly beyond the far cutoff are not read until it reaches them.
+      wants: (key) =>
+        key === '*' || !this.view || tileNearestM(key, this.view.center) <= this.cutoff,
       onTile: (key, features) => {
         this.pieces.add(key, layer, features);
         if (this.pieces.missingIds)
@@ -335,6 +348,7 @@ export class RoofsModule implements LayerModule {
       if (this.replacedByLandmark(map, sourceLayer, f.id)) continue;
       if (pointInPolygons(f.centroid, exempt)) continue;
       const d = Math.hypot((f.centroid[0] - cx) * k, f.centroid[1] - cy);
+      if (d * M_PER_DEG > this.cutoff) continue; // beyond the far cutoff (pitched views)
       found.push({ key, f, sourceLayer, d });
     }
     const nearest = found.sort((a, b) => a.d - b.d).slice(0, this.options.maxBuildings ?? 2000);

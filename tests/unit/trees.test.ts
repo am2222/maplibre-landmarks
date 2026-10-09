@@ -150,6 +150,64 @@ describe('TreesModule', () => {
     expect(stats.drawn).toBe(20 + stats.scattered);
   });
 
+  it('keeps a fixed share of scattered trees by density (mapped trees all stay), live', async () => {
+    const data = {
+      points: [point(1, at(300, 0))],
+      polygons: [polygon(2, 'forest', square(0, 0, 200))],
+    };
+    const full = setup({ density: 1, maxTrees: 100_000 }, data);
+    full.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const all = full.module.getStats().scattered;
+    const half = setup({ density: 0.5, maxTrees: 100_000 }, data);
+    half.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const kept = half.module.getStats();
+    expect(kept.scattered / all).toBeGreaterThan(0.4);
+    expect(kept.scattered / all).toBeLessThan(0.6);
+    expect(kept.mapped).toBe(1);
+    half.module.setDensity(1);
+    expect(half.module.getStats().scattered).toBe(all);
+  });
+
+  it('pitched: draws no tree beyond the far cutoff, and shrinks those near it', async () => {
+    const s = setup({}, { points: [point(1, at(10, 0)), point(2, at(2000, 0))] });
+    const wide = { center: C, zoom: 17, heightPx: 900, bounds: [2.2, 48.8, 2.4, 48.9] as const };
+    s.module.update(view({ ...wide, pitch: 70, bounds: [...wide.bounds] })); // cutoff ~1.06 km
+    await flush();
+    expect(s.module.getStats().drawn).toBe(1);
+    const u = uniformsOf(s.scene);
+    expect(u.uCutoff.value).toBeGreaterThan(1000);
+    expect(u.uCutoff.value).toBeLessThan(1100);
+    s.module.update(view({ ...wide, pitch: 30, bounds: [...wide.bounds] }));
+    expect(s.module.getStats().drawn).toBe(2);
+    expect(u.uCutoff.value).toBeGreaterThan(1e8); // off
+  });
+
+  it('draws past the cutoff when farCutoff is off', async () => {
+    const s = setup({ farCutoff: false }, { points: [point(1, at(10, 0)), point(2, at(2000, 0))] });
+    s.module.update(
+      view({ center: C, zoom: 17, pitch: 70, heightPx: 900, bounds: [2.2, 48.8, 2.4, 48.9] }),
+    );
+    await flush();
+    expect(s.module.getStats().drawn).toBe(2);
+  });
+
+  it('pitched: reads a far tile only once the cutoff reaches it', async () => {
+    const s = setup({}, { points: [] });
+    const pitched = view({ center: C, zoom: 17, pitch: 70, heightPx: 900 });
+    s.module.update(pitched);
+    await flush();
+    const query = vi.fn();
+    s.map.handlers.get('sourcedata')!({
+      sourceId: 'src',
+      tile: { tileID: { canonical: { z: 15, x: 16610, y: 11272 } }, querySourceFeatures: query },
+    }); // ~14 km east
+    expect(query).not.toHaveBeenCalled();
+    s.module.update(view({ center: C, zoom: 17, pitch: 20, heightPx: 900 }));
+    expect(query).toHaveBeenCalled();
+  });
+
   it('recomputes scatter when more pieces of a polygon load', async () => {
     const full = square(90, 0, 80);
     const westHalf = [at(50, -40), at(90, -40), at(90, 40), at(50, 40), at(50, -40)];

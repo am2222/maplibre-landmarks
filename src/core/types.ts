@@ -7,6 +7,8 @@ export interface ViewState {
   pitch: number;
   bearing: number;
   center: LngLat;
+  /** Map canvas height in CSS pixels (unknown: no far cutoff). */
+  heightPx?: number;
 }
 
 /** Per-frame render origin: mercator units, and mercator units per metre at the origin. */

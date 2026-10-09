@@ -29,12 +29,12 @@ describe('createTreeMaterial', () => {
     expect(shader.vertexShader).toContain('attribute float aTint');
     expect(shader.vertexShader).toContain('attribute float aPhase');
     expect(shader.vertexShader).toContain('attribute float aBorn');
-    expect(shader.vertexShader).toContain('transformed * ( uGrow * risen )');
+    expect(shader.vertexShader).toContain('transformed * ( uGrow * risen * kept )');
     expect(shader.uniforms.uRise).toBe(uniforms.uRise);
     expect(shader.vertexShader).not.toContain('dot( treeOrigin.xz');
     expect(shader.fragmentShader).toContain('mix(uTrunk, foliageCol, vPart)');
     expect(shader.uniforms.uTime).toBe(uniforms.uTime);
-    expect(material.customProgramCacheKey()).toBe('trees-v2');
+    expect(material.customProgramCacheKey()).toBe('trees-v3');
     expect(material.userData.treeUniforms).toBe(uniforms);
   });
 

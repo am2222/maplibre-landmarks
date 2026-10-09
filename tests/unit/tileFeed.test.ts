@@ -315,6 +315,22 @@ describe('TileFeed', () => {
     expect(feed.shadowed('15/16594/11272', inside('15/16594/11272', 0.5, 0.5))).toBe(false);
   });
 
+  it('delivers a held tile once its layer wants it (the far cutoff moved out)', () => {
+    let far = true;
+    const { map, feed, onTile } = setup({
+      wants: (key: string) => key !== '15/16594/11272' || !far,
+    });
+    const tile = fakeTile(15, 16594, 11272, [feature(1)]);
+    map.emit({ tile });
+    feed.settle();
+    expect(onTile).not.toHaveBeenCalled();
+    far = false;
+    feed.settle();
+    expect(onTile).toHaveBeenCalledWith('15/16594/11272', [feature(1)]);
+    feed.settle();
+    expect(onTile).toHaveBeenCalledTimes(1);
+  });
+
   it('treats features without tile information as one pseudo-tile', () => {
     const { map, feed, onTile } = setup();
     map.querySourceFeatures.mockReturnValue([feature(1), feature(2)]);

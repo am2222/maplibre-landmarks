@@ -63,6 +63,10 @@
             </label>
             <label class="check"><input type="checkbox" id="terrain" /> Terrain</label>
           </div>
+          <label
+            >Max pitch <output></output>
+            <input id="max-pitch" type="range" min="45" max="85" step="5" value="85"
+          /></label>
         </section>
 
         <section class="controls" data-controls="landmarks">
@@ -76,6 +80,21 @@
               <option value="preview">preview (drafts)</option>
             </select>
           </label>
+          <label
+            >Appear
+            <select id="landmark-show-from">
+              <option value="extrusions">with the 3D buildings</option>
+              <option value="catalogue">at each landmark's zoom</option>
+            </select>
+          </label>
+          <label
+            >Models kept <output></output>
+            <input id="landmark-max" type="range" min="1" max="16" step="1" value="8"
+          /></label>
+          <label
+            >Hand-over <output></output>
+            <input id="landmark-fade" type="range" min="0" max="1500" step="50" value="400"
+          /></label>
           <p class="stats" id="landmark-stats"></p>
           <ul id="models"></ul>
         </section>
@@ -93,6 +112,13 @@
             </select>
           </label>
           <label class="check"><input type="checkbox" id="wall-colors" /> Facade colours</label>
+          <label class="check"
+            ><input type="checkbox" id="roof-cutoff" checked /> Far cutoff when pitched</label
+          >
+          <label
+            >Max buildings <output></output>
+            <input id="roof-max" type="range" min="200" max="5000" step="100" value="2000"
+          /></label>
           <p class="stats" id="roof-stats"></p>
         </section>
 
@@ -108,6 +134,25 @@
             >Wind from <output></output>
             <input id="tree-wind-dir" type="range" min="0" max="359" step="1" value="270"
           /></label>
+          <label
+            >Density <output></output>
+            <input id="tree-density" type="range" min="0" max="1" step="0.05" value="0.6"
+          /></label>
+          <label
+            >Max trees <output></output>
+            <input id="tree-max" type="range" min="500" max="10000" step="500" value="4000"
+          /></label>
+          <label
+            >Detailed within <output></output>
+            <input id="tree-lod" type="range" min="50" max="1000" step="50" value="300"
+          /></label>
+          <label
+            >Rise <output></output>
+            <input id="tree-rise" type="range" min="0" max="1500" step="50" value="400"
+          /></label>
+          <label class="check"
+            ><input type="checkbox" id="tree-cutoff" checked /> Far cutoff when pitched</label
+          >
           <p class="stats" id="tree-stats"></p>
         </section>
 
@@ -118,6 +163,10 @@
           <label
             >Waves <output></output>
             <input id="water-waves" type="range" min="0" max="2" step="0.05" value="1"
+          /></label>
+          <label
+            >Max triangles <output></output>
+            <input id="water-max" type="range" min="20000" max="600000" step="20000" value="300000"
           /></label>
           <p class="stats" id="water-stats"></p>
         </section>

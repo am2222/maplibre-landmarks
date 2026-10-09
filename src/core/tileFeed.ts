@@ -52,6 +52,8 @@ interface Held {
   /** Fallback only: identity of the grouped features, to notice a changed tile. */
   signature?: string;
   bounds: Bbox;
+  /** Delivered through `onTile` (false while its layer does not want it). */
+  delivered?: boolean;
 }
 
 export const tileKey = ({ z, x, y }: Canonical): string => `${z}/${x}/${y}`;
@@ -177,7 +179,17 @@ export class TileFeed {
   /** The camera settled: run the fallback if needed, then drop tiles no longer in use. */
   settle(): void {
     this.suspended = false;
-    if (this.syncWithManager()) return;
+    if (!this.syncWithManager()) this.settleByRules();
+    // Held tiles the layer did not want on arrival, wanted now (its far cutoff moved out).
+    if (this.options.wants)
+      for (const [key, held] of [...this.held])
+        if (!held.delivered && this.options.wants(key)) {
+          held.delivered = true;
+          this.options.onTile(key, held.features ?? this.query(held.tile!));
+        }
+  }
+
+  private settleByRules(): void {
     // Without the fast path every settle re-reads the source (what layers did before the feed).
     if (this.needsFallback || !this.fast) this.runFallback();
     const view = this.view();
@@ -249,9 +261,11 @@ export class TileFeed {
 
   /** Hold a tile; read and deliver it unless its layer does not want it (read on demand then). */
   private arrive(key: string, tile: EventTile): void {
-    this.held.set(key, { tile, bounds: tileBounds(key) });
+    const held: Held = { tile, bounds: tileBounds(key) };
+    this.held.set(key, held);
     this.ancestors = undefined;
     if (this.options.wants && !this.options.wants(key)) return;
+    held.delivered = true;
     this.options.onTile(key, this.query(tile));
   }
 
@@ -359,8 +373,11 @@ export class TileFeed {
         .join(',')}`;
       if (held && held.signature === signature) continue;
       if (held) this.drop(key);
-      this.held.set(key, { features: group, signature, bounds: tileBounds(key) });
+      const entry: Held = { features: group, signature, bounds: tileBounds(key) };
+      this.held.set(key, entry);
       this.ancestors = undefined;
+      if (this.options.wants && !this.options.wants(key)) continue;
+      entry.delivered = true;
       this.options.onTile(key, group);
     }
   }
