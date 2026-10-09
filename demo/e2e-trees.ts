@@ -2,7 +2,7 @@ import { Map as MlMap, setWorkerUrl } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Feature } from 'geojson';
-import { setTheme, TreesLayer, type Theme, type TreeStats } from '../src/index';
+import { RainLayer, setTheme, TreesLayer, type Theme, type TreeStats } from '../src/index';
 
 setWorkerUrl(workerUrl);
 
@@ -14,6 +14,8 @@ declare global {
     __stats(): TreeStats;
     __setWind(strength: number): void;
     __setTheme(theme: Theme): void;
+    __rain?: RainLayer;
+    __addRain(): void;
   }
 }
 
@@ -102,3 +104,7 @@ map.once('load', () => {
 window.__stats = () => window.__trees!.getStats();
 window.__setWind = (strength) => window.__trees!.setWind({ strength });
 window.__setTheme = (theme) => setTheme(map, theme);
+window.__addRain = () => {
+  window.__rain = new RainLayer({ id: 'rain', intensity: 1, lightning: false });
+  map.addLayer(window.__rain);
+};

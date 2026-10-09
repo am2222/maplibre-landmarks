@@ -29,5 +29,7 @@ export interface LayerModule {
   styleChanged?(attached: boolean): void;
   /** The map-wide theme changed (`setTheme(map, theme)`); update palettes, then repaint. */
   themeChanged?(theme: Theme): void;
+  /** Surfaces got wetter or drier (a RainLayer), 0 dry to 1 downpour. */
+  wetnessChanged?(wetness: number): void;
   onRemove(): void;
 }

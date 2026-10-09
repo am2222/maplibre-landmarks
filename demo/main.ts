@@ -7,6 +7,7 @@ import {
   LabelOcclusion,
   LandmarksLayer,
   PowerLinesLayer,
+  RainLayer,
   RoofsLayer,
   setTheme,
   THEMES,
@@ -41,7 +42,8 @@ if (!key && !pmtilesUrl) {
 const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
 // Start-up settings from the page URL (the docs embed a dusk skyline):
-// `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`.
+// `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
+// `?rain` (or `?rain=<intensity 0–1>`).
 const params = new URLSearchParams(location.search);
 // Power lines: Overture's base theme (only fetched while the power layer is on).
 const OVERTURE_BASE =
@@ -92,6 +94,7 @@ let roofs: RoofsLayer | undefined;
 let trees: TreesLayer | undefined;
 let water: WaterLayer | undefined;
 let fog: FogLayer | undefined;
+let rain: RainLayer | undefined;
 let power: PowerLinesLayer | undefined;
 
 let occlusion: LabelOcclusion | undefined;
@@ -99,8 +102,10 @@ let models: LandmarkInfo[] = [];
 
 /** The first label above the 3D layers (street names lie under them, see style.ts). */
 const firstSymbol = () => firstPointLabel(map.getStyle().layers);
-/** 3D layers go under the fog (it blends over them), or under the labels without fog. */
-const before3D = () => (map.getLayer('fog') ? 'fog' : firstSymbol());
+/** The rain sits right under the labels: it dims and lights everything drawn before it. */
+const beforeRain = () => (map.getLayer('rain') ? 'rain' : firstSymbol());
+/** 3D layers go under the fog (it blends over them), or under the rain and labels without fog. */
+const before3D = () => (map.getLayer('fog') ? 'fog' : beforeRain());
 /** Removing a layer restores what it changed (hidden buildings, shortened walls). */
 const remove = (id: string) => {
   if (map.getLayer(id)) map.removeLayer(id);
@@ -209,7 +214,20 @@ function addFog() {
     coverage: fogCoverage.value(),
     wind: { speed: fogWind.value(), direction: fogWindDir.value() },
   });
-  map.addLayer(fog, firstSymbol());
+  map.addLayer(fog, beforeRain());
+}
+
+function addRain() {
+  remove('rain');
+  rain = new RainLayer({
+    id: 'rain',
+    intensity: rainIntensity.value(),
+    wind: { strength: rainWind.value(), directionDeg: rainWindDir.value() },
+    lightning: $<HTMLInputElement>('rain-lightning').checked
+      ? { intervalS: rainInterval.value() }
+      : false,
+  });
+  map.addLayer(rain, firstSymbol());
 }
 
 function addLabels() {
@@ -224,6 +242,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   trees: { add: addTrees, id: () => 'trees' },
   water: { add: addWater, id: () => 'water-3d' },
   fog: { add: addFog, id: () => 'fog' },
+  rain: { add: addRain, id: () => 'rain' },
   power: { add: addPower, id: () => 'power' },
   labels: { add: addLabels, id: () => occlusion?.id },
 };
@@ -273,6 +292,31 @@ const fogWind = range(
   (v) => `${v} m/s`,
 );
 const fogWindDir = range('fog-wind-dir', (v) => fog?.setWind({ direction: v }), degrees);
+const rainIntensity = range(
+  'rain-intensity',
+  (v) => rain?.setIntensity(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+const rainWind = range('rain-wind', (v) => rain?.setWind({ strength: v }));
+const rainWindDir = range('rain-wind-dir', (v) => rain?.setWind({ directionDeg: v }), degrees);
+const rainInterval = range(
+  'rain-interval',
+  (v) => {
+    if ($<HTMLInputElement>('rain-lightning').checked) rain?.setLightning({ intervalS: v });
+  },
+  (v) => `${v} s`,
+);
+$<HTMLInputElement>('rain-lightning').onchange = () =>
+  rain?.setLightning(
+    $<HTMLInputElement>('rain-lightning').checked ? { intervalS: rainInterval.value() } : false,
+  );
+$('rain-strike').addEventListener('click', () => rain?.strike());
+if (params.has('rain')) {
+  const intensity = Number(params.get('rain'));
+  if (params.get('rain') && intensity >= 0 && intensity <= 1) rainIntensity.set(intensity);
+  toggle('rain').checked = true;
+  syncTabDots();
+}
 if (params.has('fog')) {
   const height = Number(params.get('fog'));
   if (height > 0) fogHeight.set(height);
@@ -445,6 +489,11 @@ setInterval(() => {
   const p = power?.getStats();
   $('power-stats').textContent =
     p && toggle('power').checked ? `${p.supports} supports · ${p.spans} spans (zoom 14+)` : '';
+  const rs = rain?.getStats();
+  $('rain-stats').textContent =
+    rs && toggle('rain').checked
+      ? `${rs.drops.toLocaleString()} drops · ${rs.strikes} strikes (zoom 10+)`
+      : '';
   const w = water?.getStats();
   $('water-stats').textContent =
     w && toggle('water').checked
@@ -461,5 +510,8 @@ renderModels(models);
   },
   get power() {
     return power;
+  },
+  get rain() {
+    return rain;
   },
 };

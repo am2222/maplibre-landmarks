@@ -23,9 +23,11 @@ export interface FrameProjection {
 
 export type RendererFactory = (map: CoreMap, gl: WebGL2RenderingContext) => RendererLike;
 
-/** Anything that wants to hear about theme changes (every LayerModule qualifies). */
+/** Anything that wants to hear about theme or weather changes (every LayerModule qualifies). */
 export interface ThemeListener {
   themeChanged?(theme: Theme): void;
+  /** How wet surfaces are, 0 (dry) to 1 (downpour): set by a RainLayer. */
+  wetnessChanged?(wetness: number): void;
 }
 
 export const createWebGLRenderer: RendererFactory = (map, gl) => {
@@ -90,6 +92,7 @@ export class ThreeCore {
   private readonly rigs = new Map<Scene, LightRig>();
   private readonly listeners = new Set<ThemeListener>();
   private warmQueue: { object: Object3D; scene: Scene; resolve: () => void }[] = [];
+  private wet = 0;
 
   constructor(
     private readonly map: CoreMap,
@@ -103,6 +106,18 @@ export class ThreeCore {
 
   get theme(): Theme {
     return this.current;
+  }
+
+  /** How wet surfaces are, 0 (dry) to 1 (downpour). */
+  get wetness(): number {
+    return this.wet;
+  }
+
+  setWetness(wetness: number): void {
+    const w = Math.min(1, Math.max(0, Number.isFinite(wetness) ? wetness : 0));
+    if (w === this.wet) return;
+    this.wet = w;
+    for (const l of this.listeners) l.wetnessChanged?.(w);
   }
 
   createScene(): Scene {

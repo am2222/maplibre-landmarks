@@ -112,6 +112,7 @@ export class RoofsModule implements LayerModule {
       roughness: 0.9,
     });
     this.mesh = new Mesh(geometry, material);
+    this.wetnessChanged(ctx.core.wetness ?? 0);
     ctx.scene.add(this.mesh);
     for (const id of this.extrusionLayers)
       this.walls.set(
@@ -151,6 +152,15 @@ export class RoofsModule implements LayerModule {
     // A swapped style may carry other tiles: start the feeds over.
     for (const feed of this.feeds.values()) feed.reset();
     if (attached) this.rebuild();
+  }
+
+  /** Rain: wet roofs are darker and glossier. */
+  wetnessChanged(wetness: number): void {
+    const material = this.mesh?.material;
+    if (!material) return;
+    material.roughness = 0.9 - 0.55 * wetness;
+    material.color.setScalar(1 - 0.3 * wetness);
+    this.ctx?.requestRepaint();
   }
 
   onRemove(): void {
