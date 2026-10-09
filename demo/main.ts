@@ -8,7 +8,9 @@ import {
   LabelOcclusion,
   LandmarksLayer,
   PowerLinesLayer,
+  RainLayer,
   RoofsLayer,
+  SnowLayer,
   setTheme,
   THEMES,
   TreesLayer,
@@ -45,7 +47,8 @@ const OVERTURE_BUILDINGS =
 // Start-up settings from the page URL (the docs embed a dusk skyline):
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
 // `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?clouds` (or
-// `?clouds=<coverage 0–1>`).
+// `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
+// `?snow=<intensity 0–1>`).
 const params = new URLSearchParams(location.search);
 // Power lines: Overture's base theme (only fetched while the power layer is on).
 const OVERTURE_BASE =
@@ -107,6 +110,8 @@ let trees: TreesLayer | undefined;
 let water: WaterLayer | undefined;
 let fog: FogLayer | undefined;
 let clouds: CloudsLayer | undefined;
+let rain: RainLayer | undefined;
+let snow: SnowLayer | undefined;
 let power: PowerLinesLayer | undefined;
 
 let occlusion: LabelOcclusion | undefined;
@@ -114,8 +119,11 @@ let models: LandmarkInfo[] = [];
 
 /** The first label above the 3D layers (street names lie under them, see style.ts). */
 const firstSymbol = () => firstPointLabel(map.getStyle().layers);
-/** 3D layers go under the fog (it blends over them), or under the labels without fog. */
-const before3D = () => (map.getLayer('fog') ? 'fog' : firstSymbol());
+/** Rain and snow sit right under the labels: they dim and light everything drawn before them. */
+const beforeRain = () =>
+  map.getLayer('rain') ? 'rain' : map.getLayer('snow') ? 'snow' : firstSymbol();
+/** 3D layers go under the fog (it blends over them), or under the rain and labels without fog. */
+const before3D = () => (map.getLayer('fog') ? 'fog' : beforeRain());
 /** Removing a layer restores what it changed (hidden buildings, shortened walls). */
 const remove = (id: string) => {
   if (map.getLayer(id)) map.removeLayer(id);
@@ -226,7 +234,31 @@ function addFog() {
     coverage: fogCoverage.value(),
     wind: { speed: fogWind.value(), direction: fogWindDir.value() },
   });
-  map.addLayer(fog, firstSymbol());
+  map.addLayer(fog, beforeRain());
+}
+
+function addRain() {
+  remove('rain');
+  rain = new RainLayer({
+    id: 'rain',
+    intensity: rainIntensity.value(),
+    wind: { strength: rainWind.value(), directionDeg: rainWindDir.value() },
+    lightning: $<HTMLInputElement>('rain-lightning').checked
+      ? { intervalS: rainInterval.value() }
+      : false,
+  });
+  map.addLayer(rain, firstSymbol());
+}
+
+function addSnow() {
+  remove('snow');
+  snow = new SnowLayer({
+    id: 'snow',
+    intensity: snowIntensity.value(),
+    wind: { strength: snowWind.value(), directionDeg: snowWindDir.value() },
+    settle: snowSettle.value(),
+  });
+  map.addLayer(snow, firstSymbol());
 }
 
 /** Above the 3D layers and the fog: the shadows darken them, the clouds hang over them. */
@@ -258,6 +290,8 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   water: { add: addWater, id: () => 'water-3d' },
   fog: { add: addFog, id: () => 'fog' },
   clouds: { add: addClouds, id: () => 'clouds' },
+  rain: { add: addRain, id: () => 'rain' },
+  snow: { add: addSnow, id: () => 'snow' },
   power: { add: addPower, id: () => 'power' },
   labels: { add: addLabels, id: () => occlusion?.id },
 };
@@ -342,6 +376,53 @@ if (params.has('clouds')) {
   const coverage = Number(params.get('clouds'));
   if (params.get('clouds') && coverage >= 0 && coverage <= 1) cloudCoverage.set(coverage);
   toggle('clouds').checked = true;
+  syncTabDots();
+}
+const rainIntensity = range(
+  'rain-intensity',
+  (v) => rain?.setIntensity(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+const rainWind = range('rain-wind', (v) => rain?.setWind({ strength: v }));
+const rainWindDir = range('rain-wind-dir', (v) => rain?.setWind({ directionDeg: v }), degrees);
+const rainInterval = range(
+  'rain-interval',
+  (v) => {
+    if ($<HTMLInputElement>('rain-lightning').checked) rain?.setLightning({ intervalS: v });
+  },
+  (v) => `${v} s`,
+);
+$<HTMLInputElement>('rain-lightning').onchange = () =>
+  rain?.setLightning(
+    $<HTMLInputElement>('rain-lightning').checked ? { intervalS: rainInterval.value() } : false,
+  );
+$('rain-strike').addEventListener('click', () => rain?.strike());
+const snowIntensity = range(
+  'snow-intensity',
+  (v) => snow?.setIntensity(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+const snowWind = range('snow-wind', (v) => snow?.setWind({ strength: v }));
+const snowWindDir = range('snow-wind-dir', (v) => snow?.setWind({ directionDeg: v }), degrees);
+// Fixed at construction: rebuilds the layer when let go (the cover starts over).
+const snowSettle = range(
+  'snow-settle',
+  () => {},
+  (v) => (v ? `${v} s` : 'at once'),
+);
+$('snow-settle').addEventListener('change', () => {
+  if (toggle('snow').checked) addSnow();
+});
+if (params.has('snow')) {
+  const intensity = Number(params.get('snow'));
+  if (params.get('snow') && intensity >= 0 && intensity <= 1) snowIntensity.set(intensity);
+  toggle('snow').checked = true;
+  syncTabDots();
+}
+if (params.has('rain')) {
+  const intensity = Number(params.get('rain'));
+  if (params.get('rain') && intensity >= 0 && intensity <= 1) rainIntensity.set(intensity);
+  toggle('rain').checked = true;
   syncTabDots();
 }
 if (params.has('fog')) {
@@ -580,6 +661,16 @@ setInterval(() => {
   const p = power?.getStats();
   $('power-stats').textContent =
     p && toggle('power').checked ? `${p.supports} supports · ${p.spans} spans (zoom 14+)` : '';
+  const rs = rain?.getStats();
+  $('rain-stats').textContent =
+    rs && toggle('rain').checked
+      ? `${rs.drops.toLocaleString()} drops · ${rs.strikes} strikes (zoom 10+)`
+      : '';
+  const ss = snow?.getStats();
+  $('snow-stats').textContent =
+    ss && toggle('snow').checked
+      ? `${ss.flakes.toLocaleString()} flakes · roofs ${Math.round(ss.cover * 100)}% covered`
+      : '';
   const w = water?.getStats();
   $('water-stats').textContent =
     w && toggle('water').checked
@@ -599,5 +690,11 @@ renderModels(models);
   },
   get clouds() {
     return clouds;
+  },
+  get rain() {
+    return rain;
+  },
+  get snow() {
+    return snow;
   },
 };

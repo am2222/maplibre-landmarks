@@ -6,6 +6,7 @@ import {
   Mesh,
   MeshStandardMaterial,
 } from 'three';
+import { withSnowCover, type SnowCoverUniform } from '../core/snowCover';
 import { pointInPolygons } from '../core/geometry';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
 import { localPosition, originAt } from '../core/mercator';
@@ -72,6 +73,7 @@ export class RoofsModule implements LayerModule {
   private readonly walls = new Map<string, OwnedPaint>();
   private readonly extrusionLayers: string[];
   private mesh?: Mesh<BufferGeometry, MeshStandardMaterial>;
+  private readonly snowCover: SnowCoverUniform = { uSnowCover: { value: 0 } };
   private anchor?: LngLat;
   private anchorElevation = 0;
   private view?: ViewState;
@@ -111,7 +113,10 @@ export class RoofsModule implements LayerModule {
       side: DoubleSide,
       roughness: 0.9,
     });
+    withSnowCover(material, this.snowCover);
     this.mesh = new Mesh(geometry, material);
+    this.wetnessChanged(ctx.core.wetness ?? 0);
+    this.snowCoverChanged(ctx.core.snowCover ?? 0);
     ctx.scene.add(this.mesh);
     for (const id of this.extrusionLayers)
       this.walls.set(
@@ -151,6 +156,21 @@ export class RoofsModule implements LayerModule {
     // A swapped style may carry other tiles: start the feeds over.
     for (const feed of this.feeds.values()) feed.reset();
     if (attached) this.rebuild();
+  }
+
+  /** Snow: it settles on the upward-facing parts of roofs. */
+  snowCoverChanged(cover: number): void {
+    this.snowCover.uSnowCover.value = cover;
+    this.ctx?.requestRepaint();
+  }
+
+  /** Rain: wet roofs are darker and glossier. */
+  wetnessChanged(wetness: number): void {
+    const material = this.mesh?.material;
+    if (!material) return;
+    material.roughness = 0.9 - 0.55 * wetness;
+    material.color.setScalar(1 - 0.3 * wetness);
+    this.ctx?.requestRepaint();
   }
 
   onRemove(): void {

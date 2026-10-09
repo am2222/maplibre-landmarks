@@ -210,6 +210,9 @@ body {
   font-size: 12px;
   white-space: nowrap;
 }
+.strike {
+  margin: 4px 0;
+}
 .row > .pill {
   flex: none;
   margin-bottom: 6px;
