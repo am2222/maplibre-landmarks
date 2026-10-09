@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress';
 export default defineConfig({
   title: 'maplibre-landmarks',
   description:
-    '3D landmarks, roof shapes, trees, fog and water for MapLibre GL JS, rendered with three.js',
+    '3D landmarks, roof shapes, trees, fog, rain, snow and water for MapLibre GL JS, rendered with three.js',
   base: '/maplibre-landmarks/',
   cleanUrls: true,
   srcExclude: ['superpowers/**'],
@@ -28,6 +28,8 @@ export default defineConfig({
           { text: 'Trees', link: '/guide/trees' },
           { text: 'Power lines', link: '/guide/power' },
           { text: 'Volumetric fog', link: '/guide/fog' },
+          { text: 'Rain', link: '/guide/rain' },
+          { text: 'Snow', link: '/guide/snow' },
           { text: 'Water', link: '/guide/water' },
         ],
       },

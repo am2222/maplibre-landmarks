@@ -71,6 +71,8 @@
           <button data-tab="water">Water</button>
           <button data-tab="power">Power</button>
           <button data-tab="fog">Fog</button>
+          <button data-tab="rain">Rain</button>
+          <button data-tab="snow">Snow</button>
         </nav>
 
         <div class="layer-controls">
@@ -239,6 +241,56 @@
               <input id="fog-wind-dir" type="range" min="0" max="359" step="1" value="270"
             /></label>
             <p class="hint">With terrain, the height is above the valley floor.</p>
+          </section>
+
+          <section class="controls" data-controls="rain">
+            <label class="switch"><input type="checkbox" data-toggle="rain" /> Show rain</label>
+            <label
+              >Intensity <output></output>
+              <input id="rain-intensity" type="range" min="0" max="1" step="0.05" value="0.7"
+            /></label>
+            <div class="row">
+              <label
+                >Wind <output></output>
+                <input id="rain-wind" type="range" min="0" max="2" step="0.1" value="0.5"
+              /></label>
+              <label
+                >From <output></output>
+                <input id="rain-wind-dir" type="range" min="0" max="359" step="1" value="250"
+              /></label>
+            </div>
+            <label class="check"
+              ><input type="checkbox" id="rain-lightning" checked /> Thunderstorm</label
+            >
+            <label
+              >Strike every <output></output>
+              <input id="rain-interval" type="range" min="2" max="30" step="1" value="10"
+            /></label>
+            <button type="button" id="rain-strike" class="pill strike">⚡ Strike now</button>
+            <p class="stats" id="rain-stats"></p>
+          </section>
+
+          <section class="controls" data-controls="snow">
+            <label class="switch"><input type="checkbox" data-toggle="snow" /> Show snow</label>
+            <label
+              >Intensity <output></output>
+              <input id="snow-intensity" type="range" min="0" max="1" step="0.05" value="0.6"
+            /></label>
+            <div class="row">
+              <label
+                >Wind <output></output>
+                <input id="snow-wind" type="range" min="0" max="2" step="0.1" value="0.3"
+              /></label>
+              <label
+                >From <output></output>
+                <input id="snow-wind-dir" type="range" min="0" max="359" step="1" value="250"
+              /></label>
+            </div>
+            <label
+              >Settles on roofs over <output></output>
+              <input id="snow-settle" type="range" min="0" max="120" step="5" value="40"
+            /></label>
+            <p class="stats" id="snow-stats"></p>
           </section>
         </div>
       </div>

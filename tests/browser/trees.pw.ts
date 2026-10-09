@@ -132,3 +132,76 @@ test('turns trees through the seasons: autumn colours, then bare in winter', asy
   expect(await page.evaluate(() => window.__errors)).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
+
+/** Mean luminance of every pixel (background included). */
+const meanLum = (page: Page) =>
+  page.evaluate(() => {
+    const src = window.__map!.getCanvas();
+    const c = document.createElement('canvas');
+    c.width = src.width;
+    c.height = src.height;
+    const ctx = c.getContext('2d')!;
+    ctx.drawImage(src, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let lum = 0;
+    for (let i = 0; i < d.length; i += 4)
+      lum += 0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!;
+    return lum / (d.length / 4);
+  });
+
+test('rain darkens the scene and lightning lights it up', async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (e) => consoleErrors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(m.text());
+  });
+  await page.goto('/e2e-trees.html');
+  await page.waitForFunction(() => (window.__trees?.getStats().drawn ?? 0) > 0, null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => window.__setWind(0));
+  await page.waitForTimeout(800);
+  await idleWithin(page, 3000);
+  const dry = await meanLum(page);
+
+  await page.evaluate(() => window.__addRain());
+  await page.waitForFunction(() => (window.__rain?.getStats().drops ?? 0) > 0);
+  await page.waitForTimeout(300);
+  expect(await meanLum(page)).toBeLessThan(dry * 0.8);
+
+  // Hold the flash up for the sample: strike, then sample within its first flicker.
+  const flash = await page.evaluate(async () => {
+    window.__rain!.strike(false);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return window.__rain!.getStats().flash;
+  });
+  expect(flash).toBeGreaterThan(0.3);
+
+  expect(await page.evaluate(() => window.__errors)).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('snow falls and hazes the scene without errors', async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (e) => consoleErrors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(m.text());
+  });
+  await page.goto('/e2e-trees.html');
+  await page.waitForFunction(() => (window.__trees?.getStats().drawn ?? 0) > 0, null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => window.__setWind(0));
+  await page.waitForTimeout(800);
+  await idleWithin(page, 3000);
+  const clear = await sample(page);
+  await page.evaluate(() => window.__addSnow());
+  await page.waitForFunction(() => (window.__snow?.getStats().flakes ?? 0) > 0);
+  await page.waitForTimeout(300);
+  const snowy = await sample(page);
+  // The pale haze washes out the trees' green.
+  expect(snowy.green).toBeLessThan(clear.green);
+  expect(await page.evaluate(() => window.__snow!.getStats().cover)).toBe(1);
+  expect(await page.evaluate(() => window.__errors)).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});

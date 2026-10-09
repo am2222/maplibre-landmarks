@@ -32,7 +32,7 @@ map.on('load', () => {
 });
 ```
 
-Roofs, trees, fog, water and power lines: see the [guide](https://am2222.github.io/maplibre-landmarks/guide/getting-started).
+Roofs, trees, fog, rain, snow, water and power lines: see the [guide](https://am2222.github.io/maplibre-landmarks/guide/getting-started).
 
 ## Development
 
