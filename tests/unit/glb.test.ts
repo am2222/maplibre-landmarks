@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HttpError } from '../../src/landmarks/catalogue';
 import { treeModelFromGLB } from '../../src/trees/models/glb';
+import { mergeParts } from '../../src/trees/models/procedural';
 import type { TreeParts } from '../../src/trees/models/types';
 import { makeGlb } from './glb-fixture';
 import { fakeFetch } from './helpers';
@@ -23,7 +24,8 @@ describe('treeModelFromGLB', () => {
     expect(model.variants).toBe(1);
     const parts = (await model.build(1)) as TreeParts;
     expect(parts.trunk.getAttribute('position').count).toBe(3);
-    expect(parts.foliage.getAttribute('position').count).toBe(6); // leaves + unlisted misc
+    // Leaves + unlisted misc, one clump per mesh.
+    expect(mergeParts([parts.foliage].flat()).getAttribute('position').count).toBe(6);
   });
 
   it('loads the file once and passes tones through', async () => {

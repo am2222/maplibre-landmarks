@@ -43,9 +43,53 @@ export function mergeParts(geoms: BufferGeometry[]): BufferGeometry {
   return merged;
 }
 
+const UP = new Vector3(0, 1, 0);
+
+/** An open 3-sided limb from `start` along `dir`, tapering from `r0` to `r1`. */
+function limb(start: Vector3, dir: Vector3, len: number, r0: number, r1: number): BufferGeometry {
+  return new CylinderGeometry(r1, r0, len, 3, 1, true)
+    .translate(0, len / 2, 0)
+    .applyQuaternion(new Quaternion().setFromUnitVectors(UP, dir.clone().normalize()))
+    .translate(start.x, start.y, start.z);
+}
+
+/**
+ * Bare branches for winter, hidden inside the crown while it is in leaf: `count` limbs leaving
+ * the trunk near `top`, tilted `tilt` radians from vertical, each forking in two (18 triangles a
+ * branch). Uses its own random stream, so the crown keeps its shape.
+ */
+function bareBranches(
+  seed: number,
+  top: Vector3,
+  count: number,
+  tilt: [number, number],
+  len: number,
+  r: number,
+): BufferGeometry[] {
+  const rand = seededRand(seed ^ 0x2f6b9a1d);
+  const out: BufferGeometry[] = [];
+  const dirAt = (angle: number, t: number) =>
+    new Vector3(Math.sin(t) * Math.cos(angle), Math.cos(t), Math.sin(t) * Math.sin(angle));
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + rand() * 0.6;
+    const t = tilt[0] + rand() * (tilt[1] - tilt[0]);
+    const l = len * (0.8 + rand() * 0.4);
+    const dir = dirAt(angle, t);
+    const start = top.clone().add(new Vector3(0, -rand() * 0.8, 0));
+    out.push(limb(start, dir, l, r, r * 0.45));
+    const end = start.addScaledVector(dir, l);
+    for (const side of [-1, 1]) {
+      const a = angle + side * 0.6 + (rand() - 0.5) * 0.3;
+      out.push(limb(end, dirAt(a, t * 0.6 + rand() * 0.3), l * 0.55, r * 0.45, r * 0.15));
+    }
+  }
+  return out;
+}
+
 /** Conifer: tapered, slightly irregular trunk + 4 layered, offset cones (from the CodePen). */
 export const conifer: TreeModel = {
   id: 'conifer',
+  leafCycle: 'evergreen',
   build(seed): TreeParts {
     const rand = seededRand(seed);
     const trunkH = 3.0 + rand() * 1.5;
@@ -72,13 +116,17 @@ export const conifer: TreeModel = {
         placed(new ConeGeometry(radius, height, sides), pos, [0, rand() * Math.PI * 2, 0]),
       );
     }
-    return { trunk: mergeParts([trunk]), foliage: mergeParts(cones), foliageTone: 0.8 };
+    return { trunk: mergeParts([trunk]), foliage: cones, foliageTone: 0.8 };
   },
 };
 
-/** Deciduous: bent trunk + lumpy crown of icosphere lobes (from the CodePen). */
+/**
+ * Deciduous: bent trunk + lumpy crown of icosphere lobes (from the CodePen), with bare branches
+ * under it. A quarter of them blossom in spring.
+ */
 export const deciduous: TreeModel = {
   id: 'deciduous',
+  blossom: 0.25,
   build(seed): TreeParts {
     const rand = seededRand(seed);
     const trunkH = 2.5 + rand() * 1.2;
@@ -129,11 +177,13 @@ export const deciduous: TreeModel = {
         rand() * Math.PI,
       ]),
     );
-    return { trunk: mergeParts([trunk]), foliage: mergeParts(lobes) };
+    const top = new Vector3(bx * 0.4, trunkH, bz * 0.4);
+    const branches = bareBranches(seed, top, 4, [0.55, 0.95], 2, 0.17);
+    return { trunk: mergeParts([trunk, ...branches]), foliage: lobes };
   },
 };
 
-/** Birch: slim pale trunk + small round crown (from the CodePen). */
+/** Birch: slim pale trunk + small round crown (from the CodePen), with upright bare branches. */
 export const birch: TreeModel = {
   id: 'birch',
   build(seed): TreeParts {
@@ -153,9 +203,10 @@ export const birch: TreeModel = {
       lobes.push(placed(new IcosahedronGeometry(0.9 + rand() * 0.4, 0), pos));
     }
     lobes.push(placed(new IcosahedronGeometry(1.0, 0), [0, baseY, 0]));
+    const branches = bareBranches(seed, new Vector3(0, trunkH, 0), 4, [0.3, 0.55], 1.4, 0.1);
     return {
-      trunk: mergeParts([trunk]),
-      foliage: mergeParts(lobes),
+      trunk: mergeParts([trunk, ...branches]),
+      foliage: lobes,
       trunkTone: 2.4,
       foliageTone: 1.25,
     };

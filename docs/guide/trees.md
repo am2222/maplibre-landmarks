@@ -30,19 +30,59 @@ wind stops the repaint loop.
 | `riseMs` | `400` | A newly shown tree rises from the ground over this time (`0`: appears at once) |
 | `scatterSkipRatio`                      | `0.25`                                      | Don't scatter a tile piece whose mapped trees reach this share of its target |
 | `wind`                                  | `{ strength: 1, directionDeg: 250 }`        | Direction the wind blows from                                             |
+| `season` | `'summer'` | `'spring'`, `'summer'`, `'autumn'`, `'winter'`, `'auto'` or a number (0 spring … 3 winter); see [Seasons](#seasons) |
+| `snow` | `true` | Snow on evergreens and bare branches in winter |
 | `theme`                                 | —                                           | Sets the map-wide theme                                                   |
 
-Methods: `setWind(wind)`, `setDensity(density)`, `setTheme(theme)`, `getStats()`.
+Methods: `setWind(wind)`, `setDensity(density)`, `setTheme(theme)`, `setSeason(season)`,
+`getSeason()`, `setSnow(snow)`, `getStats()`.
+
+## Seasons
+
+<DemoFrame src="/demo/tree-seasons.html" title="Trees through the seasons" />
+
+```ts
+const trees = new TreesLayer({ id: 'trees', source: 'protomaps', season: 'autumn' });
+
+trees.setSeason('winter'); // eases forward through the year over 1.5 s
+trees.setSeason(2.4, { durationMs: 0 }); // 0 spring, 1 summer, 2 autumn, 3 winter; wraps at 4
+trees.setSeason('auto'); // today's date at the map's latitude
+trees.setSnow(false); // bare winter trees without snow
+```
+
+| Season | Deciduous trees                                                         | Evergreens                 |
+| ------ | ----------------------------------------------------------------------- | -------------------------- |
+| Spring | Fresh yellow-green; a share of them in pink or white blossom; crowns at 80% | Slightly lighter (new growth) |
+| Summer | The theme's foliage colour (the default, as before seasons existed)     | The theme's foliage colour |
+| Autumn | Each tree red, orange, amber or late green; crowns thinning             | Slightly darker            |
+| Winter | Leaves fall clump by clump, leaving bare branches                       | Darker, with snow on top   |
+
+Each tree turns at a slightly different time, so a park changes gradually rather than all at once.
+Everything happens in the shader: changing the season rebuilds no tiles. Seasonal colours are set for
+the `day` theme and scaled for the others, so they follow `setTheme`.
+
+`'auto'` places the year so each season peaks mid-way through it (spring around 15 April, autumn
+around 15 October), half a year on south of the equator. Between the tropics it stays summer. It is
+also available as `seasonAt(date, lat)`.
+
+The basemap's ground is not part of this layer. The sample above tints its park fill itself.
 
 ## Custom tree models
 
 A model returns trunk and foliage geometry (metres, Y up, base at 0). Colours always come from the
-theme palette, so every model follows `setTheme`.
+theme palette, so every model follows `setTheme`. Foliage can be an array of leaf clumps, which fall
+one by one in autumn; a single geometry shrinks as one crown. Put bare branches in the trunk geometry:
+the crown hides them until the leaves fall. Set `leafCycle: 'evergreen'` on models that keep their
+leaves (default `'deciduous'`), and `blossom` (0–1) for the share of trees that blossom in spring.
 
 ```ts
 import { treeModelFromGLB, type TreeModel } from 'maplibre-landmarks';
 
-const palm = treeModelFromGLB('/models/palm.glb', { trunk: ['bark'], foliage: ['leaves'] });
+const palm = treeModelFromGLB('/models/palm.glb', {
+  trunk: ['bark'],
+  foliage: ['leaves'],
+  leafCycle: 'evergreen',
+});
 const lollipop: TreeModel = {
   id: 'lollipop',
   build: (seed) => ({ trunk: myTrunkGeometry(seed), foliage: myCrownGeometry(seed) }),

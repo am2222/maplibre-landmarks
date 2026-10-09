@@ -14,9 +14,16 @@ export interface GlbTreeOptions {
   fetch?: Fetch;
   trunkTone?: number;
   foliageTone?: number;
+  /** See TreeModel.leafCycle (default 'deciduous'). */
+  leafCycle?: 'deciduous' | 'evergreen';
+  /** See TreeModel.blossom. */
+  blossom?: number;
 }
 
-/** Wrap a GLB asset (metres, Y up, base at 0) as a single-variant, theme-coloured TreeModel. */
+/**
+ * Wrap a GLB asset (metres, Y up, base at 0) as a single-variant, theme-coloured TreeModel. In
+ * winter a deciduous one shows only what is listed as trunk.
+ */
 export function treeModelFromGLB(url: string, opts: GlbTreeOptions): TreeModel {
   const fetchFn = opts.fetch ?? globalFetch;
   let parts: Promise<TreeParts> | undefined;
@@ -37,7 +44,8 @@ export function treeModelFromGLB(url: string, opts: GlbTreeOptions): TreeModel {
     disposeObject(root);
     return {
       trunk: mergeParts(trunk),
-      foliage: mergeParts(foliage),
+      // Each leaf mesh is a clump, falling on its own in autumn.
+      foliage: foliage.length ? foliage : mergeParts([]),
       trunkTone: opts.trunkTone,
       foliageTone: opts.foliageTone,
     };
@@ -46,6 +54,8 @@ export function treeModelFromGLB(url: string, opts: GlbTreeOptions): TreeModel {
   return {
     id: opts.id ?? fileName.replace(/\.[^.]*$/, ''),
     variants: 1,
+    leafCycle: opts.leafCycle,
+    blossom: opts.blossom,
     build: () => (parts ??= load()),
   };
 }

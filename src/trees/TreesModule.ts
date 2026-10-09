@@ -19,6 +19,7 @@ import {
   type Candidate,
   type PlacedTree,
 } from './select';
+import { seasonAt, seasonValue, wrapSeason, type TreeSeason } from './season';
 import { TreeTiles } from './tileStore';
 
 export interface TreesWind {
@@ -69,6 +70,13 @@ export interface TreesOptions {
   scatter?: Record<string, number> | false;
   scatterSkipRatio?: number;
   wind?: TreesWind;
+  /**
+   * Time of year (default 'summer'): a season name, 'auto' (today's date at the map's latitude),
+   * or 0 spring … 3 winter, wrapping at 4.
+   */
+  season?: TreeSeason;
+  /** Snow on evergreens and bare branches in winter (default true). */
+  snow?: boolean;
   theme?: Theme;
   onError?: (err: unknown, ctx: { stage: 'source' | 'model'; id?: string }) => void;
 }
@@ -90,6 +98,12 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 
 const DEFAULT_WEIGHTS: Record<string, number> = { deciduous: 0.6, conifer: 0.2, birch: 0.2 };
 const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 120, wood: 1 / 120, park: 1 / 400 };
 const SOURCE_DEBOUNCE_MS = 200;
+const SEASON_DURATION_MS = 1500;
+
+export interface SeasonTransition {
+  /** Milliseconds to ease into the new season, moving forward through the year (default 1500). */
+  durationMs?: number;
+}
 
 const inBounds = ([lng, lat]: LngLat, [w, s, e, n]: Bounds) =>
   lng >= w && lng <= e && lat >= s && lat <= n;
@@ -132,6 +146,9 @@ export class TreesModule implements LayerModule {
   /** Far cutoff of the last update (metres from the view centre; Infinity when off). */
   private cutoff = Number.POSITIVE_INFINITY;
   private themeOption?: Theme;
+  private season: TreeSeason;
+  /** Season easing: from → to over durationMs, starting at the next frame (startMs undefined). */
+  private seasonEase?: { from: number; to: number; durationMs: number; startMs?: number };
   private sourceErrorReported = false;
   private disposed = false;
   private timer?: ReturnType<typeof setTimeout>;
@@ -145,6 +162,9 @@ export class TreesModule implements LayerModule {
     this.density = clamp01(opts.density ?? 0.6);
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
     this.look.uniforms.uRise.value = Math.max(0, opts.riseMs ?? 400) / 1000;
+    this.season = opts.season ?? 'summer';
+    this.look.uniforms.uSeason.value = seasonValue(this.season) ?? 1;
+    this.look.uniforms.uSnow.value = opts.snow === false ? 0 : 1;
   }
 
   onAdd(ctx: ModuleContext): void {
@@ -166,6 +186,7 @@ export class TreesModule implements LayerModule {
 
   update(view: ViewState): void {
     this.lastView = view;
+    if (this.season === 'auto') this.easeSeason(seasonAt(new Date(), view.center[1]));
     const ctx = this.ctx;
     if (!ctx || !this.batches || !this.models.length) return;
     const t0 = performance.now();
@@ -287,9 +308,10 @@ export class TreesModule implements LayerModule {
   frame(timeMs: number): boolean {
     const t = timeMs / 1000;
     this.look.uniforms.uTime.value = t;
+    const turning = this.stepSeason(timeMs);
     if (!(this.batches?.drawn ?? 0)) return false;
     const rising = t < this.batches!.lastBorn + this.look.uniforms.uRise.value;
-    return rising || this.wind.strength > 0;
+    return rising || turning || this.wind.strength > 0;
   }
 
   themeChanged(theme: Theme): void {
@@ -343,6 +365,25 @@ export class TreesModule implements LayerModule {
     this.ctx?.requestRepaint();
   }
 
+  /** Change the time of year, easing forward through the year (see `season`). */
+  setSeason(season: TreeSeason, transition: SeasonTransition = {}): void {
+    this.season = season;
+    const value = seasonValue(season);
+    if (value !== undefined) this.easeSeason(value, transition.durationMs);
+    else if (this.lastView) this.update(this.lastView);
+  }
+
+  /** The current time of year, 0 spring … 3 winter (mid-transition while easing). */
+  getSeason(): number {
+    return wrapSeason(this.look.uniforms.uSeason.value);
+  }
+
+  /** Snow on evergreens and bare branches in winter. */
+  setSnow(snow: boolean): void {
+    this.look.uniforms.uSnow.value = snow ? 1 : 0;
+    this.ctx?.requestRepaint();
+  }
+
   /** Keys of the trees drawn by the last update. */
   drawnKeys(): string[] {
     return this.lastDrawn;
@@ -350,6 +391,37 @@ export class TreesModule implements LayerModule {
 
   getStats(): TreeStats {
     return { ...this.stats };
+  }
+
+  private easeSeason(target: number, durationMs = SEASON_DURATION_MS): void {
+    const u = this.look.uniforms.uSeason;
+    const from = wrapSeason(u.value);
+    // Forward through the year: winter → summer passes through spring.
+    const to = from + wrapSeason(target - from);
+    if (Math.abs(to - from) < 1e-6) {
+      this.seasonEase = undefined;
+      return;
+    }
+    if (this.seasonEase && Math.abs(this.seasonEase.to - to) < 1e-6) return;
+    if (!(durationMs > 0)) {
+      this.seasonEase = undefined;
+      u.value = wrapSeason(to);
+    } else this.seasonEase = { from, to, durationMs };
+    this.ctx?.requestRepaint();
+  }
+
+  /** Advance the season easing; true while it runs. */
+  private stepSeason(timeMs: number): boolean {
+    const ease = this.seasonEase;
+    if (!ease) return false;
+    ease.startMs ??= timeMs;
+    const k = Math.min(1, (timeMs - ease.startMs) / ease.durationMs);
+    const smooth = k * k * (3 - 2 * k);
+    this.look.uniforms.uSeason.value = ease.from + (ease.to - ease.from) * smooth;
+    if (k < 1) return true;
+    this.look.uniforms.uSeason.value = wrapSeason(ease.to);
+    this.seasonEase = undefined;
+    return false;
   }
 
   /** Mapped trees and green polygons, delivered tile by tile into the per-tile store. */
