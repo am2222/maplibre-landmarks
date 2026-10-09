@@ -22,8 +22,9 @@ wind stops the repaint loop.
 | `weights`                               | `{ deciduous: .6, conifer: .2, birch: .2 }` | Pick probability per model id                                             |
 | `maxTrees` / `minZoom` / `lodDistanceM` | `4000` / `14` / `300`                       | Budget (trees appear with the 3D buildings at zoom 14)                    |
 | `fullDensityZoom`                       | `16`                                        | Below it scattered trees are thinned: ¼ two zooms below, ½ one zoom below |
-| `scatter`                               | `{ forest: 1/60, wood: 1/60, park: 1/400 }` | Trees per m² by landuse kind; `false` = points only                       |
+| `scatter`                               | `{ forest: 1/120, wood: 1/120, park: 1/400 }` | Trees per m² by landuse kind; `false` = points only                       |
 | `density` | `0.6` | Share of trees drawn, mapped and scattered (a fixed subset per tree) |
+| `thinBeyondM` | `250` | Scattered trees thin out past this distance from the view centre, as (distance ÷ it)⁻², and stop at 8× it, so the budget reaches far into dense forest (`Infinity`: off) |
 | `farCutoff` | `true` | Pitched views (past 45°) draw trees only to about three screen heights away, sinking them near the edge, and skip tiles beyond |
 | `avoidWater` | `true` | No scattered tree in water (lakes and streams inside parks and woods); mapped trees stay |
 | `riseMs` | `400` | A newly shown tree rises from the ground over this time (`0`: appears at once) |

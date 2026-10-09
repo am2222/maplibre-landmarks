@@ -4,6 +4,11 @@
 [Open Landmarks](https://open-landmarks.benmaps.fr) models, real roof shapes, trees,
 volumetric fog, animated water and power lines, on one shared 3D core.
 
+> [!WARNING]
+> **Experimental and AI-generated.** This project is largely written with AI assistance and is
+> still experimental: APIs may change without notice, and it has not been hardened for
+> production use. Review it before relying on it.
+
 **[Documentation](https://am2222.github.io/maplibre-landmarks/)** ·
 **[Live demo](https://am2222.github.io/maplibre-landmarks/demo/)** ·
 **[Roof gallery](https://am2222.github.io/maplibre-landmarks/demo/roofs-gallery.html)**

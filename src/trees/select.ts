@@ -35,6 +35,16 @@ export function distanceFrom(center: [number, number]): (lngLat: [number, number
   return ([lng, lat]) => Math.hypot((lng - center[0]) * kx, (lat - center[1]) * METRES_PER_DEG);
 }
 
+/**
+ * Share of scattered trees kept at `distanceM` from the view centre: all of them up to `fromM`,
+ * then falling as (fromM / d)², which keeps their on-screen density roughly even in a pitched view.
+ * The tree budget then reaches several times farther in dense forest instead of ending in a bare
+ * edge a few hundred metres out.
+ */
+export function distanceKeep(distanceM: number, fromM: number): number {
+  return distanceM <= fromM ? 1 : (fromM / distanceM) ** 2;
+}
+
 /** The k-th smallest value (1-based), by quickselect on a copy: O(n) on average. */
 export function kthSmallest(values: ArrayLike<number>, k: number): number {
   const a = Float64Array.from(values);

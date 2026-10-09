@@ -158,6 +158,8 @@ wall colour; sloped faces take the roof colour.
   | `bronze` / `silver` / `gold`                                                       | `#ffeecc` / `#cccccc` / `#ffcc00` |
 
 - **Defaults**: roofs `#b9a99a`; walls and gable ends use the layer's `gableColor` (`#d9d4ce`).
+- **Facade colours** (tagged or from a material) are toned down to 60 % saturation and a 30–88 %
+  lightness range, the same on gable ends and extruded walls. Untagged walls keep the style's colour.
 - **Roof faces are toned down** as OSM Buildings does: every roof colour (tagged, from a material,
   or the default) is drawn at 70 % of its HSL saturation, so `red` becomes a brick red. Each
   building's roof lightness also shifts by ±0.03 or ±0.06 (stable for its feature id), so rows of

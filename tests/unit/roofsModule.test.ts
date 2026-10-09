@@ -384,8 +384,8 @@ describe('RoofsModule', () => {
   it('colours walls from facade attributes when asked', () => {
     const { map } = setup({ wallColors: true });
     const color = map.paint['fill-extrusion-color'] as unknown[];
-    expect(color[0]).toBe('to-color');
-    expect(color[1]).toEqual(['get', 'facade_color']);
+    expect(color[0]).toBe('let');
+    expect(JSON.stringify(color[2])).toContain('["get","facade_color"]');
   });
 
   it('asks MapLibre for roofed buildings only', () => {

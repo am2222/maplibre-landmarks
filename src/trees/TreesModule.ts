@@ -11,7 +11,14 @@ import { createTreeMaterial } from './material';
 import { disposePrepared, prepareModel, type PreparedModel } from './models/prepare';
 import { birch, conifer, deciduous } from './models/procedural';
 import type { TreeModel } from './models/types';
-import { distanceFrom, kthSmallest, selectTrees, type Candidate, type PlacedTree } from './select';
+import {
+  distanceFrom,
+  distanceKeep,
+  kthSmallest,
+  selectTrees,
+  type Candidate,
+  type PlacedTree,
+} from './select';
 import { TreeTiles } from './tileStore';
 
 export interface TreesWind {
@@ -40,6 +47,12 @@ export interface TreesOptions {
    */
   fullDensityZoom?: number;
   lodDistanceM?: number;
+  /**
+   * Scattered trees thin out beyond this distance from the view centre (default 250 m), falling
+   * as (this / distance)², and stop at 8× it, so the tree budget reaches far into dense forest.
+   * Infinity: no thinning.
+   */
+  thinBeyondM?: number;
   /**
    * Pitched views (past 45°) draw this layer only to about three screen heights from the view
    * centre and skip tiles beyond, as Mapbox does (default true).
@@ -75,7 +88,7 @@ export interface TreeStats {
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 1));
 const DEFAULT_WEIGHTS: Record<string, number> = { deciduous: 0.6, conifer: 0.2, birch: 0.2 };
-const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 60, wood: 1 / 60, park: 1 / 400 };
+const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 120, wood: 1 / 120, park: 1 / 400 };
 const SOURCE_DEBOUNCE_MS = 200;
 
 const inBounds = ([lng, lat]: LngLat, [w, s, e, n]: Bounds) =>
@@ -188,6 +201,9 @@ export class TreesModule implements LayerModule {
       Math.max(0.25, 2 ** (view.zoom - (this.opts.fullDensityZoom ?? 16))),
     );
     const keep = zoomKeep * this.density;
+    const thinBeyond = this.opts.thinBeyondM ?? 250;
+    // Past 8× the thinning distance 1/64 of the trees is left: too sparse to read, so stop there.
+    const thinEnd = thinBeyond * 8;
     const maxTrees = this.opts.maxTrees ?? 4000;
     const padded = padBounds(view.bounds, padMetres(view.pitch, 30));
     const distance = distanceFrom(view.center);
@@ -212,10 +228,15 @@ export class TreesModule implements LayerModule {
       return true;
     };
     for (const { t, near } of ordered) {
-      if (near > cutoff || near > far) break;
+      if (near > cutoff || near > far || near > thinEnd) break;
       for (const m of t.mapped) if (m.thin < this.density && add(m)) mapped++;
       for (const p of t.scatter())
-        if (p.thin < keep && !this.water?.contains(p.lngLat) && add(p)) scattered++;
+        if (
+          p.thin < keep * distanceKeep(distance(p.lngLat), thinBeyond) &&
+          !this.water?.contains(p.lngLat) &&
+          add(p)
+        )
+          scattered++;
       // Tighten the cutoff as candidates grow (recomputed when their number doubles).
       if (candidates.length >= cutoffAt) {
         cutoff = kthSmallest(

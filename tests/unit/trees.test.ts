@@ -284,7 +284,7 @@ describe('TreesModule', () => {
       polygon(10 + i, 'wood', square(400 + (i % 60) * 160, -4000 + Math.floor(i / 60) * 160, 120)),
     );
     const near = polygon(1, 'park', square(0, 0, 300));
-    const s = setup({ maxTrees: 4000 }, { points: [], polygons: [] });
+    const s = setup({ maxTrees: 4000, thinBeyondM: Infinity }, { points: [], polygons: [] });
     await flush();
     const z15 = (lng: number, lat: number) => {
       const r = (lat * Math.PI) / 180;
@@ -330,6 +330,64 @@ describe('TreesModule', () => {
     expect(s.map.querySourceFeatures).not.toHaveBeenCalled();
     expect(s.module.getStats().drawn).toBe(4000);
     // Far tiles are never scattered: the nearest tiles already hold the nearest 4,000 trees.
+    expect(ms).toBeLessThan(process.env.CI ? 1500 : 300);
+  });
+
+  it('thins woods with distance and stops reading them 8× the thinning distance out', async () => {
+    // A low camera sees woods out to the horizon: 3,000 woods over ~10 km, one park near the
+    // centre, delivered tile by tile (z15) as MapLibre loads them.
+    const woods = Array.from({ length: 3000 }, (_, i) =>
+      polygon(10 + i, 'wood', square(400 + (i % 60) * 160, -4000 + Math.floor(i / 60) * 160, 120)),
+    );
+    const near = polygon(1, 'park', square(0, 0, 300));
+    const s = setup({ maxTrees: 4000 }, { points: [], polygons: [] });
+    await flush();
+    const z15 = (lng: number, lat: number) => {
+      const r = (lat * Math.PI) / 180;
+      return {
+        z: 15,
+        x: Math.floor(((lng + 180) / 360) * 2 ** 15),
+        y: Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** 15),
+      };
+    };
+    const byTile = new Map<
+      string,
+      { tile: { z: number; x: number; y: number }; features: unknown[] }
+    >();
+    for (const f of [near, ...woods]) {
+      const [lng, lat] = (f.geometry.coordinates as number[][][])[0]![0]!;
+      const tile = z15(lng!, lat!);
+      const key = `${tile.x}/${tile.y}`;
+      if (!byTile.has(key)) byTile.set(key, { tile, features: [] });
+      byTile.get(key)!.features.push(f);
+    }
+    const wide = view({ center: C, zoom: 17, pitch: 85, bounds: [2.2, 48.8, 2.45, 48.95] });
+    s.module.update(wide); // seeds the feeds (nothing loaded yet)
+    for (const { tile, features } of byTile.values())
+      s.map.handlers.get('sourcedata')!({
+        sourceId: 'src',
+        tile: {
+          tileID: { canonical: tile },
+          querySourceFeatures: (
+            result: unknown[],
+            params: { filter: unknown[]; sourceLayer?: string },
+          ) => {
+            // Woods only: no tree points, and no water in these tiles.
+            if (params.filter[0] !== '==' && params.sourceLayer !== 'water')
+              result.push(...features);
+          },
+        },
+      });
+    s.map.querySourceFeatures.mockClear();
+    const t0 = performance.now();
+    s.module.update(wide);
+    const ms = performance.now() - t0;
+    // Tiles arrived through events: updating reads nothing from the source.
+    expect(s.map.querySourceFeatures).not.toHaveBeenCalled();
+    // Thinned: the budget is never reached, yet tiles past 2 km are skipped, so it stays fast.
+    const { drawn } = s.module.getStats();
+    expect(drawn).toBeGreaterThan(0);
+    expect(drawn).toBeLessThan(4000);
     expect(ms).toBeLessThan(process.env.CI ? 1500 : 300);
   });
 
