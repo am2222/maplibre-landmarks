@@ -17,10 +17,11 @@ const pages = [
   'guide/development.html',
   'demo/index.html',
   'demo/roofs-gallery.html',
+  'demo/tree-seasons.html',
 ];
 const problems = pages.filter((p) => !existsSync(`${dist}/${p}`)).map((p) => `missing ${p}`);
 if (existsSync(`${dist}/superpowers`)) problems.push('docs/superpowers was published');
-for (const page of ['demo/index.html', 'demo/roofs-gallery.html']) {
+for (const page of ['demo/index.html', 'demo/roofs-gallery.html', 'demo/tree-seasons.html']) {
   if (!existsSync(`${dist}/${page}`)) continue;
   const html = readFileSync(`${dist}/${page}`, 'utf8');
   for (const [, url] of html.matchAll(/(?:src|href)="(\/[^"]*)"/g))

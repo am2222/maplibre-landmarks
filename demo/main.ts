@@ -16,6 +16,7 @@ import {
   WaterLayer,
   type LandmarkInfo,
   type Theme,
+  type TreeSeason,
 } from '../src/index';
 import { $, initCollapse, initTabs, range, syncTabDots, toggle } from './panel';
 import {
@@ -44,13 +45,22 @@ const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
 // Start-up settings from the page URL (the docs embed a dusk skyline):
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
-// `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or `?snow=<intensity 0–1>`).
+// `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?rain` (or
+// `?rain=<intensity 0–1>`), `?snow` (or `?snow=<intensity 0–1>`).
 const params = new URLSearchParams(location.search);
 // Power lines: Overture's base theme (only fetched while the power layer is on).
 const OVERTURE_BASE =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/base.pmtiles';
 const roofsParam = params.get('roofs');
 const themeParam = params.get('theme');
+const SEASONS = ['spring', 'summer', 'autumn', 'winter'] as const;
+const seasonParam = params.get('season');
+const startSeason: TreeSeason =
+  seasonParam === 'auto' || SEASONS.includes(seasonParam as never)
+    ? (seasonParam as TreeSeason)
+    : seasonParam && Number.isFinite(Number(seasonParam))
+      ? Number(seasonParam)
+      : 'summer';
 const localRoofsUrl = roofsParam
   ? new URL(roofsParam, location.href).href
   : (import.meta.env.VITE_ROOFS_PMTILES as string | undefined);
@@ -62,6 +72,8 @@ const state = {
   terrain: false,
   // A `?roofs=` tileset is what the visit is for: start on it.
   roofData: (roofsParam ? 'local' : 'overture') as RoofData,
+  /** A season name, 'auto', or a time of year (0 spring … 3 winter) once scrubbed or playing. */
+  season: startSeason,
 };
 /** Overture-schema tilesets (the official one, or `?roofs=`): buildings and parts in two layers. */
 const roofParts = () =>
@@ -167,6 +179,8 @@ function addTrees() {
     lodDistanceM: treeLod.value(),
     riseMs: treeRise.value(),
     farCutoff: $<HTMLInputElement>('tree-cutoff').checked,
+    season: state.season,
+    snow: $<HTMLInputElement>('tree-snow').checked,
     onError: (err, ctx) => console.warn('[trees]', ctx, err),
   });
   map.addLayer(trees, before3D());
@@ -283,7 +297,7 @@ function restoreLayers() {
 
 // ---- Panel --------------------------------------------------------------------------------
 
-initTabs('map');
+initTabs(params.has('season') ? 'trees' : 'landmarks');
 initCollapse();
 if (params.get('panel') === '0') $('collapse').click();
 for (const name of Object.keys(LAYERS))
@@ -443,6 +457,70 @@ select('roof-data').onchange = () => {
 $<HTMLInputElement>('wall-colors').onchange = () => {
   if (toggle('roofs').checked) addRoofs();
 };
+
+// ---- Seasons ------------------------------------------------------------------------------
+
+/** Seasons per second while "Play year" runs: a whole year in 6 s. */
+const PLAY_SPEED = 4 / 6;
+const yearInput = $<HTMLInputElement>('tree-year');
+const seasonButtons = [...document.querySelectorAll<HTMLElement>('#tree-season [data-season]')];
+let playing = 0;
+
+/** Slider, read-out and buttons from the trees' current time of year (it eases between seasons). */
+function showSeason() {
+  const value = trees && toggle('trees').checked ? trees.getSeason() : Number(yearInput.value);
+  if (document.activeElement !== yearInput || playing) yearInput.value = String(value);
+  const nearest = SEASONS[Math.round(value) % 4]!;
+  $('tree-season-out').textContent =
+    state.season === 'auto' ? `auto · ${nearest}` : `${nearest} · ${value.toFixed(2)}`;
+  const active =
+    typeof state.season === 'string'
+      ? state.season
+      : Math.abs(value - Math.round(value)) < 0.1
+        ? nearest
+        : undefined;
+  for (const b of seasonButtons) b.classList.toggle('active', b.dataset.season === active);
+}
+
+function stopPlay() {
+  cancelAnimationFrame(playing);
+  playing = 0;
+  $('tree-play').textContent = '▶ Play year';
+}
+
+function setSeason(season: TreeSeason, durationMs?: number) {
+  state.season = season;
+  trees?.setSeason(season, durationMs === undefined ? undefined : { durationMs });
+}
+
+for (const b of seasonButtons)
+  b.addEventListener('click', () => {
+    stopPlay();
+    setSeason(b.dataset.season as TreeSeason);
+  });
+yearInput.addEventListener('input', () => {
+  stopPlay();
+  setSeason(Number(yearInput.value), 0);
+});
+$('tree-play').addEventListener('click', () => {
+  if (playing) return stopPlay();
+  $('tree-play').textContent = '⏸ Pause';
+  let last = performance.now();
+  const step = (now: number) => {
+    const from = trees?.getSeason() ?? Number(yearInput.value);
+    setSeason((from + ((now - last) / 1000) * PLAY_SPEED) % 4, 0);
+    last = now;
+    playing = requestAnimationFrame(step);
+  };
+  playing = requestAnimationFrame(step);
+});
+$<HTMLInputElement>('tree-snow').onchange = () =>
+  trees?.setSnow($<HTMLInputElement>('tree-snow').checked);
+const seasonTick = () => {
+  showSeason();
+  requestAnimationFrame(seasonTick);
+};
+seasonTick();
 
 // ---- Places -------------------------------------------------------------------------------
 

@@ -13,7 +13,7 @@ volumetric fog, animated water and power lines, on one shared 3D core.
 **[Live demo](https://am2222.github.io/maplibre-landmarks/demo/)** ·
 **[Roof gallery](https://am2222.github.io/maplibre-landmarks/demo/roofs-gallery.html)**
 
-[![Paris at dusk: the Eiffel Tower model over the Seine, with fog, water, trees and 3D buildings](docs/public/skyline.jpg)](https://am2222.github.io/maplibre-landmarks/demo/?theme=dusk&fog=70#16/48.856/2.2905/60/78)
+[![Paris at dusk: the Eiffel Tower model over the Seine, with fog, water, trees and 3D buildings](docs/public/skyline.jpg)](https://am2222.github.io/maplibre-landmarks/demo/?theme=dusk&fog=70#16.37/48.858435/2.294978/88.8/84)
 
 ## Install
 

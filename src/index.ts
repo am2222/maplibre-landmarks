@@ -48,11 +48,13 @@ export { PowerModule, type PowerOptions, type PowerStats } from './power/PowerMo
 export { TreesLayer, type TreesLayerOptions } from './trees/TreesLayer';
 export {
   TreesModule,
+  type SeasonTransition,
   type TreeStats,
   type TreesOptions,
   type TreesWind,
 } from './trees/TreesModule';
 export { birch, conifer, deciduous, defaultImpostor } from './trees/models/procedural';
+export { seasonAt, type TreeSeason } from './trees/season';
 export { treeModelFromGLB, type GlbTreeOptions } from './trees/models/glb';
 export type { TreeModel, TreeParts } from './trees/models/types';
 export { RoofsLayer, type RoofsLayerOptions } from './roofs/RoofsLayer';

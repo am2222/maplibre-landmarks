@@ -12,6 +12,7 @@ const sample = (page: Page) =>
     ctx.drawImage(src, 0, 0);
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
     let green = 0;
+    let warm = 0;
     let lum = 0;
     let n = 0;
     for (let i = 0; i < d.length; i += 4) {
@@ -20,8 +21,10 @@ const sample = (page: Page) =>
       n++;
       lum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
       if (g > r + 8 && g > b + 8) green++;
+      if (r > g + 15 && r > b + 40) warm++;
     }
-    return { green: green / (d.length / 4), lum: n ? lum / n : 255 };
+    const px = d.length / 4;
+    return { green: green / px, warm: warm / px, lum: n ? lum / n : 255 };
   });
 
 const idleWithin = (page: Page, ms: number) =>
@@ -91,6 +94,40 @@ test('draws mapped and scattered trees, animates wind and follows the theme', as
   expect(night.lum).toBeLessThan(day.lum * 0.8);
   // Still readable at night (review #2): tree pixels must not collapse to near-black.
   expect(night.lum).toBeGreaterThan(35);
+
+  expect(await page.evaluate(() => window.__errors)).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('turns trees through the seasons: autumn colours, then bare in winter', async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (e) => consoleErrors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(m.text());
+  });
+  await page.goto('/e2e-trees.html');
+  await page.waitForFunction(() => (window.__trees?.getStats().drawn ?? 0) > 0, null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => window.__setWind(0));
+  await page.waitForTimeout(800);
+  await idleWithin(page, 3000);
+  const summer = await sample(page);
+
+  await page.evaluate(() => window.__trees!.setSeason('autumn', { durationMs: 0 }));
+  await idleWithin(page, 3000);
+  const autumn = await sample(page);
+  expect(autumn.warm).toBeGreaterThan(summer.warm + 0.002);
+  expect(autumn.green).toBeLessThan(summer.green * 0.7);
+
+  // Bare and snowless: only the conifers stay green.
+  await page.evaluate(() => {
+    window.__trees!.setSnow(false);
+    window.__trees!.setSeason('winter', { durationMs: 0 });
+  });
+  await idleWithin(page, 3000);
+  const winter = await sample(page);
+  expect(winter.green).toBeLessThan(summer.green * 0.6);
 
   expect(await page.evaluate(() => window.__errors)).toEqual([]);
   expect(consoleErrors).toEqual([]);

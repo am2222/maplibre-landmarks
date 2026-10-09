@@ -32,10 +32,41 @@ describe('createTreeMaterial', () => {
     expect(shader.vertexShader).toContain('transformed * ( uGrow * risen * kept )');
     expect(shader.uniforms.uRise).toBe(uniforms.uRise);
     expect(shader.vertexShader).not.toContain('dot( treeOrigin.xz');
-    expect(shader.fragmentShader).toContain('mix(uTrunk, foliageCol, vPart)');
+    expect(shader.fragmentShader).toContain('mix( uTrunk, foliageCol, vPart )');
     expect(shader.uniforms.uTime).toBe(uniforms.uTime);
-    expect(material.customProgramCacheKey()).toBe('trees-v3');
+    expect(material.customProgramCacheKey()).toBe('trees-v4');
     expect(material.userData.treeUniforms).toBe(uniforms);
+  });
+
+  it('patches in seasons: leaf drop, seasonal colours and snow', () => {
+    const { material, uniforms } = createTreeMaterial();
+    const shader = {
+      vertexShader: ShaderLib.physical.vertexShader,
+      fragmentShader: ShaderLib.physical.fragmentShader,
+      uniforms: {} as Record<string, unknown>,
+    };
+    material.onBeforeCompile(shader as never, {} as never);
+    // Leaf drop happens before the wind and placement read `transformed`.
+    const v = shader.vertexShader;
+    expect(v.indexOf('transformed = mix( aClump.xyz')).toBeGreaterThan(-1);
+    expect(v.indexOf('transformed = mix( aClump.xyz')).toBeLessThan(v.indexOf('uGrow * risen'));
+    expect(v).toContain('attribute vec4 aClump');
+    expect(v).toContain('attribute float aLeaf');
+    expect(shader.fragmentShader).toContain('uniform vec3 uAutumn[5]');
+    expect(shader.fragmentShader).toContain('uSnowColor, vSnow');
+    expect(shader.uniforms.uSeason).toBe(uniforms.uSeason);
+    expect(shader.uniforms.uSnow).toBe(uniforms.uSnow);
+    expect(uniforms.uAutumn.value).toHaveLength(5);
+  });
+
+  it('scales seasonal colours by the theme against the day foliage', () => {
+    const { uniforms, setTheme } = createTreeMaterial();
+    expect(uniforms.uThemeRatio.value.toArray()).toEqual([1, 1, 1]);
+    setTheme('dusk');
+    const dusk = new Color(THEMES.dusk.palette.foliage);
+    const day = new Color(THEMES.day.palette.foliage);
+    expect(uniforms.uThemeRatio.value.x).toBeCloseTo(dusk.r / day.r, 6);
+    expect(uniforms.uThemeRatio.value.z).toBeCloseTo(dusk.b / day.b, 6);
   });
 
   it('applies theme palettes and wind', () => {
