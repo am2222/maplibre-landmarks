@@ -2,7 +2,14 @@ import { Map as MlMap, setWorkerUrl } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Feature } from 'geojson';
-import { RainLayer, setTheme, TreesLayer, type Theme, type TreeStats } from '../src/index';
+import {
+  RainLayer,
+  setTheme,
+  SnowLayer,
+  TreesLayer,
+  type Theme,
+  type TreeStats,
+} from '../src/index';
 
 setWorkerUrl(workerUrl);
 
@@ -16,6 +23,8 @@ declare global {
     __setTheme(theme: Theme): void;
     __rain?: RainLayer;
     __addRain(): void;
+    __snow?: SnowLayer;
+    __addSnow(): void;
   }
 }
 
@@ -107,4 +116,8 @@ window.__setTheme = (theme) => setTheme(map, theme);
 window.__addRain = () => {
   window.__rain = new RainLayer({ id: 'rain', intensity: 1, lightning: false });
   map.addLayer(window.__rain);
+};
+window.__addSnow = () => {
+  window.__snow = new SnowLayer({ id: 'snow', intensity: 1, settle: 0 });
+  map.addLayer(window.__snow);
 };

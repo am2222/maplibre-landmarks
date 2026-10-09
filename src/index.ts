@@ -69,6 +69,8 @@ export {
   type RainStats,
   type RainWind,
 } from './rain/RainModule';
+export { SnowLayer, type SnowLayerOptions } from './snow/SnowLayer';
+export { SnowModule, type SnowOptions, type SnowStats, type SnowWind } from './snow/SnowModule';
 export { WaterLayer, type WaterLayerOptions } from './water/WaterLayer';
 export { WaterModule, type WaterOptions } from './water/WaterModule';
 export { WATER_COLORS, waterStyle, type WaterStyle } from './water/styles';

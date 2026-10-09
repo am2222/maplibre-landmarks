@@ -17,8 +17,8 @@ features:
     details: Open Landmarks 3D models that replace the basemap's buildings, with smooth LOD fades and labels hidden behind them.
   - title: Roof shapes
     details: Gabled, hipped, mansard, domes and more on your fill-extrusion buildings, straight from Overture's tiles.
-  - title: Trees, fog, rain and water
-    details: Wind-swayed trees, valley fog that follows the terrain, rain with thunderstorms, and lit water with waves, flow and foam.
+  - title: Trees, fog, weather and water
+    details: Wind-swayed trees, valley fog that follows the terrain, rain with thunderstorms, snow that settles on roofs, and lit water with waves, flow and foam.
 ---
 
 <DemoFrame src="/demo/?theme=dusk&fog=70&panel=0#16/48.856/2.2905/60/78" title="maplibre-landmarks demo" />

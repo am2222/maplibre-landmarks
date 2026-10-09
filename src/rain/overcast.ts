@@ -8,13 +8,17 @@ export type SkyMap = Pick<MlMap, 'getSky' | 'setSky'>;
 /** Style-spec defaults of the keys we set (setSky only updates keys it is given). */
 const DEFAULTS = { 'sky-color': '#88c6fc', 'horizon-color': '#ffffff', 'fog-color': '#ffffff' };
 /** Rain-cloud grey that the theme's sky colours are drawn toward. */
-const CLOUD = new Color('#7d858e');
+export const RAIN_CLOUD = '#7d858e';
+/** Snow clouds: a lighter, flatter grey. */
+export const SNOW_CLOUD = '#b8bec6';
 
-/** The theme's sky colours, `amount` (0–1) of the way to rain-cloud grey, a little darker. */
+/** The theme's sky colours, `amount` (0–1) of the way to cloud grey, a little darker. */
 export function overcastColors(
   theme: Theme,
   amount: number,
+  cloud = RAIN_CLOUD,
 ): Record<keyof typeof DEFAULTS, string> {
+  const CLOUD = new Color(cloud);
   const base = SKY_COLORS[theme];
   const mix = (hex: string) => {
     const c = new Color(hex);
@@ -33,18 +37,24 @@ export function overcastColors(
   };
 }
 
-/** Greys MapLibre's sky for rain; restores it only if the sky is still the one we set. */
+/** Greys MapLibre's sky for rain or snow; restores it only if the sky is still the one we set. */
 export class Overcast {
   private original?: SkySpecification;
   private applied?: SkySpecification;
 
-  constructor(private readonly map: SkyMap) {}
+  constructor(
+    private readonly map: SkyMap,
+    private readonly cloud = RAIN_CLOUD,
+  ) {}
 
   apply(theme: Theme, amount: number): void {
     const current = this.map.getSky() ?? undefined;
     // First time, or the app changed the sky since ours: that sky becomes the base.
     if (!this.applied || !sameValue(current ?? {}, this.applied)) this.original = current;
-    const next = { ...(this.original ?? {}), ...overcastColors(theme, amount) } as SkySpecification;
+    const next = {
+      ...(this.original ?? {}),
+      ...overcastColors(theme, amount, this.cloud),
+    } as SkySpecification;
     this.map.setSky(next);
     this.applied = next;
   }

@@ -367,3 +367,18 @@ describe('wetness', () => {
     releaseCore(asMap(map));
   });
 });
+
+describe('snow cover', () => {
+  it('is shared map-wide and tells registered modules when it changes', () => {
+    const map = fakeMap();
+    const core = acquireCore(asMap(map), gl, () => fakeRenderer());
+    const listener = { snowCoverChanged: vi.fn() };
+    core.register(listener);
+    expect(core.snowCover).toBe(0);
+    core.setSnowCover(0.3);
+    core.setSnowCover(0.3);
+    core.setSnowCover(-1);
+    expect(listener.snowCoverChanged.mock.calls).toEqual([[0.3], [0]]);
+    releaseCore(asMap(map));
+  });
+});

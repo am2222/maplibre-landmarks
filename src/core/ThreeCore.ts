@@ -28,6 +28,8 @@ export interface ThemeListener {
   themeChanged?(theme: Theme): void;
   /** How wet surfaces are, 0 (dry) to 1 (downpour): set by a RainLayer. */
   wetnessChanged?(wetness: number): void;
+  /** How much snow lies on upward surfaces, 0 (none) to 1 (covered): set by a SnowLayer. */
+  snowCoverChanged?(cover: number): void;
 }
 
 export const createWebGLRenderer: RendererFactory = (map, gl) => {
@@ -93,6 +95,7 @@ export class ThreeCore {
   private readonly listeners = new Set<ThemeListener>();
   private warmQueue: { object: Object3D; scene: Scene; resolve: () => void }[] = [];
   private wet = 0;
+  private snow = 0;
 
   constructor(
     private readonly map: CoreMap,
@@ -118,6 +121,18 @@ export class ThreeCore {
     if (w === this.wet) return;
     this.wet = w;
     for (const l of this.listeners) l.wetnessChanged?.(w);
+  }
+
+  /** How much snow lies on upward surfaces, 0 (none) to 1 (covered). */
+  get snowCover(): number {
+    return this.snow;
+  }
+
+  setSnowCover(cover: number): void {
+    const c = Math.min(1, Math.max(0, Number.isFinite(cover) ? cover : 0));
+    if (c === this.snow) return;
+    this.snow = c;
+    for (const l of this.listeners) l.snowCoverChanged?.(c);
   }
 
   createScene(): Scene {

@@ -9,6 +9,7 @@ import {
   PowerLinesLayer,
   RainLayer,
   RoofsLayer,
+  SnowLayer,
   setTheme,
   THEMES,
   TreesLayer,
@@ -43,7 +44,7 @@ const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
 // Start-up settings from the page URL (the docs embed a dusk skyline):
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
-// `?rain` (or `?rain=<intensity 0–1>`).
+// `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or `?snow=<intensity 0–1>`).
 const params = new URLSearchParams(location.search);
 // Power lines: Overture's base theme (only fetched while the power layer is on).
 const OVERTURE_BASE =
@@ -95,6 +96,7 @@ let trees: TreesLayer | undefined;
 let water: WaterLayer | undefined;
 let fog: FogLayer | undefined;
 let rain: RainLayer | undefined;
+let snow: SnowLayer | undefined;
 let power: PowerLinesLayer | undefined;
 
 let occlusion: LabelOcclusion | undefined;
@@ -102,8 +104,9 @@ let models: LandmarkInfo[] = [];
 
 /** The first label above the 3D layers (street names lie under them, see style.ts). */
 const firstSymbol = () => firstPointLabel(map.getStyle().layers);
-/** The rain sits right under the labels: it dims and lights everything drawn before it. */
-const beforeRain = () => (map.getLayer('rain') ? 'rain' : firstSymbol());
+/** Rain and snow sit right under the labels: they dim and light everything drawn before them. */
+const beforeRain = () =>
+  map.getLayer('rain') ? 'rain' : map.getLayer('snow') ? 'snow' : firstSymbol();
 /** 3D layers go under the fog (it blends over them), or under the rain and labels without fog. */
 const before3D = () => (map.getLayer('fog') ? 'fog' : beforeRain());
 /** Removing a layer restores what it changed (hidden buildings, shortened walls). */
@@ -230,6 +233,17 @@ function addRain() {
   map.addLayer(rain, firstSymbol());
 }
 
+function addSnow() {
+  remove('snow');
+  snow = new SnowLayer({
+    id: 'snow',
+    intensity: snowIntensity.value(),
+    wind: { strength: snowWind.value(), directionDeg: snowWindDir.value() },
+    settle: snowSettle.value(),
+  });
+  map.addLayer(snow, firstSymbol());
+}
+
 function addLabels() {
   if (occlusion && map.getLayer(occlusion.id)) return;
   occlusion = new LabelOcclusion();
@@ -243,6 +257,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   water: { add: addWater, id: () => 'water-3d' },
   fog: { add: addFog, id: () => 'fog' },
   rain: { add: addRain, id: () => 'rain' },
+  snow: { add: addSnow, id: () => 'snow' },
   power: { add: addPower, id: () => 'power' },
   labels: { add: addLabels, id: () => occlusion?.id },
 };
@@ -311,6 +326,28 @@ $<HTMLInputElement>('rain-lightning').onchange = () =>
     $<HTMLInputElement>('rain-lightning').checked ? { intervalS: rainInterval.value() } : false,
   );
 $('rain-strike').addEventListener('click', () => rain?.strike());
+const snowIntensity = range(
+  'snow-intensity',
+  (v) => snow?.setIntensity(v),
+  (v) => `${Math.round(v * 100)}%`,
+);
+const snowWind = range('snow-wind', (v) => snow?.setWind({ strength: v }));
+const snowWindDir = range('snow-wind-dir', (v) => snow?.setWind({ directionDeg: v }), degrees);
+// Fixed at construction: rebuilds the layer when let go (the cover starts over).
+const snowSettle = range(
+  'snow-settle',
+  () => {},
+  (v) => (v ? `${v} s` : 'at once'),
+);
+$('snow-settle').addEventListener('change', () => {
+  if (toggle('snow').checked) addSnow();
+});
+if (params.has('snow')) {
+  const intensity = Number(params.get('snow'));
+  if (params.get('snow') && intensity >= 0 && intensity <= 1) snowIntensity.set(intensity);
+  toggle('snow').checked = true;
+  syncTabDots();
+}
 if (params.has('rain')) {
   const intensity = Number(params.get('rain'));
   if (params.get('rain') && intensity >= 0 && intensity <= 1) rainIntensity.set(intensity);
@@ -494,6 +531,11 @@ setInterval(() => {
     rs && toggle('rain').checked
       ? `${rs.drops.toLocaleString()} drops · ${rs.strikes} strikes (zoom 10+)`
       : '';
+  const ss = snow?.getStats();
+  $('snow-stats').textContent =
+    ss && toggle('snow').checked
+      ? `${ss.flakes.toLocaleString()} flakes · roofs ${Math.round(ss.cover * 100)}% covered`
+      : '';
   const w = water?.getStats();
   $('water-stats').textContent =
     w && toggle('water').checked
@@ -513,5 +555,8 @@ renderModels(models);
   },
   get rain() {
     return rain;
+  },
+  get snow() {
+    return snow;
   },
 };

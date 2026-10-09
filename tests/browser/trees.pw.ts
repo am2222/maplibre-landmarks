@@ -143,3 +143,28 @@ test('rain darkens the scene and lightning lights it up', async ({ page }) => {
   expect(await page.evaluate(() => window.__errors)).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
+
+test('snow falls and hazes the scene without errors', async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (e) => consoleErrors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(m.text());
+  });
+  await page.goto('/e2e-trees.html');
+  await page.waitForFunction(() => (window.__trees?.getStats().drawn ?? 0) > 0, null, {
+    timeout: 30_000,
+  });
+  await page.evaluate(() => window.__setWind(0));
+  await page.waitForTimeout(800);
+  await idleWithin(page, 3000);
+  const clear = await sample(page);
+  await page.evaluate(() => window.__addSnow());
+  await page.waitForFunction(() => (window.__snow?.getStats().flakes ?? 0) > 0);
+  await page.waitForTimeout(300);
+  const snowy = await sample(page);
+  // The pale haze washes out the trees' green.
+  expect(snowy.green).toBeLessThan(clear.green);
+  expect(await page.evaluate(() => window.__snow!.getStats().cover)).toBe(1);
+  expect(await page.evaluate(() => window.__errors)).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});

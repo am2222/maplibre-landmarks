@@ -31,5 +31,7 @@ export interface LayerModule {
   themeChanged?(theme: Theme): void;
   /** Surfaces got wetter or drier (a RainLayer), 0 dry to 1 downpour. */
   wetnessChanged?(wetness: number): void;
+  /** Snow settled or melted (a SnowLayer), 0 none to 1 covered. */
+  snowCoverChanged?(cover: number): void;
   onRemove(): void;
 }
