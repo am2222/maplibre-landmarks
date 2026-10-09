@@ -515,6 +515,62 @@ describe('TreesModule', () => {
     expect(s.module.frame(3000)).toBe(false);
   });
 
+  it('starts in summer with snow on, or in the season given', async () => {
+    const s = setup();
+    const t = setup({ season: 'winter', snow: false });
+    await flush();
+    const u = uniformsOf(s.scene);
+    expect(u.uSeason.value).toBe(1);
+    expect(u.uSnow.value).toBe(1);
+    const w = uniformsOf(t.scene);
+    expect(w.uSeason.value).toBe(3);
+    expect(w.uSnow.value).toBe(0);
+  });
+
+  it('eases forward through the year to a new season, repainting until it lands', async () => {
+    const s = setup({ wind: { strength: 0 } });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const u = uniformsOf(s.scene);
+    s.module.setSeason('spring'); // from summer: forward through autumn and winter
+    expect(s.requestRepaint).toHaveBeenCalled();
+    expect(s.module.frame(1000)).toBe(true);
+    expect(u.uSeason.value).toBe(1);
+    expect(s.module.frame(1750)).toBe(true);
+    expect(u.uSeason.value).toBeCloseTo(2.5, 5);
+    expect(s.module.frame(2500)).toBe(false);
+    expect(u.uSeason.value).toBe(0);
+    expect(s.module.getSeason()).toBe(0);
+  });
+
+  it('jumps at once with durationMs 0', async () => {
+    const s = setup();
+    await flush();
+    s.module.setSeason(2.4, { durationMs: 0 });
+    expect(uniformsOf(s.scene).uSeason.value).toBeCloseTo(2.4, 5);
+  });
+
+  it("'auto' follows the date and the map's hemisphere", () => {
+    vi.useFakeTimers({ now: new Date('2026-10-15T12:00:00Z'), toFake: ['Date'] });
+    const s = setup({ season: 'auto' });
+    s.module.update(view({ center: C, zoom: 17 }));
+    s.module.frame(0);
+    s.module.frame(5000);
+    expect(s.module.getSeason()).toBeCloseTo(2, 1); // Paris, October: autumn
+    s.module.update(view({ center: [151.2, -33.9], zoom: 17 }));
+    s.module.frame(6000);
+    s.module.frame(9000);
+    expect(s.module.getSeason()).toBeCloseTo(0, 1); // Sydney, October: spring
+  });
+
+  it('toggles snow', async () => {
+    const s = setup();
+    await flush();
+    s.module.setSnow(false);
+    expect(uniformsOf(s.scene).uSnow.value).toBe(0);
+    expect(s.requestRepaint).toHaveBeenCalled();
+  });
+
   it('reports a missing source once', async () => {
     const s = setup({ source: 'nope' });
     await flush();

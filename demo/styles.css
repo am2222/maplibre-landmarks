@@ -19,7 +19,9 @@ body {
   left: 12px;
   width: 290px;
   max-height: calc(100% - 24px);
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #fffffff2;
   border-radius: 10px;
   box-shadow: 0 2px 12px #0003;
@@ -54,6 +56,20 @@ body {
   font-size: 14px;
   color: #616e7c;
 }
+/* Map settings stay put; only the selected layer's settings scroll. */
+#panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.map-controls {
+  border-bottom: 1px solid #e4e7eb;
+  flex: none;
+}
+.layer-controls {
+  overflow: auto;
+  min-height: 0;
+}
 #panel.collapsed #panel-body {
   display: none;
 }
@@ -61,6 +77,7 @@ body {
   transform: rotate(-90deg);
 }
 .tabs {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -148,8 +165,54 @@ body {
   cursor: pointer;
   font-size: 12px;
 }
-.places button:hover {
+.places button:hover,
+.pill:hover {
   border-color: #3c6e8f;
+}
+.field {
+  margin: 6px 0;
+}
+.field output {
+  float: right;
+  color: #616e7c;
+  font-variant-numeric: tabular-nums;
+}
+.seg {
+  display: flex;
+  margin-top: 3px;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg button {
+  flex: 1;
+  padding: 3px 0;
+  border: 0;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.seg button + button {
+  border-left: 1px solid #cbd2d9;
+}
+.seg button.active {
+  background: #24506b;
+  color: #fff;
+}
+.pill {
+  padding: 3px 10px;
+  border: 1px solid #cbd2d9;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.row > .pill {
+  flex: none;
+  margin-bottom: 6px;
 }
 .stats,
 .hint {

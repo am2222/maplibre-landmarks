@@ -18,18 +18,7 @@
         </nav>
       </header>
       <div id="panel-body">
-        <nav class="tabs">
-          <button data-tab="map">Map</button>
-          <button data-tab="landmarks">Landmarks</button>
-          <button data-tab="roofs">Roofs</button>
-          <button data-tab="trees">Trees</button>
-          <button data-tab="water">Water</button>
-          <button data-tab="power">Power</button>
-          <button data-tab="fog">Fog</button>
-          <button data-tab="labels">Labels</button>
-        </nav>
-
-        <section class="controls" data-controls="map">
+        <section class="controls map-controls" aria-label="Map">
           <div class="places">
             <button data-place="paris">Paris</button>
             <button data-place="chamonix">Chamonix</button>
@@ -68,156 +57,190 @@
             >Max pitch <output></output>
             <input id="max-pitch" type="range" min="45" max="85" step="5" value="85"
           /></label>
-        </section>
-
-        <section class="controls" data-controls="landmarks">
-          <label class="switch"
-            ><input type="checkbox" data-toggle="landmarks" checked /> Show landmarks</label
-          >
           <label
-            >Channel
-            <select id="channel">
-              <option value="latest">latest (approved)</option>
-              <option value="preview">preview (drafts)</option>
-            </select>
-          </label>
-          <label
-            >Appear
-            <select id="landmark-show-from">
-              <option value="extrusions">with the 3D buildings</option>
-              <option value="catalogue">at each landmark's zoom</option>
-            </select>
-          </label>
-          <label
-            >Models kept <output></output>
-            <input id="landmark-max" type="range" min="1" max="16" step="1" value="8"
-          /></label>
-          <label
-            >Hand-over <output></output>
-            <input id="landmark-fade" type="range" min="0" max="1500" step="50" value="400"
-          /></label>
-          <p class="stats" id="landmark-stats"></p>
-          <ul id="models"></ul>
-        </section>
-
-        <section class="controls" data-controls="roofs">
-          <label class="switch"
-            ><input type="checkbox" data-toggle="roofs" checked /> Show roofs</label
-          >
-          <label
-            >Roof data
-            <select id="roof-data">
-              <option value="overture">Overture tiles</option>
-              <option value="local">Local file</option>
-              <option value="none">None (Protomaps buildings)</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" id="wall-colors" /> Facade colours</label>
-          <label class="check"
-            ><input type="checkbox" id="roof-cutoff" checked /> Far cutoff when pitched</label
-          >
-          <label
-            >Max buildings <output></output>
-            <input id="roof-max" type="range" min="200" max="5000" step="100" value="2000"
-          /></label>
-          <p class="stats" id="roof-stats"></p>
-        </section>
-
-        <section class="controls" data-controls="trees">
-          <label class="switch"
-            ><input type="checkbox" data-toggle="trees" checked /> Show trees</label
-          >
-          <label
-            >Wind <output></output>
-            <input id="tree-wind" type="range" min="0" max="2" step="0.1" value="1"
-          /></label>
-          <label
-            >Wind from <output></output>
-            <input id="tree-wind-dir" type="range" min="0" max="359" step="1" value="270"
-          /></label>
-          <label
-            >Density <output></output>
-            <input id="tree-density" type="range" min="0" max="1" step="0.05" value="0.6"
-          /></label>
-          <label
-            >Max trees <output></output>
-            <input id="tree-max" type="range" min="500" max="10000" step="500" value="4000"
-          /></label>
-          <label
-            >Detailed within <output></output>
-            <input id="tree-lod" type="range" min="50" max="1000" step="50" value="300"
-          /></label>
-          <label
-            >Rise <output></output>
-            <input id="tree-rise" type="range" min="0" max="1500" step="50" value="400"
-          /></label>
-          <label class="check"
-            ><input type="checkbox" id="tree-cutoff" checked /> Far cutoff when pitched</label
-          >
-          <p class="stats" id="tree-stats"></p>
-        </section>
-
-        <section class="controls" data-controls="water">
-          <label class="switch"
-            ><input type="checkbox" data-toggle="water" checked /> Show water</label
-          >
-          <label
-            >Waves <output></output>
-            <input id="water-waves" type="range" min="0" max="2" step="0.05" value="1"
-          /></label>
-          <label
-            >Max triangles <output></output>
-            <input id="water-max" type="range" min="20000" max="600000" step="20000" value="300000"
-          /></label>
-          <p class="stats" id="water-stats"></p>
-        </section>
-
-        <section class="controls" data-controls="power">
-          <label class="switch"
-            ><input type="checkbox" data-toggle="power" /> Show power lines</label
-          >
-          <p class="hint">Pylons and wires from Overture's base tiles (a second remote tileset).</p>
-          <p class="stats" id="power-stats"></p>
-        </section>
-
-        <section class="controls" data-controls="fog">
-          <label class="switch"><input type="checkbox" data-toggle="fog" /> Show fog</label>
-          <div class="row">
-            <label
-              >Density <output></output>
-              <input id="fog-density" type="range" min="0" max="2" step="0.05" value="0.6"
-            /></label>
-            <label
-              >Height <output></output>
-              <input id="fog-height" type="range" min="10" max="800" step="10" value="40"
-            /></label>
-          </div>
-          <div class="row">
-            <label
-              >Coverage <output></output>
-              <input id="fog-coverage" type="range" min="0" max="1" step="0.05" value="0.65"
-            /></label>
-            <label
-              >Wind <output></output>
-              <input id="fog-wind" type="range" min="0" max="10" step="0.5" value="2"
-            /></label>
-          </div>
-          <label
-            >Drifting toward <output></output>
-            <input id="fog-wind-dir" type="range" min="0" max="359" step="1" value="270"
-          /></label>
-          <p class="hint">With terrain, the height is above the valley floor.</p>
-        </section>
-
-        <section class="controls" data-controls="labels">
-          <label class="switch"
+            class="check"
+            title="Hides map labels behind landmarks, roofs and trees (GPU occlusion queries)"
             ><input type="checkbox" data-toggle="labels" checked /> Hide labels behind 3D</label
           >
-          <p class="hint">
-            Hides map labels that sit behind landmarks, roofs and trees, using GPU occlusion
-            queries.
-          </p>
         </section>
+
+        <nav class="tabs" aria-label="Layers">
+          <button data-tab="landmarks">Landmarks</button>
+          <button data-tab="roofs">Roofs</button>
+          <button data-tab="trees">Trees</button>
+          <button data-tab="water">Water</button>
+          <button data-tab="power">Power</button>
+          <button data-tab="fog">Fog</button>
+        </nav>
+
+        <div class="layer-controls">
+          <section class="controls" data-controls="landmarks">
+            <label class="switch"
+              ><input type="checkbox" data-toggle="landmarks" checked /> Show landmarks</label
+            >
+            <label
+              >Channel
+              <select id="channel">
+                <option value="latest">latest (approved)</option>
+                <option value="preview">preview (drafts)</option>
+              </select>
+            </label>
+            <label
+              >Appear
+              <select id="landmark-show-from">
+                <option value="extrusions">with the 3D buildings</option>
+                <option value="catalogue">at each landmark's zoom</option>
+              </select>
+            </label>
+            <label
+              >Models kept <output></output>
+              <input id="landmark-max" type="range" min="1" max="16" step="1" value="8"
+            /></label>
+            <label
+              >Hand-over <output></output>
+              <input id="landmark-fade" type="range" min="0" max="1500" step="50" value="400"
+            /></label>
+            <p class="stats" id="landmark-stats"></p>
+            <ul id="models"></ul>
+          </section>
+
+          <section class="controls" data-controls="roofs">
+            <label class="switch"
+              ><input type="checkbox" data-toggle="roofs" checked /> Show roofs</label
+            >
+            <label
+              >Roof data
+              <select id="roof-data">
+                <option value="overture">Overture tiles</option>
+                <option value="local">Local file</option>
+                <option value="none">None (Protomaps buildings)</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="wall-colors" /> Facade colours</label>
+            <label class="check"
+              ><input type="checkbox" id="roof-cutoff" checked /> Far cutoff when pitched</label
+            >
+            <label
+              >Max buildings <output></output>
+              <input id="roof-max" type="range" min="200" max="5000" step="100" value="2000"
+            /></label>
+            <p class="stats" id="roof-stats"></p>
+          </section>
+
+          <section class="controls" data-controls="trees">
+            <label class="switch"
+              ><input type="checkbox" data-toggle="trees" checked /> Show trees</label
+            >
+            <div class="field">
+              <span>Season <output id="tree-season-out"></output></span>
+              <div class="seg" id="tree-season" role="group" aria-label="Season">
+                <button type="button" data-season="spring">Spring</button>
+                <button type="button" data-season="summer">Summer</button>
+                <button type="button" data-season="autumn">Autumn</button>
+                <button type="button" data-season="winter">Winter</button>
+                <button type="button" data-season="auto" title="Today's date at the map's latitude">
+                  Auto
+                </button>
+              </div>
+            </div>
+            <label
+              >Time of year
+              <input id="tree-year" type="range" min="0" max="4" step="0.01" value="1"
+            /></label>
+            <div class="row">
+              <button type="button" id="tree-play" class="pill">▶ Play year</button>
+              <label class="check"><input type="checkbox" id="tree-snow" checked /> Snow</label>
+            </div>
+            <label
+              >Wind <output></output>
+              <input id="tree-wind" type="range" min="0" max="2" step="0.1" value="1"
+            /></label>
+            <label
+              >Wind from <output></output>
+              <input id="tree-wind-dir" type="range" min="0" max="359" step="1" value="270"
+            /></label>
+            <label
+              >Density <output></output>
+              <input id="tree-density" type="range" min="0" max="1" step="0.05" value="0.6"
+            /></label>
+            <label
+              >Max trees <output></output>
+              <input id="tree-max" type="range" min="500" max="10000" step="500" value="4000"
+            /></label>
+            <label
+              >Detailed within <output></output>
+              <input id="tree-lod" type="range" min="50" max="1000" step="50" value="300"
+            /></label>
+            <label
+              >Rise <output></output>
+              <input id="tree-rise" type="range" min="0" max="1500" step="50" value="400"
+            /></label>
+            <label class="check"
+              ><input type="checkbox" id="tree-cutoff" checked /> Far cutoff when pitched</label
+            >
+            <p class="stats" id="tree-stats"></p>
+          </section>
+
+          <section class="controls" data-controls="water">
+            <label class="switch"
+              ><input type="checkbox" data-toggle="water" checked /> Show water</label
+            >
+            <label
+              >Waves <output></output>
+              <input id="water-waves" type="range" min="0" max="2" step="0.05" value="1"
+            /></label>
+            <label
+              >Max triangles <output></output>
+              <input
+                id="water-max"
+                type="range"
+                min="20000"
+                max="600000"
+                step="20000"
+                value="300000"
+            /></label>
+            <p class="stats" id="water-stats"></p>
+          </section>
+
+          <section class="controls" data-controls="power">
+            <label class="switch"
+              ><input type="checkbox" data-toggle="power" /> Show power lines</label
+            >
+            <p class="hint">
+              Pylons and wires from Overture's base tiles (a second remote tileset).
+            </p>
+            <p class="stats" id="power-stats"></p>
+          </section>
+
+          <section class="controls" data-controls="fog">
+            <label class="switch"><input type="checkbox" data-toggle="fog" /> Show fog</label>
+            <div class="row">
+              <label
+                >Density <output></output>
+                <input id="fog-density" type="range" min="0" max="2" step="0.05" value="0.6"
+              /></label>
+              <label
+                >Height <output></output>
+                <input id="fog-height" type="range" min="10" max="800" step="10" value="40"
+              /></label>
+            </div>
+            <div class="row">
+              <label
+                >Coverage <output></output>
+                <input id="fog-coverage" type="range" min="0" max="1" step="0.05" value="0.65"
+              /></label>
+              <label
+                >Wind <output></output>
+                <input id="fog-wind" type="range" min="0" max="10" step="0.5" value="2"
+              /></label>
+            </div>
+            <label
+              >Drifting toward <output></output>
+              <input id="fog-wind-dir" type="range" min="0" max="359" step="1" value="270"
+            /></label>
+            <p class="hint">With terrain, the height is above the valley floor.</p>
+          </section>
+        </div>
       </div>
     </aside>
     <script type="module" src="./main.ts"></script>
