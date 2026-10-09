@@ -4,6 +4,7 @@ import {
   colorVariance,
   DEFAULT_ROOF_COLOR,
   materialPairs,
+  normalizeFacade,
   parseColor,
   roofRGB,
   toRGB,
@@ -134,7 +135,7 @@ describe('readRoofProps', () => {
       '#f08060',
     );
     expect(read({ height: 9, roof_shape: 'dome', facade_material: 'brick' })!.wallColor).toBe(
-      '#cc7755',
+      normalizeFacade('#cc7755'),
     );
     expect(read({ height: 9, roof_shape: 'dome', facade_color: 'nonsense' })!.wallColor).toBe(
       '#d9d4ce',
@@ -170,6 +171,49 @@ describe('roof colour tweaks', () => {
       expect(colorVariance(id)).toBe(colorVariance(id));
     }
     expect(new Set(ids.map(colorVariance)).size).toBeGreaterThan(1);
+  });
+});
+
+describe('facade colours', () => {
+  const hsl = (hex: string) => new Color(hex).getHSL({ h: 0, s: 0, l: 0 }, SRGBColorSpace);
+
+  it('tones tagged facades down: less saturated, no pure black or white', () => {
+    expect(normalizeFacade('#ff0000')).toBe('#b75e5e');
+    expect(normalizeFacade('#000000')).toBe('#4d4d4d');
+    expect(normalizeFacade('#ffffff')).toBe('#e0e0e0');
+    for (const hex of ['#00ff00', '#ff69b4', '#ffcc00', '#0000ff']) {
+      expect(hsl(normalizeFacade(hex)).s).toBeLessThan(hsl(hex).s);
+      expect(hsl(normalizeFacade(hex)).h).toBeCloseTo(hsl(hex).h, 2);
+    }
+  });
+
+  it('matches the wall style expression channel for channel', async () => {
+    const { expression } = await import('@maplibre/maplibre-gl-style-spec');
+    const { wallRules } = await import('../../src/roofs/walls');
+    const color = wallRules(DEFAULT_FIELDS, true)[1]!.wrap('#123456');
+    const parsed = expression.createExpression(
+      color as never,
+      {
+        type: 'color',
+        'property-type': 'data-driven',
+        expression: { interpolated: true, parameters: ['zoom', 'feature'] },
+      } as never,
+    );
+    if (parsed.result !== 'success') throw new Error(JSON.stringify(parsed.value));
+    const hexOf = (properties: Record<string, unknown>) => {
+      const c = parsed.value.evaluate({ zoom: 16 }, { properties, type: 'Polygon' } as never) as {
+        r: number;
+        g: number;
+        b: number;
+      };
+      return `#${new Color().setRGB(c.r, c.g, c.b, SRGBColorSpace).getHexString()}`;
+    };
+    expect(hexOf({ facade_color: 'hotpink' })).toBe(normalizeFacade('#ff69b4'));
+    expect(hexOf({ facade_color: '#0a0' })).toBe(normalizeFacade('#00aa00'));
+    expect(hexOf({ facade_material: 'gold' })).toBe(normalizeFacade('#ffcc00'));
+    // Untagged (or unparseable) walls keep the style's own colour.
+    expect(hexOf({})).toBe('#123456');
+    expect(hexOf({ facade_color: 'nonsense' })).toBe('#123456');
   });
 });
 

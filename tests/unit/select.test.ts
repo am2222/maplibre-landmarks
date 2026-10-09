@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickModel, selectTrees, type Candidate } from '../../src/trees/select';
+import { distanceKeep, pickModel, selectTrees, type Candidate } from '../../src/trees/select';
 
 const C: [number, number] = [2.29, 48.85];
 const M = 111_195;
@@ -82,5 +82,15 @@ describe('selectTrees', () => {
       .slice(0, 500)
       .map(({ c }) => c.key);
     expect(selectTrees(many, C, big).map((t) => t.key)).toEqual(naive);
+  });
+});
+
+describe('distanceKeep', () => {
+  it('keeps every tree up to the distance, then falls with its square', () => {
+    expect(distanceKeep(0, 250)).toBe(1);
+    expect(distanceKeep(250, 250)).toBe(1);
+    expect(distanceKeep(500, 250)).toBeCloseTo(0.25, 9);
+    expect(distanceKeep(1000, 250)).toBeCloseTo(1 / 16, 9);
+    expect(distanceKeep(1e6, Number.POSITIVE_INFINITY)).toBe(1);
   });
 });

@@ -58,11 +58,14 @@ export function materialColor(name: unknown): string | undefined {
   return MATERIAL_COLORS[MATERIAL_ALIASES[key] ?? key];
 }
 
-/** `[material, colour, …]` for a style `match` expression, aliases included. */
-export function materialPairs(): string[] {
+/**
+ * `[material, colour, …]` for a style `match` expression, aliases included; `map` adjusts each
+ * colour (walls pass `normalizeFacade`).
+ */
+export function materialPairs(map: (hex: string) => string = (hex) => hex): string[] {
   return [
-    ...Object.entries(MATERIAL_COLORS).flat(),
-    ...Object.entries(MATERIAL_ALIASES).flatMap(([alias, m]) => [alias, MATERIAL_COLORS[m]!]),
+    ...Object.entries(MATERIAL_COLORS).flatMap(([m, hex]) => [m, map(hex)]),
+    ...Object.entries(MATERIAL_ALIASES).flatMap(([alias, m]) => [alias, map(MATERIAL_COLORS[m]!)]),
   ];
 }
 
@@ -105,4 +108,37 @@ export function roofRGB(hex: string, variance = 0): [number, number, number] {
   const { h, s, l } = c.getHSL({ h: 0, s: 0, l: 0 }, SRGBColorSpace);
   c.setHSL(h, s * ROOF_SATURATION, Math.min(1, Math.max(0, l + variance)), SRGBColorSpace);
   return [c.r, c.g, c.b];
+}
+
+/** Tagged facade colours keep this share of their saturation (pulled toward their own luma). */
+export const FACADE_SATURATION = 0.6;
+/** Tagged facade colours are squeezed into this lightness range (sRGB, 0–1). */
+export const FACADE_RANGE: readonly [number, number] = [0.3, 0.88];
+
+const LUMA = [0.299, 0.587, 0.114] as const;
+
+/**
+ * A tagged facade colour toned down: saturation cut to `FACADE_SATURATION`, then every channel
+ * mapped into `FACADE_RANGE`, so no neon or pure black walls. The same sRGB arithmetic as
+ * `facadeExpression`, so gable ends match the extruded walls below them.
+ */
+export function normalizeFacade(hex: string): string {
+  const { r, g, b } = new Color(hex).getRGB({ r: 0, g: 0, b: 0 }, SRGBColorSpace);
+  const y = LUMA[0] * r + LUMA[1] * g + LUMA[2] * b;
+  const [lo, hi] = FACADE_RANGE;
+  const out = [r, g, b].map((v) => lo + (hi - lo) * (y + FACADE_SATURATION * (v - y)));
+  return `#${new Color().setRGB(out[0]!, out[1]!, out[2]!, SRGBColorSpace).getHexString()}`;
+}
+
+/** `normalizeFacade` as a style expression over an `rgba` array (channels 0–255). */
+export function normalizeFacadeExpression(rgba: unknown): unknown[] {
+  const ch = (i: number) => ['at', i, rgba];
+  const y = ['+', ...LUMA.map((k, i) => ['*', k, ch(i)])];
+  const [lo, hi] = FACADE_RANGE;
+  const out = (i: number) => [
+    '+',
+    255 * lo,
+    ['*', hi - lo, ['+', y, ['*', FACADE_SATURATION, ['-', ch(i), y]]]],
+  ];
+  return ['rgb', out(0), out(1), out(2)];
 }

@@ -1,6 +1,6 @@
 import { mapOutputs, sameValue, stripWrappers } from '../core/expressions';
 import type { PaintRule } from '../core/ownedPaint';
-import { materialPairs } from './colors';
+import { materialPairs, normalizeFacade, normalizeFacadeExpression } from './colors';
 import type { Fields } from './schema';
 
 /** Feature-state key: height of the roof drawn on that building (metres). */
@@ -27,7 +27,13 @@ const ourHeight = (v: unknown) =>
     ? v[2][1]
     : undefined;
 
-/** Height wrapper: `max(0, original − drawn roof)`; colour wrapper: facade colour, then material. */
+/** Style-expression variable holding the tagged facade colour as rgba (alpha 0: untagged). */
+const FACADE_VAR = 'landmarks_facade';
+
+/**
+ * Height wrapper: `max(0, original − drawn roof)`; colour wrapper: facade colour, then material,
+ * both toned down by `normalizeFacade`, then the original colour (left as it is).
+ */
 export function wallRules(fields: Fields, wallColors: boolean): PaintRule[] {
   const rules: PaintRule[] = [
     {
@@ -38,26 +44,35 @@ export function wallRules(fields: Fields, wallColors: boolean): PaintRule[] {
     },
   ];
   if (wallColors) {
-    const facade = ['get', fields.facade_color];
+    const tagged = ['to-rgba', ['to-color', ['get', fields.facade_color], 'rgba(0,0,0,0)']];
     const material = ['get', fields.facade_material];
-    const pairs = materialPairs();
+    const pairs = materialPairs(normalizeFacade);
+    const facade = ['var', FACADE_VAR];
     rules.push({
       property: 'fill-extrusion-color',
       fallback: '#000000',
       wrap: (o) =>
         wrappable(o)
-          ? mapOutputs(o, (v) => ['to-color', facade, ['match', material, ...pairs, v]])
+          ? mapOutputs(o, (v) => [
+              'let',
+              FACADE_VAR,
+              tagged,
+              [
+                'case',
+                ['>', ['at', 3, facade], 0],
+                normalizeFacadeExpression(facade),
+                ['match', material, ...pairs, v],
+              ],
+            ])
           : undefined,
-      unwrap: peel((v: unknown) =>
-        Array.isArray(v) &&
-        v[0] === 'to-color' &&
-        sameValue(v[1], facade) &&
-        Array.isArray(v[2]) &&
-        v[2][0] === 'match' &&
-        sameValue(v[2][1], material)
-          ? v[2].at(-1)
-          : undefined,
-      ),
+      unwrap: peel((v: unknown) => {
+        if (!Array.isArray(v) || v[0] !== 'let' || v[1] !== FACADE_VAR) return undefined;
+        if (!sameValue(v[2], tagged)) return undefined;
+        const match = Array.isArray(v[3]) && v[3][0] === 'case' ? v[3][3] : undefined;
+        return Array.isArray(match) && match[0] === 'match' && sameValue(match[1], material)
+          ? match.at(-1)
+          : undefined;
+      }),
     });
   }
   return rules;

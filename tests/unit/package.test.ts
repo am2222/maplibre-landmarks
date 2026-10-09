@@ -38,11 +38,12 @@ describe('release-please', () => {
     });
   });
 
-  it('proposes 0.1.0 as the first release', () => {
-    // release-please treats manifest 0.0.0 as "never released" and proposes the package's
-    // initial version, which defaults to 1.0.0: pin it to the current version.
-    expect(manifest['.']).toBe('0.0.0');
-    expect(config.packages['.']['initial-version']).toBe('0.1.0');
-    expect(pkg.version).toBe('0.1.0');
+  it('keeps release-please in step with the package version', () => {
+    // Before the first release the manifest says 0.0.0 ("never released") and release-please
+    // proposes `initial-version` (else 1.0.0): it must be the package's version. After a
+    // release the manifest records the released version, which package.json carries.
+    if (manifest['.'] === '0.0.0')
+      expect(config.packages['.']['initial-version']).toBe(pkg.version);
+    else expect(manifest['.']).toBe(pkg.version);
   });
 });

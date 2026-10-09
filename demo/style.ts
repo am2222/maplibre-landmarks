@@ -20,6 +20,8 @@ export interface StyleOptions {
   roofsUrl: string;
   /** Overture's official tiles keep building parts in their own layer. */
   roofParts: boolean;
+  /** Overture's base tiles for the power lines, when they are shown. */
+  powerUrl?: string;
   /** Protomaps source: a TileJSON URL or `pmtiles://…`. */
   protomaps: string;
 }
@@ -191,10 +193,26 @@ export function styleFor(o: StyleOptions): StyleSpecification {
       ...(o.roofData !== 'none'
         ? { 'roof-buildings': { type: 'vector' as const, url: `pmtiles://${o.roofsUrl}` } }
         : {}),
+      ...(o.powerUrl
+        ? { 'overture-base': { type: 'vector' as const, url: `pmtiles://${o.powerUrl}` } }
+        : {}),
       terrain: DEM,
       // Hillshading gets its own copy of the DEM (MapLibre warns when terrain shares one).
       'hillshade-dem': DEM,
     },
-    layers: styleLayers,
+    layers: o.powerUrl
+      ? [
+          ...styleLayers,
+          // MapLibre loads a source's tiles only for a layer that uses it.
+          {
+            id: 'overture-power-lines',
+            type: 'line',
+            source: 'overture-base',
+            'source-layer': 'infrastructure',
+            filter: ['==', ['get', 'subtype'], 'power'],
+            paint: { 'line-opacity': 0 },
+          },
+        ]
+      : styleLayers,
   };
 }

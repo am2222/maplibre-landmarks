@@ -1,4 +1,4 @@
-import { DEFAULT_ROOF_COLOR, materialColor, parseColor } from './colors';
+import { DEFAULT_ROOF_COLOR, materialColor, normalizeFacade, parseColor } from './colors';
 
 export type FieldName =
   | 'height'
@@ -205,8 +205,9 @@ export function readRoofProps(
       parseColor(p[fields.roof_color]) ??
       materialColor(p[fields.roof_material]) ??
       DEFAULT_ROOF_COLOR,
-    wallColor:
-      parseColor(p[fields.facade_color]) ?? materialColor(p[fields.facade_material]) ?? gableColor,
+    wallColor: ((tagged) => (tagged ? normalizeFacade(tagged) : gableColor))(
+      parseColor(p[fields.facade_color]) ?? materialColor(p[fields.facade_material]),
+    ),
   };
 }
 
