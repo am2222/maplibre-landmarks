@@ -166,6 +166,27 @@ describe('RoofsModule', () => {
     expect(module.getStats().buildings).toBe(1);
   });
 
+  it('puts the roof back in the same frame a landmark lets its building go', () => {
+    const { map, module } = setup();
+    map.features = [feature(1, rectAt(0, 0, 20, 20), { height: 20, roof_shape: 'hipped' })];
+    const [lng, lat] = [2.2945 + 10 * M_LNG, 48.8584 + 10 * M_LAT];
+    const d = 0.001;
+    const around = [
+      [lng - d, lat - d],
+      [lng + d, lat - d],
+      [lng + d, lat + d],
+      [lng - d, lat + d],
+      [lng - d, lat - d],
+    ];
+    setExemptionSource(map, 'landmarks', () => [[around]]);
+    module.update(view());
+    expect(module.getStats().buildings).toBe(0);
+    setExemptionSource(map, 'landmarks', null); // landmark layer turned off
+    // No debounce: the wall would show at full height until the roof comes back.
+    expect(module.getStats().buildings).toBe(1);
+    expect(stateOf(map, 1)).toBeGreaterThan(0);
+  });
+
   it('draws only the nearest maxBuildings', () => {
     const { map, module } = setup({ maxBuildings: 1 });
     map.features = [

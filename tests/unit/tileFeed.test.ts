@@ -263,6 +263,58 @@ describe('TileFeed', () => {
     expect(onTile).toHaveBeenCalledTimes(2);
   });
 
+  it('says once, in development builds, that a source fell back to the slow path', async () => {
+    vi.resetModules();
+    const env = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const { TileFeed: Fresh } = await import('../../src/core/tileFeed');
+      const map = fakeMap();
+      const options = { source: 'src', onTile: vi.fn(), onDrop: vi.fn() };
+      const a = new Fresh(map as unknown as FeedMap, options);
+      const b = new Fresh(map as unknown as FeedMap, options);
+      a.settle(); // seeding: not a fallback yet
+      expect(info).not.toHaveBeenCalled();
+      for (const feed of [a, b, a, b]) feed.settle();
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(String(info.mock.calls[0]![0])).toContain('src');
+    } finally {
+      process.env.NODE_ENV = env;
+      info.mockRestore();
+    }
+  });
+
+  it('holds tiles its layer does not want yet without reading them', () => {
+    const { map, feed, onTile } = setup({ wants: (key: string) => key !== '15/1/2' });
+    const skipped = fakeTile(15, 1, 2, [feature(1)]);
+    map.emit({ tile: skipped });
+    expect(skipped.querySourceFeatures).not.toHaveBeenCalled();
+    expect(onTile).not.toHaveBeenCalled();
+    expect(feed.keys()).toEqual(['15/1/2']);
+    expect(feed.featuresOf('15/1/2')).toEqual([feature(1)]); // read on demand
+  });
+
+  it('tells which parts of a parent tile its held children already draw', () => {
+    const { map, feed } = setup();
+    map.emit({ tile: fakeTile(14, 8297, 5636, []) });
+    map.emit({ tile: fakeTile(15, 16594, 11272, []) }); // north-west child
+    const inside = (key: string, fx: number, fy: number): [number, number, number, number] => {
+      const [w, s, e, n] = tileBounds(key);
+      const [x, y] = [w + (e - w) * fx, s + (n - s) * fy];
+      return [x, y, x, y];
+    };
+    const parent = '14/8297/5636';
+    expect(feed.shadowed(parent, inside(parent, 0.25, 0.75))).toBe(true); // in the child
+    expect(feed.shadowed(parent, inside(parent, 0.75, 0.75))).toBe(false); // child missing
+    const across = [
+      ...inside(parent, 0.25, 0.75).slice(0, 2),
+      ...inside(parent, 0.75, 0.75).slice(2),
+    ];
+    expect(feed.shadowed(parent, across as never)).toBe(false);
+    expect(feed.shadowed('15/16594/11272', inside('15/16594/11272', 0.5, 0.5))).toBe(false);
+  });
+
   it('treats features without tile information as one pseudo-tile', () => {
     const { map, feed, onTile } = setup();
     map.querySourceFeatures.mockReturnValue([feature(1), feature(2)]);

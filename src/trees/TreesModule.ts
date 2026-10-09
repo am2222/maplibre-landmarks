@@ -33,6 +33,8 @@ export interface TreesOptions {
    */
   fullDensityZoom?: number;
   lodDistanceM?: number;
+  /** Milliseconds a newly shown tree takes to rise from the ground (default 400; 0: no rise). */
+  riseMs?: number;
   /** Trees per m² by landuse kind; false disables scattering. */
   scatter?: Record<string, number> | false;
   scatterSkipRatio?: number;
@@ -105,6 +107,7 @@ export class TreesModule implements LayerModule {
     };
     this.themeOption = opts.theme;
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
+    this.look.uniforms.uRise.value = Math.max(0, opts.riseMs ?? 400) / 1000;
   }
 
   onAdd(ctx: ModuleContext): void {
@@ -218,8 +221,11 @@ export class TreesModule implements LayerModule {
   }
 
   frame(timeMs: number): boolean {
-    this.look.uniforms.uTime.value = timeMs / 1000;
-    return this.wind.strength > 0 && (this.batches?.drawn ?? 0) > 0;
+    const t = timeMs / 1000;
+    this.look.uniforms.uTime.value = t;
+    if (!(this.batches?.drawn ?? 0)) return false;
+    const rising = t < this.batches!.lastBorn + this.look.uniforms.uRise.value;
+    return rising || this.wind.strength > 0;
   }
 
   themeChanged(theme: Theme): void {

@@ -377,8 +377,11 @@ export class BuildingReplacement {
     for (const sourceKey of wanted) {
       const f = this.follow(sourceKey);
       const arrived = (this.arrived = new Set<string>());
-      f.feed.settle();
-      this.arrived = undefined;
+      try {
+        f.feed.settle();
+      } finally {
+        this.arrived = undefined;
+      }
       for (const key of f.feed.keys()) {
         if (arrived.has(key)) continue;
         const bounds = paddedTileBounds(key);
@@ -401,6 +404,8 @@ export class BuildingReplacement {
       feed: new TileFeed(this.map as unknown as FeedMap, {
         source: target.source,
         ...(target.sourceLayer ? { sourceLayer: target.sourceLayer } : {}),
+        // Tiles far from every landmark are not read; a landmark arriving later reads them.
+        wants: (key) => this.near(key),
         onTile: (key, features) => {
           this.checkTile(followed, key, features);
           this.claimsChanged = true;
@@ -416,6 +421,12 @@ export class BuildingReplacement {
     };
     this.followed.set(sourceKey, followed);
     return followed;
+  }
+
+  /** A tile (padded by its buffer) reaches a current landmark. */
+  private near(key: string): boolean {
+    const tile = paddedTileBounds(key);
+    return this.regions.some((r) => overlaps(tile, r.bbox));
   }
 
   /** The buildings of one tile under the current landmarks (centre inside, or mostly inside). */

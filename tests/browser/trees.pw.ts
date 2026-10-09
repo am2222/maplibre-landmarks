@@ -75,6 +75,7 @@ test('draws mapped and scattered trees, animates wind and follows the theme', as
   expect(stats.scattered).toBeGreaterThan(8);
   expect(stats.drawn).toBe(stats.mapped + stats.scattered);
 
+  await page.waitForTimeout(800); // new trees rise from the ground over riseMs (400 ms)
   const day = await sample(page);
   expect(day.green).toBeGreaterThan(0.005);
 

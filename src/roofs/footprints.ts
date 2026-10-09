@@ -1,12 +1,5 @@
 import polygonClipping, { type Polygon } from 'polygon-clipping';
-import { polygonsOf } from '../core/geometry';
 import type { LngLat } from '../core/types';
-
-export interface SourceFeatureLike {
-  id?: number | string | null;
-  geometry: { type: string; coordinates: unknown };
-  properties?: Record<string, unknown> | null;
-}
 
 export interface Footprint {
   id: number | string;
@@ -111,63 +104,4 @@ export function mergeFootprint(
     terrainPoint: vertexAverage(largest(polygons)),
     signature,
   };
-}
-
-/** Groups vector-tile pieces by feature id and unions them back into whole footprints. */
-export class FootprintIndex {
-  private cache = new Map<string, Footprint>();
-
-  constructor(
-    private readonly union: Union = polygonClipping.union,
-    private readonly onError?: (key: string, err: unknown) => void,
-  ) {}
-  /** Pieces skipped in the last update for lacking an id. */
-  missingIds = 0;
-
-  update(
-    features: SourceFeatureLike[],
-    keep: (properties: Record<string, unknown>) => boolean,
-  ): Map<string, Footprint> {
-    this.missingIds = 0;
-    const groups = new Map<
-      string,
-      { id: number | string; pieces: number[][][][]; properties: Record<string, unknown> }
-    >();
-    for (const f of features) {
-      // Properties first: reading `geometry` decodes and projects the tile geometry.
-      const properties = f.properties ?? {};
-      if (!keep(properties)) continue;
-      const polygons = polygonsOf(f.geometry);
-      if (!polygons.length) continue;
-      if (f.id === undefined || f.id === null) {
-        this.missingIds++;
-        continue;
-      }
-      const key = String(f.id);
-      let g = groups.get(key);
-      if (!g) groups.set(key, (g = { id: f.id, pieces: [], properties }));
-      g.pieces.push(...polygons);
-    }
-    const next = new Map<string, Footprint>();
-    for (const [key, g] of groups) {
-      const signature = signatureOf(g.pieces);
-      const cached = this.cache.get(key);
-      if (cached?.signature === signature) {
-        next.set(key, cached);
-        continue;
-      }
-      const footprint = mergeFootprint(
-        key,
-        g.id,
-        g.pieces,
-        g.properties,
-        signature,
-        this.union,
-        this.onError,
-      );
-      if (footprint) next.set(key, footprint);
-    }
-    this.cache = next;
-    return next;
-  }
 }

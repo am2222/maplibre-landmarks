@@ -346,6 +346,32 @@ describe('WaterModule', () => {
     expect(module.getStats().pieces).toBe(1);
   });
 
+  it('picks the nearest pieces again on a short move when the budget leaves some out', () => {
+    const { map, module } = setup({ maxTriangles: 10 });
+    map.polygons = [
+      poly([rect(-50, -50, 100, 100)], LAKE),
+      poly([rect(1450, -50, 100, 100)], { kind: 'swimming_pool' }),
+    ];
+    module.update(view());
+    const styles = () => new Set(attr(module.body!.geometry, 'aStyle'));
+    expect(styles()).toEqual(new Set([1])); // the lake under the view
+    module.update(view({ center: [LNG + 1500 * M_LNG, LAT] })); // 1.5 km: within the 2 km
+    expect(styles()).not.toContain(1); // the east water, now the nearest
+  });
+
+  it('draws a lake once while a parent and a child tile both hold it', () => {
+    const { map, module } = setup();
+    module.update(view());
+    const x15 = Math.floor(((LNG + 180) / 360) * 2 ** 15);
+    const r = (LAT * Math.PI) / 180;
+    const y15 = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** 15);
+    // The parent's copy is simplified differently from the child's (its own signature).
+    emitTile(map, { z: 14, x: x15 >> 1, y: y15 >> 1 }, [poly([rect(-20, -20, 40, 41)], LAKE)]);
+    emitTile(map, { z: 15, x: x15, y: y15 }, [poly([rect(-20, -20, 40, 40)], LAKE)]);
+    module.update(view());
+    expect(module.getStats().pieces).toBe(1);
+  });
+
   it('drops the foam on a tile cut once the neighbouring tile arrives', () => {
     const { map, module } = setup();
     module.update(view());

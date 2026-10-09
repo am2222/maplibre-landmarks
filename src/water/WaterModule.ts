@@ -174,6 +174,8 @@ export class WaterModule implements LayerModule {
   private readonly tileLines = new Map<string, Segment[]>();
   /** Tiles or ground changed since the last merge. */
   private dirty = true;
+  /** The last selection left pieces out (triangle budget): moving can change the nearest. */
+  private overBudget = false;
 
   constructor(private readonly options: WaterOptions = {}) {
     this.source = options.source ?? 'protomaps';
@@ -354,8 +356,14 @@ export class WaterModule implements LayerModule {
       } catch (err) {
         this.report('settle', err);
       }
-      // Nothing arrived, dropped or changed height, and the mesh is still centred enough.
-      if (!this.dirty && this.anchor && metresBetween(this.anchor, view.center) < REANCHOR_M)
+      // Nothing arrived, dropped or changed height, everything fit the budget (so the nearest
+      // pieces cannot change), and the mesh is still centred enough.
+      if (
+        !this.dirty &&
+        !this.overBudget &&
+        this.anchor &&
+        metresBetween(this.anchor, view.center) < REANCHOR_M
+      )
         return;
       this.dirty = false;
       this.drawn = this.collect(view);
@@ -413,8 +421,13 @@ export class WaterModule implements LayerModule {
   /** The held tiles' pieces, nearest first within the triangle budget; built pieces are reused. */
   private collect(view: ViewState): Built[] {
     const seen = new Map<string, Entry>();
-    for (const list of this.tilePieces.values())
-      for (const e of list) if (!seen.has(e.sig)) seen.set(e.sig, e);
+    const polygons = this.feeds?.polygons;
+    for (const [key, list] of this.tilePieces)
+      for (const e of list) {
+        // A parent's piece where its children are loaded: they draw it (no doubled shore).
+        if (seen.has(e.sig) || polygons?.shadowed(key, e.bounds)) continue;
+        seen.set(e.sig, e);
+      }
     const entries = [...seen.values()];
     const grid = this.linkNeighbours(entries);
     const flow = new FlowIndex(
@@ -433,12 +446,16 @@ export class WaterModule implements LayerModule {
     const cache = new Map<string, Built | null>();
     const out: Built[] = [];
     let triangles = 0;
+    this.overBudget = false;
     for (const e of entries) {
       let built = this.cache.get(e.key);
       if (built === undefined) built = this.build(e, waterAt, flow);
       cache.set(e.key, built);
       if (!built) continue;
-      if (triangles + built.piece.triangles > max) break;
+      if (triangles + built.piece.triangles > max) {
+        this.overBudget = true;
+        break;
+      }
       triangles += built.piece.triangles;
       out.push(built);
     }

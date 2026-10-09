@@ -116,7 +116,7 @@ export class RoofsModule implements LayerModule {
     this.wrapWalls();
     ctx.map.on('sourcedata', this.onSourceData);
     ctx.map.on('terrain', this.onTerrain);
-    onExemptionsChanged(ctx.map, this.schedule);
+    onExemptionsChanged(ctx.map, this.onExemptions);
   }
 
   update(view: ViewState): void {
@@ -146,11 +146,11 @@ export class RoofsModule implements LayerModule {
   onRemove(): void {
     const ctx = this.ctx;
     if (!ctx) return;
-    clearTimeout(this.timer);
     for (const layer of [...this.feeds.keys()]) this.removeFeed(layer);
+    clearTimeout(this.timer); // after the feeds: their drops schedule a rebuild
     ctx.map.off('sourcedata', this.onSourceData);
     ctx.map.off('terrain', this.onTerrain);
-    offExemptionsChanged(ctx.map, this.schedule);
+    offExemptionsChanged(ctx.map, this.onExemptions);
     for (const d of this.drawn.values()) {
       this.unsetState(ctx.map, d);
     }
@@ -173,6 +173,15 @@ export class RoofsModule implements LayerModule {
   private readonly schedule = (): void => {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.rebuild(), REBUILD_DEBOUNCE_MS);
+  };
+
+  /**
+   * A landmark took or released buildings: rebuild now, not debounced, so a released building
+   * gets its roof in the same frame its wall comes back (never a bare full-height wall first).
+   */
+  private readonly onExemptions = (): void => {
+    clearTimeout(this.timer);
+    this.rebuild();
   };
 
   private readonly onSourceData = (e: { sourceId?: string; sourceDataType?: string }): void => {

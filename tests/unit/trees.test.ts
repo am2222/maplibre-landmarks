@@ -111,6 +111,16 @@ describe('TreesModule', () => {
     expect(s.requestRepaint).toHaveBeenCalled();
   });
 
+  it('raises newly shown trees from the ground, repainting until they stand', async () => {
+    const s = setup({ wind: { strength: 0 }, riseMs: 400 });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const now = performance.now();
+    expect(s.module.frame(now)).toBe(true); // rising (wind is calm)
+    expect(uniformsOf(s.scene).uRise.value).toBeCloseTo(0.4, 6);
+    expect(s.module.frame(now + 500)).toBe(false); // standing: no more repaints needed
+  });
+
   it('applies the theme option and follows theme changes', async () => {
     const s = setup({ theme: 'dusk' });
     expect(s.core.setTheme).toHaveBeenCalledWith('dusk');
@@ -259,6 +269,29 @@ describe('TreesModule', () => {
       s.map.handlers.get('sourcedata')!({ sourceId: 'src', tile: tileWith(canonical, [tree]) });
     s.module.update(view({ center: C, zoom: 17 }));
     expect(s.module.getStats().drawn).toBe(1);
+  });
+
+  it("does not double a park's scattered trees while a parent and a child tile hold it", async () => {
+    const park = (size: number) => polygon(5, 'park', square(0, 0, size));
+    const scatteredWith = async (parentToo: boolean) => {
+      const s = setup({}, { points: [] });
+      s.module.update(view({ center: C, zoom: 17 }));
+      await flush();
+      if (parentToo)
+        s.map.handlers.get('sourcedata')!({
+          sourceId: 'src',
+          tile: tileWith({ z: 14, x: 8296, y: 5636 }, [], [park(61)]), // its own simplification
+        });
+      s.map.handlers.get('sourcedata')!({
+        sourceId: 'src',
+        tile: tileWith({ z: 15, x: 16592, y: 11272 }, [], [park(60)]),
+      });
+      s.module.update(view({ center: C, zoom: 17 }));
+      return s.module.getStats().scattered;
+    };
+    const childOnly = await scatteredWith(false);
+    expect(childOnly).toBeGreaterThan(0);
+    expect(await scatteredWith(true)).toBe(childOnly);
   });
 
   it('starts its tiles over after a style swap and draws again', async () => {

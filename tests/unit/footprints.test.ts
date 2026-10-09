@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FootprintIndex, type SourceFeatureLike } from '../../src/roofs/footprints';
+import { mergeFootprint, signatureOf } from '../../src/roofs/footprints';
 
 const box = (w: number, s: number, e: number, n: number) => [
   [
@@ -10,14 +10,6 @@ const box = (w: number, s: number, e: number, n: number) => [
     [w, s],
   ],
 ];
-const piece = (id: number | undefined, coords: number[][][], props = { roof_shape: 'gabled' }) =>
-  ({
-    id,
-    geometry: { type: 'Polygon', coordinates: coords },
-    properties: props,
-  }) as SourceFeatureLike;
-const keepTagged = (p: Record<string, unknown>) => p.roof_shape !== undefined;
-
 function area(rings: number[][][]): number {
   let a = 0;
   const r = rings[0]!;
@@ -25,59 +17,41 @@ function area(rings: number[][][]): number {
   return Math.abs(a) / 2;
 }
 
-describe('FootprintIndex', () => {
+describe('mergeFootprint', () => {
+  const merge = (
+    pieces: number[][][][],
+    union?: Parameters<typeof mergeFootprint>[5],
+    onError?: () => void,
+  ) => mergeFootprint('7', 7, pieces, {}, signatureOf(pieces), union, onError)!;
+
   it('unions the tile pieces of one building (they overlap in the tile buffer)', () => {
-    const idx = new FootprintIndex();
-    const fps = idx.update(
-      [piece(7, box(0, 0, 0.0021, 0.001)), piece(7, box(0.0019, 0, 0.004, 0.001))],
-      keepTagged,
-    );
-    expect(fps.size).toBe(1);
-    const fp = fps.get('7')!;
+    const fp = merge([box(0, 0, 0.0021, 0.001), box(0.0019, 0, 0.004, 0.001)]);
     expect(fp.polygons).toHaveLength(1);
     expect(area(fp.polygons[0]!)).toBeCloseTo(0.004 * 0.001, 12);
     expect(fp.centroid[0]).toBeCloseTo(0.002, 9);
     expect(fp.centroid[1]).toBeCloseTo(0.0005, 9);
   });
 
-  it('skips untagged features, counts id-less ones, and keeps buildings apart', () => {
-    const idx = new FootprintIndex();
-    const fps = idx.update(
-      [
-        piece(1, box(0, 0, 1e-3, 1e-3)),
-        piece(2, box(1, 1, 1.001, 1.001)),
-        piece(3, box(2, 2, 2.001, 2.001), {} as never),
-        piece(undefined, box(3, 3, 3.001, 3.001)),
-      ],
-      keepTagged,
-    );
-    expect([...fps.keys()]).toEqual(['1', '2']);
-    expect(idx.missingIds).toBe(1);
-  });
-
-  it('reuses the cached footprint while its pieces are unchanged', () => {
-    const idx = new FootprintIndex();
-    const features = [piece(1, box(0, 0, 1e-3, 1e-3)), piece(1, box(1e-3, 0, 2e-3, 1e-3))];
-    const first = idx.update(features, keepTagged).get('1');
-    expect(idx.update(features, keepTagged).get('1')).toBe(first);
-    expect(idx.update(features.slice(0, 1), keepTagged).get('1')).not.toBe(first);
+  it('identifies pieces regardless of their order', () => {
+    const [a, b] = [box(0, 0, 1e-3, 1e-3), box(1e-3, 0, 2e-3, 1e-3)];
+    expect(signatureOf([a, b])).toBe(signatureOf([b, a]));
+    expect(signatureOf([a])).not.toBe(signatureOf([a, b]));
   });
 
   it('falls back to the largest piece when the union fails, and reports it', () => {
     const onError = vi.fn();
-    const idx = new FootprintIndex(() => {
-      throw new Error('Unable to complete output ring');
-    }, onError);
-    const fps = idx.update(
-      [piece(7, box(0, 0, 0.002, 0.001)), piece(7, box(0.0019, 0, 0.0025, 0.001))],
-      keepTagged,
+    const fp = merge(
+      [box(0, 0, 0.002, 0.001), box(0.0019, 0, 0.0025, 0.001)],
+      () => {
+        throw new Error('Unable to complete output ring');
+      },
+      onError,
     );
-    expect(fps.get('7')!.polygons).toEqual([box(0, 0, 0.002, 0.001)]);
+    expect(fp.polygons).toEqual([box(0, 0, 0.002, 0.001)]);
     expect(onError).toHaveBeenCalledWith('7', expect.any(Error));
   });
 
   it('samples terrain where MapLibre does: the vertex average of the largest piece', () => {
-    const idx = new FootprintIndex();
     // Densely noded west side pulls the vertex average west of the area centroid.
     const ring = [
       [0, 0],
@@ -89,7 +63,7 @@ describe('FootprintIndex', () => {
       [0.004, 0],
       [0, 0],
     ];
-    const fp = idx.update([piece(1, [ring])], keepTagged).get('1')!;
+    const fp = merge([[ring]]);
     expect(fp.terrainPoint[0]).toBeCloseTo((0.004 * 2) / 7, 9);
     expect(fp.centroid[0]).toBeCloseTo(0.002, 9);
   });

@@ -443,11 +443,11 @@ describe('BuildingReplacement (feature-state)', () => {
         ],
       },
     });
-    r.update([full(elsewhere)]); // both tiles arrive; only the far one is read
-    expect(tiles[here]!.querySourceFeatures).toHaveBeenCalledTimes(1);
+    r.update([full(elsewhere)]); // both tiles arrive; only the one under a landmark is read
+    expect(tiles[here]!.querySourceFeatures).not.toHaveBeenCalled();
     r.update([full(elsewhere), full(landmark())]);
     expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
-    expect(tiles[here]!.querySourceFeatures).toHaveBeenCalledTimes(2);
+    expect(tiles[here]!.querySourceFeatures).toHaveBeenCalledTimes(1);
     expect(tiles[far]!.querySourceFeatures).toHaveBeenCalledTimes(1);
   });
 
@@ -460,6 +460,35 @@ describe('BuildingReplacement (feature-state)', () => {
     map.handlers.get('sourcedata')!({ sourceId: 'protomaps', tile: tiles[here] }); // reload
     vi.advanceTimersByTime(200);
     expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+  });
+
+  it('still follows new tiles after a tile failed to read during a rescan', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    const here = tileAt(2.2945, 48.85845, 18);
+    const tiles = renderTiles(map, { [here]: [] });
+    tiles[here]!.querySourceFeatures.mockImplementationOnce(() => {
+      throw new Error('torn tile');
+    });
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    expect(() => r.update([full(landmark())])).toThrow('torn tile');
+    const next = tileAt(2.29515, 48.8585, 18);
+    const more = renderTiles(map, { [next]: [building(3, 2.29515, 48.8585)] });
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps', tile: more[next] });
+    vi.advanceTimersByTime(200);
+    expect(map.states.get(3)?.[FADE_STATE]).toBe(1);
+  });
+
+  it('does not read arriving tiles far from every landmark', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    renderTiles(map, {});
+    new BuildingReplacement(target, ['buildings'], 1.5).update([full(landmark())]);
+    const far = tileAt(2.33, 48.87);
+    const tiles = renderTiles(map, { [far]: [building(9, 2.33, 48.87)] });
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps', tile: tiles[far] });
+    vi.advanceTimersByTime(200);
+    expect(tiles[far]!.querySourceFeatures).not.toHaveBeenCalled();
   });
 
   it('keeps a claim while another held tile still holds the building', () => {

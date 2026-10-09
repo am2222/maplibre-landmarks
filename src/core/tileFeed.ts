@@ -19,6 +19,11 @@ export interface TileFeedOptions {
   onTile(key: string, features: FeedFeature[]): void;
   /** A tile is no longer needed: drop what was built from it. */
   onDrop(key: string): void;
+  /**
+   * Whether the layer needs a tile now. Unwanted tiles are held but neither read nor delivered;
+   * `featuresOf` reads them on demand (default: every tile is wanted).
+   */
+  wants?(key: string): boolean;
   /** Most tiles held at once; the farthest from the view go first (default 256). */
   maxTiles?: number;
 }
@@ -61,6 +66,25 @@ export function tileBounds(key: string): Bbox {
   return [lng(x), lat(y + 1), lng(x + 1), lat(y)];
 }
 
+let fallbackLogged = false;
+
+/** Development builds only (bundlers replace `process.env.NODE_ENV`): say once per page. */
+function logFallback(source: string): void {
+  if (fallbackLogged) return;
+  let development = false;
+  try {
+    development = process.env.NODE_ENV === 'development';
+  } catch {
+    // No bundler define: treat as production.
+  }
+  if (!development) return;
+  fallbackLogged = true;
+  console.info(
+    `[maplibre-landmarks] source "${source}": MapLibre exposes no per-tile access, so layers ` +
+      're-read the whole source on each update (slower). See "How layers use tiles" in the docs.',
+  );
+}
+
 const overlaps = (a: Bbox, b: Bbox) => a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
 
 /**
@@ -84,6 +108,10 @@ export class TileFeed {
   private suspended = false;
   /** The source's tile manager last seen: another one means the source was replaced. */
   private knownManager?: TileManagerLike;
+  /** Keys of tiles with a held descendant (rebuilt after the held set changes). */
+  private ancestors?: Set<string>;
+  /** The first (seeding) public query ran: later ones mean the slow path. */
+  private seeded = false;
 
   constructor(
     private readonly map: FeedMap,
@@ -92,7 +120,10 @@ export class TileFeed {
     map.on('sourcedata', this.onData);
   }
 
-  /** True once tiles arrive through the events' tile objects (the fast path). */
+  /**
+   * True once tiles are read one by one (from the events' tile objects or the source's tile
+   * manager); false while the public-query fallback is in use.
+   */
   get fastPath(): boolean {
     return this.fast;
   }
@@ -107,6 +138,40 @@ export class TileFeed {
     if (!held) return undefined;
     if (held.features) return held.features;
     return this.query(held.tile!);
+  }
+
+  /**
+   * Whether held deeper tiles already cover `bbox` (lng/lat) of a held tile: MapLibre draws a
+   * parent only where its children are still missing, so layers skip what they would double.
+   */
+  shadowed(key: string, bbox: Bbox): boolean {
+    if (key === '*') return false;
+    if (!this.ancestors) {
+      this.ancestors = new Set();
+      for (const k of this.held.keys()) {
+        if (k === '*') continue;
+        let [z, x, y] = k.split('/').map(Number) as [number, number, number];
+        while (z > 0) {
+          [z, x, y] = [z - 1, x >> 1, y >> 1];
+          this.ancestors.add(tileKey({ z, x, y }));
+        }
+      }
+    }
+    if (!this.ancestors.has(key)) return false;
+    const [z, x, y] = key.split('/').map(Number) as [number, number, number];
+    let any = false;
+    for (const [dx, dy] of [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+      [1, 1],
+    ] as const) {
+      const child = tileKey({ z: z + 1, x: 2 * x + dx, y: 2 * y + dy });
+      if (!overlaps(tileBounds(child), bbox)) continue;
+      any = true;
+      if (!this.held.has(child) && !this.shadowed(child, bbox)) return false;
+    }
+    return any;
   }
 
   /** The camera settled: run the fallback if needed, then drop tiles no longer in use. */
@@ -153,6 +218,7 @@ export class TileFeed {
   dispose(): void {
     this.map.off('sourcedata', this.onData);
     this.held.clear();
+    this.ancestors = undefined;
   }
 
   private readonly onData = (e: {
@@ -174,14 +240,20 @@ export class TileFeed {
         return;
       }
       if (held) this.drop(key); // the same tile reloaded
-      const features = this.query(tile);
-      this.held.set(key, { tile, bounds: tileBounds(key) });
-      this.options.onTile(key, features);
+      this.arrive(key, tile);
       return;
     }
     if (!this.fast && (tile || !e.sourceDataType || e.sourceDataType === 'content'))
       this.needsFallback = true;
   };
+
+  /** Hold a tile; read and deliver it unless its layer does not want it (read on demand then). */
+  private arrive(key: string, tile: EventTile): void {
+    this.held.set(key, { tile, bounds: tileBounds(key) });
+    this.ancestors = undefined;
+    if (this.options.wants && !this.options.wants(key)) return;
+    this.options.onTile(key, this.query(tile));
+  }
 
   private query(tile: EventTile): FeedFeature[] {
     const result: FeedFeature[] = [];
@@ -224,8 +296,7 @@ export class TileFeed {
         continue;
       }
       if (held) this.drop(key); // grouped by an earlier fallback: take the tile instead
-      this.held.set(key, { tile, bounds: tileBounds(key) });
-      this.options.onTile(key, this.query(tile));
+      this.arrive(key, tile);
     }
     return true;
   }
@@ -254,6 +325,8 @@ export class TileFeed {
   /** Public query, grouped by each feature's tile, diffed against what is held. */
   private runFallback(): void {
     this.needsFallback = false;
+    if (this.seeded && !this.fast) logFallback(this.options.source);
+    this.seeded = true;
     const features = this.map.querySourceFeatures(
       this.options.source,
       this.params() as never,
@@ -287,6 +360,7 @@ export class TileFeed {
       if (held && held.signature === signature) continue;
       if (held) this.drop(key);
       this.held.set(key, { features: group, signature, bounds: tileBounds(key) });
+      this.ancestors = undefined;
       this.options.onTile(key, group);
     }
   }
@@ -320,6 +394,7 @@ export class TileFeed {
 
   private drop(key: string): void {
     if (!this.held.delete(key)) return;
+    this.ancestors = undefined;
     this.options.onDrop(key);
   }
 }
