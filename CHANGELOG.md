@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.2.0...maplibre-landmarks-v0.3.0) (2026-10-09)
+
+
+### Features
+
+* **clouds:** add volumetric clouds layer with customizable options ([3aefe39](https://github.com/am2222/maplibre-landmarks/commit/3aefe39b74b6a23e6dcab44f24eb821d342a39ac))
+* **clouds:** add volumetric clouds layer with customizable options ([f7f983d](https://github.com/am2222/maplibre-landmarks/commit/f7f983dcd2e531fd3234cf664d3b6efed85796b8))
+* **rain:** implement rain module with lightning and overcast effects ([589c951](https://github.com/am2222/maplibre-landmarks/commit/589c9517d91b7a4c52f30d33bbc44c4b0da18c98))
+* **rain:** implement rain module with lightning and overcast effects ([01505d0](https://github.com/am2222/maplibre-landmarks/commit/01505d0084a34e11a71880e9c1388072762bb98e))
+* **snow:** add snow layer with settling and weather effects ([1b6d8de](https://github.com/am2222/maplibre-landmarks/commit/1b6d8de2a942ab5d98bc6d2d19e246017b7e88ff))
+* **trees:** implement seasonal foliage changes and tree lifecycle ([286745a](https://github.com/am2222/maplibre-landmarks/commit/286745afc3b1783927fa8b4175653f13c9e429fa))
+* **trees:** implement seasonal foliage changes and tree lifecycle ([c38125a](https://github.com/am2222/maplibre-landmarks/commit/c38125aa37c759217185a5846766a695dc33f74a))
+
 ## [0.2.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.1.0...maplibre-landmarks-v0.2.0) (2026-10-09)
 
 
