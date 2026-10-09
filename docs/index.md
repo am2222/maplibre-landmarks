@@ -21,4 +21,4 @@ features:
     details: Wind-swayed trees, valley fog that follows the terrain, and lit water with waves, flow and foam.
 ---
 
-<DemoFrame src="/demo/" title="maplibre-landmarks demo" />
+<DemoFrame src="/demo/?theme=dusk&fog=70&panel=0#16/48.856/2.2905/60/78" title="maplibre-landmarks demo" />

@@ -104,6 +104,29 @@ from your own CDN. Replace the release (`2026-09-23.1`) with a current one from
 [Overture's docs](https://docs.overturemaps.org/examples/overture-tiles/). Data © Overture Maps
 Foundation and OpenStreetMap contributors (ODbL).
 
+### Your own roof tiles
+
+Overture's tiles drop polygons smaller than a pixel, even at their highest zoom: a lantern's
+columns or a spire's pinnacles go missing and the parts above them float. Tiling Overture's data
+yourself keeps them (and gives smaller, faster tiles):
+
+```bash
+# Buildings and parts of one area from Overture's GeoParquet (DuckDB with spatial + httpfs)
+duckdb -c "INSTALL spatial; LOAD spatial; INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';
+COPY (SELECT id AS gers, height, min_height, num_floors, min_floor, roof_shape, roof_height,
+  roof_direction, roof_orientation, roof_color, roof_material, facade_color, facade_material,
+  has_parts, geometry
+  FROM read_parquet('s3://overturemaps-us-west-2/release/2026-09-23.0/theme=buildings/type=building/*')
+  WHERE bbox.xmin < 2.38 AND bbox.xmax > 2.27 AND bbox.ymin < 48.89 AND bbox.ymax > 48.83)
+TO 'building.geojsonl' WITH (FORMAT GDAL, DRIVER 'GeoJSONSeq');"
+# …the same for type=building_part (without has_parts) into building_part.geojsonl, then:
+tippecanoe -o roofs.pmtiles -Z14 -z16 --generate-ids --no-tiny-polygon-reduction \
+  --no-feature-limit --no-tile-size-limit -L building:building.geojsonl \
+  -L building_part:building_part.geojsonl
+```
+
+The demo loads such a file with `?roofs=/roofs.pmtiles` (put it in `demo/public/`).
+
 **Your own tiles.** Any vector source with these attributes (or its own names mapped with
 `fields`) and feature ids works; Overture keeps only 14 roof shapes and no `roof_angle`, so a
 source built from raw OSM tags can draw more. See

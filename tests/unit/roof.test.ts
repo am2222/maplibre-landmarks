@@ -84,6 +84,38 @@ describe('buildRoof', () => {
     }
   });
 
+  it('domes and onions on a square start square and round off as they rise', () => {
+    for (const shape of ['dome', 'onion'] as const) {
+      // A 20 m square with a vertex mid-edge too (corners 14.1 m out, mid-edges 10 m).
+      const square: Vec2[] = [
+        [-10, -10],
+        [0, -10],
+        [10, -10],
+        [10, 0],
+        [10, 10],
+        [0, 10],
+        [-10, 10],
+        [-10, 0],
+      ];
+      const { mesh, roofHeight } = buildRoof(props({ shape, roofHeight: 8 }), [[square]])!;
+      const p = mesh.positions;
+      // Radii of the vertices in the top half: round (all about the same distance out).
+      const upper = [] as number[];
+      for (let i = 0; i < p.length; i += 3)
+        if (p[i + 1]! > roofHeight * 0.6 && p[i + 1]! < roofHeight - 1e-6)
+          upper.push(Math.hypot(p[i]!, p[i + 2]!));
+      const byHeight = new Map<number, number[]>();
+      for (let i = 0; i < p.length; i += 3) {
+        const h = Math.round(p[i + 1]! * 1000);
+        if (p[i + 1]! > roofHeight * 0.6 && p[i + 1]! < roofHeight - 1e-6)
+          byHeight.set(h, [...(byHeight.get(h) ?? []), Math.hypot(p[i]!, p[i + 2]!)]);
+      }
+      for (const radii of byHeight.values())
+        expect(Math.max(...radii) / Math.min(...radii)).toBeLessThan(1.15);
+      expect(upper.length).toBeGreaterThan(0);
+    }
+  });
+
   it('a dome on a round outline is a dome of revolution', () => {
     const circle: Vec2[] = Array.from({ length: 32 }, (_, i) => {
       const a = (i / 32) * 2 * Math.PI;

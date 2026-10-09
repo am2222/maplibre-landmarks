@@ -112,10 +112,10 @@ export function buildRoof(
       pyramidRoof(b, outer, frame.origin, H, roof);
       return { mesh: b.build(), roofHeight: H };
     case 'dome':
-      domeRoof(b, outer, frame.origin, H, roof);
+      domeRoof(b, outer, frame.origin, Math.min(frame.L, frame.W), H, roof);
       return { mesh: b.build(), roofHeight: H };
     case 'onion':
-      onionRoof(b, outer, frame.origin, H, roof);
+      onionRoof(b, outer, frame.origin, Math.min(frame.L, frame.W), H, roof);
       return { mesh: b.build(), roofHeight: H };
     default: {
       const shape = props.shape as ProfileShape;

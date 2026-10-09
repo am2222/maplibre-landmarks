@@ -8,13 +8,21 @@ import {
   LandmarksLayer,
   RoofsLayer,
   setTheme,
+  THEMES,
   TreesLayer,
   WaterLayer,
   type LandmarkInfo,
   type Theme,
 } from '../src/index';
 import { $, initCollapse, initTabs, range, syncTabDots, toggle } from './panel';
-import { roofWalls, styleFor, type Basemap, type Projection, type RoofData } from './style';
+import {
+  firstPointLabel,
+  roofWalls,
+  styleFor,
+  type Basemap,
+  type Projection,
+  type RoofData,
+} from './style';
 
 setWorkerUrl(workerUrl);
 addProtocol('pmtiles', new Protocol().tile);
@@ -31,24 +39,30 @@ if (!key && !pmtilesUrl) {
 // `?roofs=/my-roofs.pmtiles` overrides it for one visit; paths resolve against the page).
 const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
-const roofsParam = new URLSearchParams(location.search).get('roofs');
+// Start-up settings from the page URL (the docs embed a dusk skyline):
+// `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`.
+const params = new URLSearchParams(location.search);
+const roofsParam = params.get('roofs');
+const themeParam = params.get('theme');
 const localRoofsUrl = roofsParam
   ? new URL(roofsParam, location.href).href
   : (import.meta.env.VITE_ROOFS_PMTILES as string | undefined);
 
 const state = {
-  theme: 'day' as Theme,
+  theme: (themeParam && themeParam in THEMES ? themeParam : 'day') as Theme,
   basemap: 'streets' as Basemap,
   projection: 'mercator' as Projection,
   terrain: false,
-  roofData: 'overture' as RoofData,
+  // A `?roofs=` tileset is what the visit is for: start on it.
+  roofData: (roofsParam ? 'local' : 'overture') as RoofData,
 };
+/** Overture-schema tilesets (the official one, or `?roofs=`): buildings and parts in two layers. */
 const roofParts = () =>
-  state.roofData === 'overture' || (state.roofData === 'local' && !localRoofsUrl);
+  state.roofData === 'overture' || (state.roofData === 'local' && (!localRoofsUrl || !!roofsParam));
 const style = () =>
   styleFor({
     ...state,
-    roofsUrl: roofParts() ? OVERTURE_BUILDINGS : localRoofsUrl!,
+    roofsUrl: state.roofData === 'local' && localRoofsUrl ? localRoofsUrl : OVERTURE_BUILDINGS,
     roofParts: roofParts(),
     protomaps: pmtilesUrl
       ? `pmtiles://${pmtilesUrl}`
@@ -76,7 +90,8 @@ let fog: FogLayer | undefined;
 let occlusion: LabelOcclusion | undefined;
 let models: LandmarkInfo[] = [];
 
-const firstSymbol = () => map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+/** The first label above the 3D layers (street names lie under them, see style.ts). */
+const firstSymbol = () => firstPointLabel(map.getStyle().layers);
 /** 3D layers go under the fog (it blends over them), or under the labels without fog. */
 const before3D = () => (map.getLayer('fog') ? 'fog' : firstSymbol());
 /** Removing a layer restores what it changed (hidden buildings, shortened walls). */
@@ -215,6 +230,7 @@ function restoreLayers() {
 
 initTabs('map');
 initCollapse();
+if (params.get('panel') === '0') $('collapse').click();
 for (const name of Object.keys(LAYERS))
   toggle(name).addEventListener('change', () => setLayer(name, toggle(name).checked));
 syncTabDots();
@@ -236,6 +252,12 @@ const fogWind = range(
   (v) => `${v} m/s`,
 );
 const fogWindDir = range('fog-wind-dir', (v) => fog?.setWind({ direction: v }), degrees);
+if (params.has('fog')) {
+  const height = Number(params.get('fog'));
+  if (height > 0) fogHeight.set(height);
+  toggle('fog').checked = true; // added with the other layers on load
+  syncTabDots();
+}
 
 /** A range that rebuilds its layer when let go (the option is fixed at construction). */
 const rebuilding = (id: string, layer: string, format?: (v: number) => string) => {
@@ -285,6 +307,7 @@ function restyle(wallsChange = false) {
 }
 
 const select = (id: string) => $<HTMLSelectElement>(id);
+select('theme').value = state.theme;
 select('theme').onchange = () => {
   state.theme = select('theme').value as Theme;
   restyle();
@@ -310,6 +333,7 @@ select('channel').onchange = () => {
 // Without a local tileset, "Local file" has nothing to load.
 if (!localRoofsUrl)
   select('roof-data').querySelector<HTMLOptionElement>('[value=local]')!.disabled = true;
+select('roof-data').value = state.roofData;
 select('roof-data').onchange = () => {
   state.roofData = select('roof-data').value as RoofData;
   restyle(true);

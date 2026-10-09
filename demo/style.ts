@@ -51,6 +51,27 @@ const SATELLITE = {
     'Imagery © <a href="https://www.esri.com">Esri</a>, Maxar, Earthstar Geographics and the GIS User Community',
 };
 
+/** Labels laid along the ground (street names, one-way arrows, river names). */
+const onGround = (l: LayerSpecification) =>
+  l.type === 'symbol' && String(l.layout?.['symbol-placement'] ?? 'point').startsWith('line');
+
+/**
+ * Street names and arrows before every other label, so the 3D layers can go between them: they
+ * lie on the ground and buildings and trees in front cover them, while point labels (places,
+ * POIs) stay on top.
+ */
+function groundLabelsFirst(styleLayers: LayerSpecification[]): LayerSpecification[] {
+  const ground = styleLayers.filter(onGround);
+  const rest = styleLayers.filter((l) => !onGround(l));
+  const at = rest.findIndex((l) => l.type === 'symbol');
+  const i = at === -1 ? rest.length : at;
+  return [...rest.slice(0, i), ...ground, ...rest.slice(i)];
+}
+
+/** Where 3D layers go: right under the first label that is not on the ground. */
+export const firstPointLabel = (styleLayers: { id: string; type: string }[]) =>
+  styleLayers.find((l) => l.type === 'symbol' && !onGround(l as LayerSpecification))?.id;
+
 /** Wall layers under the roofs. */
 export const roofWalls = (roofParts: boolean) =>
   roofParts ? ['roof-buildings-3d', 'roof-parts-3d'] : ['roof-buildings-3d'];
@@ -92,7 +113,7 @@ function withBuildings(styleLayers: LayerSpecification[], o: StyleOptions): Laye
         minzoom: 14,
         paint: paint(),
       });
-    const firstLabel = styleLayers.findIndex((l) => l.type === 'symbol');
+    const firstLabel = styleLayers.findIndex((l) => l.id === firstPointLabel(styleLayers));
     const at = firstLabel === -1 ? styleLayers.length : firstLabel;
     return [...styleLayers.slice(0, at), ...walls, ...styleLayers.slice(at)];
   }
@@ -106,7 +127,7 @@ function withBuildings(styleLayers: LayerSpecification[], o: StyleOptions): Laye
     paint: { ...paint(), 'fill-extrusion-opacity': 0.9 },
   };
   const rest = styleLayers.filter((l) => l !== flat);
-  const firstSymbol = rest.findIndex((l) => l.type === 'symbol');
+  const firstSymbol = rest.findIndex((l) => l.id === firstPointLabel(rest));
   const at = firstSymbol === -1 ? rest.length : firstSymbol;
   return [...rest.slice(0, at), extruded, ...rest.slice(at)];
 }
@@ -151,7 +172,7 @@ export function styleFor(o: StyleOptions): StyleSpecification {
   const flavor = FLAVOR[o.theme];
   let styleLayers = layers('protomaps', namedFlavor(flavor), { lang: 'en' });
   if (o.basemap === 'satellite') styleLayers = onSatellite(styleLayers);
-  styleLayers = withHillshade(withBuildings(styleLayers, o), o);
+  styleLayers = withHillshade(withBuildings(groundLabelsFirst(styleLayers), o), o);
   return {
     version: 8,
     glyphs: 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',

@@ -12,6 +12,8 @@ const SHAPES = [
   'saltbox',
   'hipped',
   'half_hipped',
+  'side_hipped',
+  'side_half_hipped',
   'hipped_and_gabled',
   'gambrel',
   'mansard',
@@ -37,6 +39,17 @@ const at = (x: number, y: number): [number, number] => [
   ORIGIN[1] - y * M_LAT,
 ];
 
+const box = (id: number, x0: number, y0: number, x1: number, y1: number, properties: object) =>
+  ({
+    type: 'Feature',
+    id,
+    properties,
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1), at(x0, y0)]],
+    },
+  }) as Feature<Polygon>;
+
 const features: Feature<Polygon>[] = SHAPES.map((shape, i) => {
   const cx = (i % COLS) * SPACING_M;
   const cy = Math.floor(i / COLS) * SPACING_M;
@@ -60,6 +73,16 @@ const features: Feature<Polygon>[] = SHAPES.map((shape, i) => {
       ],
     },
   };
+});
+
+// Side-hipped roofs stay gabled where another part is attached: a lower annex at the east end.
+SHAPES.forEach((shape, i) => {
+  if (!shape.startsWith('side_')) return;
+  const cx = (i % COLS) * SPACING_M;
+  const cy = Math.floor(i / COLS) * SPACING_M;
+  features.push(
+    box(100 + i, cx + 14, cy - 8, cx + 22, cy + 8, { height: 10, roof_shape: 'hipped' }),
+  );
 });
 
 const map = new MlMap({
