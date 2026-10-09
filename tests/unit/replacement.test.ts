@@ -122,6 +122,7 @@ function fakeStyle(type: 'fill' | 'fill-extrusion' = 'fill') {
         };
   const states = new Map<number, Record<string, unknown>>();
   const handlers = new Map<string, (e: unknown) => void>();
+  const listeners = new Map<string, ((e: unknown) => void)[]>();
   const features = [
     building(1, 2.2945, 48.85845), // inside the landmark footprint
     building(1, 2.2945, 48.85845), // same building repeated in a neighbouring tile
@@ -147,10 +148,47 @@ function fakeStyle(type: 'fill' | 'fill-extrusion' = 'fill') {
       const st = states.get(f.id);
       if (st) delete st[key];
     }),
-    on: vi.fn((t: string, fn: (e: unknown) => void) => handlers.set(t, fn)),
-    off: vi.fn((t: string) => handlers.delete(t)),
+    // Several listeners per event (replacement and its tile feeds); handlers.get(t) calls them all.
+    on: vi.fn((t: string, fn: (e: unknown) => void) => {
+      listeners.set(t, [...(listeners.get(t) ?? []), fn]);
+      handlers.set(t, (e: unknown) => [...(listeners.get(t) ?? [])].forEach((f) => f(e)));
+    }),
+    off: vi.fn((t: string, fn?: (e: unknown) => void) => {
+      const list = (listeners.get(t) ?? []).filter((f) => f !== fn);
+      listeners.set(t, list);
+      if (!list.length) handlers.delete(t);
+    }),
   };
   return { map, target: map as unknown as ReplacementTarget };
+}
+
+/** z16 tile key holding a lng/lat. */
+function tileAt(lng: number, lat: number, z = 16): string {
+  const r = (lat * Math.PI) / 180;
+  const x = Math.floor(((lng + 180) / 360) * 2 ** z);
+  const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z);
+  return `${z}/${x}/${y}`;
+}
+
+/** MapLibre's tile manager for 'protomaps': the tiles it renders now, each with its features. */
+function renderTiles(map: ReturnType<typeof fakeStyle>['map'], tiles: Record<string, unknown[]>) {
+  const list = Object.entries(tiles).map(([key, features]) => {
+    const [z, x, y] = key.split('/').map(Number);
+    return {
+      key,
+      tileID: { canonical: { z, x, y } },
+      querySourceFeatures: vi.fn((result: unknown[]) => result.push(...features)),
+    };
+  });
+  // One manager per source (MapLibre keeps it while the source lives): only its tiles change.
+  const style = ((map as { style?: { tileManagers: Record<string, object> } }).style ??= {
+    tileManagers: {},
+  });
+  style.tileManagers.protomaps = Object.assign(style.tileManagers.protomaps ?? {}, {
+    getRenderableIds: () => list.map((_, i) => i),
+    getTileByID: (i: number) => list[i],
+  });
+  return Object.fromEntries(list.map((t) => [t.key, t]));
 }
 
 const landmark = () =>
@@ -359,6 +397,88 @@ describe('BuildingReplacement (feature-state)', () => {
     vi.advanceTimersByTime(200);
     expect(map.states.get(3)?.[FADE_STATE]).toBe(1);
     expect(map.querySourceFeatures).toHaveBeenCalledTimes(2);
+  });
+
+  it('checks only an arriving tile against the landmarks, not the tiles already held', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    const here = tileAt(2.2945, 48.85845, 18);
+    const tiles = renderTiles(map, { [here]: [building(1, 2.2945, 48.85845)] });
+    new BuildingReplacement(target, ['buildings'], 1.5).update([full(landmark())]);
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+    const next = tileAt(2.29515, 48.8585, 18); // the next tile east, still under the footprint
+    expect(next).not.toBe(here);
+    const more = renderTiles(map, {
+      [here]: [building(1, 2.2945, 48.85845)],
+      [next]: [building(3, 2.29515, 48.8585)],
+    });
+    more[here] = Object.assign(more[here]!, tiles[here]); // the same tile object
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps', tile: more[next] });
+    vi.advanceTimersByTime(200);
+    expect(map.states.get(3)?.[FADE_STATE]).toBe(1);
+    expect(tiles[here]!.querySourceFeatures).toHaveBeenCalledTimes(1);
+    expect(map.querySourceFeatures).not.toHaveBeenCalled();
+  });
+
+  it('a landmark arriving later re-checks only the held tiles under it', () => {
+    const { map, target } = fakeStyle();
+    const here = tileAt(2.2945, 48.85845);
+    const far = tileAt(2.33, 48.87);
+    const tiles = renderTiles(map, {
+      [here]: [building(1, 2.2945, 48.85845)],
+      [far]: [building(9, 2.33, 48.87)],
+    });
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    const elsewhere = entry('z', {
+      replacementFootprint: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [2.3299, 48.8699],
+            [2.3301, 48.8699],
+            [2.3301, 48.8701],
+            [2.3299, 48.8701],
+            [2.3299, 48.8699],
+          ],
+        ],
+      },
+    });
+    r.update([full(elsewhere)]); // both tiles arrive; only the far one is read
+    expect(tiles[here]!.querySourceFeatures).toHaveBeenCalledTimes(1);
+    r.update([full(elsewhere), full(landmark())]);
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+    expect(tiles[here]!.querySourceFeatures).toHaveBeenCalledTimes(2);
+    expect(tiles[far]!.querySourceFeatures).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps hiding a building when its tile reloads', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    const here = tileAt(2.2945, 48.85845);
+    const tiles = renderTiles(map, { [here]: [building(1, 2.2945, 48.85845)] });
+    new BuildingReplacement(target, ['buildings'], 1.5).update([full(landmark())]);
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps', tile: tiles[here] }); // reload
+    vi.advanceTimersByTime(200);
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+  });
+
+  it('keeps a claim while another held tile still holds the building', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    const a = tileAt(2.2945, 48.85845);
+    const b = tileAt(2.2952, 48.85845);
+    const shared = building(1, 2.2945, 48.85845);
+    renderTiles(map, { [a]: [shared], [b]: [shared] });
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    r.update([full(landmark())]);
+    renderTiles(map, { [b]: [shared] });
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps' });
+    vi.advanceTimersByTime(200);
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+    renderTiles(map, {});
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps' });
+    vi.advanceTimersByTime(200);
+    expect(map.states.get(1)?.[FADE_STATE]).toBeUndefined();
   });
 
   it('restore shows every building, restores paint and stops listening', () => {

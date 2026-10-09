@@ -10,11 +10,13 @@ import { pointInPolygons } from '../core/geometry';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
 import { localPosition, originAt } from '../core/mercator';
 import { OwnedPaint } from '../core/ownedPaint';
+import { TileFeed, type FeedMap } from '../core/tileFeed';
 import type { LngLat, Origin, ViewState } from '../core/types';
 import { exemptionsFor, offExemptionsChanged, onExemptionsChanged } from '../labels/exemptions';
 import { FADE_STATE } from '../landmarks/replacement';
 import { colorVariance } from './colors';
-import { FootprintIndex, type Footprint, type SourceFeatureLike } from './footprints';
+import { BuildingPieces } from './buildingPieces';
+import type { Footprint } from './footprints';
 import type { Vec2 } from './geometry/frame';
 import { buildRoof, type BuiltRoof } from './geometry/roof';
 import {
@@ -67,8 +69,12 @@ export class RoofsModule implements LayerModule {
   private view?: ViewState;
   private timer?: ReturnType<typeof setTimeout>;
   private readonly fields: Fields;
-  /** Footprints per source layer ('' when there is none). */
-  private readonly footprints = new Map<string, FootprintIndex>();
+  /** Roofed building pieces of the held tiles, merged per building on demand. */
+  private readonly pieces: BuildingPieces;
+  /** One tile feed per source layer drawn by a wrapped extrusion layer ('' when none). */
+  private readonly feeds = new Map<string, TileFeed>();
+  /** Terrain changed since the last merge. */
+  private groundChanged = false;
   /** Built roofs by layer-qualified footprint key, rebuilt when the footprint's pieces change. */
   private roofs = new Map<string, { signature: string; built: BuiltRoof | null }>();
   /** Roofs currently drawn, with the feature-state written for each. */
@@ -79,6 +85,12 @@ export class RoofsModule implements LayerModule {
   constructor(private readonly options: RoofsOptions) {
     this.fields = resolveFields(options.fields);
     this.extrusionLayers = [options.extrusionLayer].flat();
+    const gable = options.gableColor ?? '#d9d4ce';
+    this.pieces = new BuildingPieces(
+      (p) => readRoofProps(p, this.fields, gable) !== null,
+      undefined,
+      (key, err) => this.report(`union:${key}`, err),
+    );
   }
 
   onAdd(ctx: ModuleContext): void {
@@ -126,6 +138,8 @@ export class RoofsModule implements LayerModule {
       if (map) this.unsetState(map, d);
     }
     this.drawn.clear();
+    // A swapped style may carry other tiles: start the feeds over.
+    for (const feed of this.feeds.values()) feed.reset();
     if (attached) this.rebuild();
   }
 
@@ -133,6 +147,7 @@ export class RoofsModule implements LayerModule {
     const ctx = this.ctx;
     if (!ctx) return;
     clearTimeout(this.timer);
+    for (const layer of [...this.feeds.keys()]) this.removeFeed(layer);
     ctx.map.off('sourcedata', this.onSourceData);
     ctx.map.off('terrain', this.onTerrain);
     offExemptionsChanged(ctx.map, this.schedule);
@@ -163,15 +178,20 @@ export class RoofsModule implements LayerModule {
   private readonly onSourceData = (e: { sourceId?: string; sourceDataType?: string }): void => {
     if (e.sourceDataType && e.sourceDataType !== 'content') return;
     const terrain = this.ctx?.map.getTerrain();
-    if (terrain && e.sourceId === terrain.source) this.elevations.clear();
+    if (terrain && e.sourceId === terrain.source) this.forgetGround();
     else if (e.sourceId !== this.options.source) return;
     this.schedule();
   };
 
   private readonly onTerrain = (): void => {
-    this.elevations.clear();
+    this.forgetGround();
     this.schedule();
   };
+
+  private forgetGround(): void {
+    this.elevations.clear();
+    this.groundChanged = true;
+  }
 
   /**
    * Source layers whose walls carry our height wrapper, so their roofs can sit on shortened
@@ -203,32 +223,42 @@ export class RoofsModule implements LayerModule {
     const map = ctx.map;
     const ready = this.wrapWalls();
     let next = new Map<string, Drawn>();
-    if (!map.getSource(this.options.source)) {
-      this.report('source', new Error(`source "${this.options.source}" not found`));
-    } else if (ready.length && view.zoom >= (this.options.minZoom ?? 15)) {
-      next = this.collect(map, view, ready);
+    const source = map.getSource(this.options.source) as { vectorLayerIds?: string[] } | undefined;
+    if (!source) this.report('source', new Error(`source "${this.options.source}" not found`));
+    const active = source && view.zoom >= (this.options.minZoom ?? 15) ? ready : [];
+    const feeds = this.syncFeeds(active, source?.vectorLayerIds);
+    if (feeds.length) {
+      try {
+        for (const feed of feeds) feed.settle();
+      } catch (err) {
+        this.report('settle', err);
+      }
+      next = this.collect(map, view);
     }
     this.writeStates(map, next);
+    const same =
+      !this.groundChanged &&
+      next.size === this.drawn.size &&
+      [...next].every(([key, d]) => {
+        const old = this.drawn.get(key);
+        return old?.built === d.built && old.footprint === d.footprint;
+      });
     this.drawn = next;
+    if (same) return;
+    this.groundChanged = false;
     this.merge(map);
     ctx.requestRepaint();
   }
 
-  private collect(
-    map: MlMap,
-    view: ViewState,
+  /**
+   * One feed per source layer to roof; feeds of layers no longer drawn (zoomed out, walls not
+   * wrapped) are suspended: they hold no tiles until they are drawn again. Returns the active ones.
+   */
+  private syncFeeds(
     sourceLayers: (string | undefined)[],
-  ): Map<string, Drawn> {
-    const gable = this.options.gableColor ?? '#d9d4ce';
-    const layerIds = (map.getSource(this.options.source) as { vectorLayerIds?: string[] })
-      .vectorLayerIds;
-    // Only roofed buildings: MapLibre skips building GeoJSON for everything else.
-    const filter = [
-      'in',
-      ['downcase', ['to-string', ['get', this.fields.roof_shape]]],
-      ['literal', ROOF_SHAPE_VALUES],
-    ];
-    const found: { sourceLayer: string | undefined; key: string; f: Footprint }[] = [];
+    layerIds: string[] | undefined,
+  ): TileFeed[] {
+    const wanted = new Set<string>();
     for (const sourceLayer of sourceLayers) {
       if (sourceLayer && layerIds && !layerIds.includes(sourceLayer)) {
         this.report(
@@ -237,32 +267,68 @@ export class RoofsModule implements LayerModule {
         );
         continue;
       }
-      const features = map.querySourceFeatures(this.options.source, {
-        ...(sourceLayer ? { sourceLayer } : {}),
-        filter: filter as never,
-      }) as unknown as SourceFeatureLike[];
-      const index = this.indexFor(sourceLayer ?? '');
-      const footprints = index.update(
-        features,
-        (p) => readRoofProps(p, this.fields, gable) !== null,
-      );
-      if (index.missingIds) {
-        this.report('ids', new Error(`source "${this.options.source}" has buildings without ids`));
-      }
-      for (const f of footprints.values()) {
-        // Buildings a landmark model replaces lose their roof along with their walls.
-        if (this.replacedByLandmark(map, sourceLayer, f.id)) continue;
-        found.push({ sourceLayer, key: `${sourceLayer ?? ''}|${f.key}`, f });
-      }
+      wanted.add(sourceLayer ?? '');
     }
+    for (const [layer, feed] of this.feeds) if (!wanted.has(layer)) feed.suspend();
+    for (const layer of wanted) if (!this.feeds.has(layer)) this.addFeed(layer);
+    return [...wanted].map((layer) => this.feeds.get(layer)!);
+  }
+
+  private addFeed(layer: string): void {
+    // Only roofed buildings: MapLibre skips building GeoJSON for everything else.
+    const filter = [
+      'in',
+      ['downcase', ['to-string', ['get', this.fields.roof_shape]]],
+      ['literal', ROOF_SHAPE_VALUES],
+    ];
+    const feed = new TileFeed(this.ctx!.map as unknown as FeedMap, {
+      source: this.options.source,
+      ...(layer ? { sourceLayer: layer } : {}),
+      filter,
+      onTile: (key, features) => {
+        this.pieces.add(key, layer, features);
+        if (this.pieces.missingIds)
+          this.report(
+            'ids',
+            new Error(`source "${this.options.source}" has buildings without ids`),
+          );
+        this.schedule();
+      },
+      onDrop: (key) => {
+        this.pieces.drop(key, layer);
+        this.schedule();
+      },
+    });
+    this.feeds.set(layer, feed);
+  }
+
+  private removeFeed(layer: string): void {
+    const feed = this.feeds.get(layer);
+    if (!feed) return;
+    feed.reset(); // drops its pieces
+    feed.dispose();
+    this.feeds.delete(layer);
+  }
+
+  /** The nearest roofed buildings of the held tiles (built roofs reused while unchanged). */
+  private collect(map: MlMap, view: ViewState): Map<string, Drawn> {
+    const gable = this.options.gableColor ?? '#d9d4ce';
     const exempt = exemptionsFor(map);
     const [cx, cy] = view.center;
     const k = Math.cos((cy * Math.PI) / 180);
-    const nearest = found
-      .filter(({ f }) => !pointInPolygons(f.centroid, exempt))
-      .map((e) => ({ ...e, d: Math.hypot((e.f.centroid[0] - cx) * k, e.f.centroid[1] - cy) }))
-      .sort((a, b) => a.d - b.d)
-      .slice(0, this.options.maxBuildings ?? 2000);
+    const found: { key: string; f: Footprint; sourceLayer: string | undefined; d: number }[] = [];
+    for (const key of this.pieces.keys()) {
+      const f = this.pieces.footprint(key);
+      if (!f) continue;
+      const layer = this.pieces.sourceLayerOf(key);
+      const sourceLayer = layer || undefined;
+      // Buildings a landmark model replaces lose their roof along with their walls.
+      if (this.replacedByLandmark(map, sourceLayer, f.id)) continue;
+      if (pointInPolygons(f.centroid, exempt)) continue;
+      const d = Math.hypot((f.centroid[0] - cx) * k, f.centroid[1] - cy);
+      found.push({ key, f, sourceLayer, d });
+    }
+    const nearest = found.sort((a, b) => a.d - b.d).slice(0, this.options.maxBuildings ?? 2000);
     const roofs = new Map<string, { signature: string; built: BuiltRoof | null }>();
     const next = new Map<string, Drawn>();
     for (const { sourceLayer, key, f } of nearest) {
@@ -276,17 +342,6 @@ export class RoofsModule implements LayerModule {
     }
     this.roofs = roofs;
     return next;
-  }
-
-  private indexFor(sourceLayer: string): FootprintIndex {
-    let index = this.footprints.get(sourceLayer);
-    if (!index) {
-      index = new FootprintIndex(undefined, (key, err) =>
-        this.report(`union:${sourceLayer}|${key}`, err),
-      );
-      this.footprints.set(sourceLayer, index);
-    }
-    return index;
   }
 
   private build(f: Footprint, props: RoofProps): BuiltRoof | null {

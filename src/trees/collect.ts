@@ -93,21 +93,6 @@ export class PointIndex {
     }
   }
 
-  /**
-   * Keys of the points in the grid cells under the pieces' bounds (no polygon tests): the count
-   * inside can only change when this changes.
-   */
-  keysNear(pieces: PolygonCoords[]): string {
-    const [w, s, e, n] = bboxOf(pieces);
-    if (!Number.isFinite(w)) return '';
-    const c = PointIndex.CELL;
-    const keys: string[] = [];
-    for (let x = Math.floor(w / c); x <= Math.floor(e / c); x++)
-      for (let y = Math.floor(s / c); y <= Math.floor(n / c); y++)
-        for (const p of this.buckets.get(`${x}:${y}`) ?? []) keys.push(p.key);
-    return keys.sort().join(',');
-  }
-
   countInside(pieces: PolygonCoords[]): number {
     const [w, s, e, n] = bboxOf(pieces);
     if (!Number.isFinite(w)) return 0;

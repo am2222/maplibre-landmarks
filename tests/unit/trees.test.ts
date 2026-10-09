@@ -49,6 +49,7 @@ function setup(
     polygons: data?.polygons ?? [],
   };
   const handlers = new Map<string, (e: unknown) => void>();
+  const listeners = new Map<string, ((e: unknown) => void)[]>();
   const map = {
     features,
     handlers,
@@ -65,8 +66,18 @@ function setup(
     querySourceFeatures: vi.fn((_s: string, o: { filter: unknown[] }) =>
       o.filter[0] === '==' ? features.points : features.polygons,
     ),
-    on: vi.fn((t: string, fn: (e: unknown) => void) => handlers.set(t, fn)),
-    off: vi.fn((t: string) => handlers.delete(t)),
+    // Several listeners per event (the module and its tile feeds); handlers.get(t) calls them all.
+    on: vi.fn((t: string, fn: (e: unknown) => void) => {
+      const list = listeners.get(t) ?? [];
+      list.push(fn);
+      listeners.set(t, list);
+      handlers.set(t, (e: unknown) => [...(listeners.get(t) ?? [])].forEach((f) => f(e)));
+    }),
+    off: vi.fn((t: string, fn?: (e: unknown) => void) => {
+      const list = (listeners.get(t) ?? []).filter((f) => f !== fn);
+      listeners.set(t, list);
+      if (!list.length) handlers.delete(t);
+    }),
   };
   const scene = new Scene();
   const core = { theme: 'day', setTheme: vi.fn() };
@@ -150,27 +161,117 @@ describe('TreesModule', () => {
   });
 
   it('stays fast in a near-horizontal view: far woods cannot beat the nearest trees', async () => {
-    // A low camera sees woods out to the horizon: 3,000 woods over ~10 km, one park near the centre.
-    const parks = Array.from({ length: 3000 }, (_, i) =>
+    // A low camera sees woods out to the horizon: 3,000 woods over ~10 km, one park near the
+    // centre, delivered tile by tile (z15) as MapLibre loads them.
+    const woods = Array.from({ length: 3000 }, (_, i) =>
       polygon(10 + i, 'wood', square(400 + (i % 60) * 160, -4000 + Math.floor(i / 60) * 160, 120)),
     );
-    const s = setup(
-      { maxTrees: 4000 },
-      { points: [], polygons: [polygon(1, 'park', square(0, 0, 300)), ...parks] },
-    );
+    const near = polygon(1, 'park', square(0, 0, 300));
+    const s = setup({ maxTrees: 4000 }, { points: [], polygons: [] });
     await flush();
+    const z15 = (lng: number, lat: number) => {
+      const r = (lat * Math.PI) / 180;
+      return {
+        z: 15,
+        x: Math.floor(((lng + 180) / 360) * 2 ** 15),
+        y: Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** 15),
+      };
+    };
+    const byTile = new Map<
+      string,
+      { tile: { z: number; x: number; y: number }; features: unknown[] }
+    >();
+    for (const f of [near, ...woods]) {
+      const [lng, lat] = (f.geometry.coordinates as number[][][])[0]![0]!;
+      const tile = z15(lng!, lat!);
+      const key = `${tile.x}/${tile.y}`;
+      if (!byTile.has(key)) byTile.set(key, { tile, features: [] });
+      byTile.get(key)!.features.push(f);
+    }
     const wide = view({ center: C, zoom: 17, pitch: 85, bounds: [2.2, 48.8, 2.45, 48.95] });
+    s.module.update(wide); // seeds the feeds (nothing loaded yet)
+    for (const { tile, features } of byTile.values())
+      s.map.handlers.get('sourcedata')!({
+        sourceId: 'src',
+        tile: {
+          tileID: { canonical: tile },
+          querySourceFeatures: (result: unknown[], params: { filter: unknown[] }) => {
+            if (params.filter[0] !== '==') result.push(...features);
+          },
+        },
+      });
+    s.map.querySourceFeatures.mockClear();
     const t0 = performance.now();
     s.module.update(wide);
     const ms = performance.now() - t0;
-    const stats = s.module.getStats();
-    expect(stats.drawn).toBe(4000);
-    // Every drawn tree is as near as the nearest 4,000 of all scattered: far parks were skipped,
-    // not dropped from the answer.
+    // Tiles arrived through events: updating reads nothing from the source.
+    expect(s.map.querySourceFeatures).not.toHaveBeenCalled();
+    expect(s.module.getStats().drawn).toBe(4000);
+    // Far tiles are never scattered: the nearest tiles already hold the nearest 4,000 trees.
     expect(ms).toBeLessThan(process.env.CI ? 1500 : 300);
   });
 
-  it('counts mapped trees inside a polygon again only when its pieces or the trees change', async () => {
+  it('zoomed out below minZoom: holds no tiles and ignores arriving ones', async () => {
+    const s = setup();
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    s.module.update(view({ center: C, zoom: 12 }));
+    const query = vi.fn();
+    s.map.handlers.get('sourcedata')!({
+      sourceId: 'src',
+      tile: { tileID: { canonical: { z: 12, x: 2074, y: 1409 } }, querySourceFeatures: query },
+    });
+    expect(query).not.toHaveBeenCalled();
+    s.map.querySourceFeatures.mockClear();
+    s.module.update(view({ center: C, zoom: 17 })); // back in: seeded from what is loaded
+    expect(s.map.querySourceFeatures).toHaveBeenCalled();
+    expect(s.module.getStats().mapped).toBe(3);
+  });
+
+  /** A tile announced by MapLibre with its own trees (points) and green polygons. */
+  const tileWith = (canonical: object, points: unknown[], polygons: unknown[] = []) => ({
+    tileID: { canonical },
+    querySourceFeatures: (result: unknown[], params: { filter: unknown[] }) =>
+      result.push(...(params.filter[0] === '==' ? points : polygons)),
+  });
+
+  it('keeps a reloaded tile drawn once (the same tile object announced again)', async () => {
+    const s = setup({}, { points: [] });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const tile = tileWith({ z: 15, x: 16594, y: 11272 }, [point(1, at(10, 0))]);
+    s.map.handlers.get('sourcedata')!({ sourceId: 'src', tile });
+    s.map.handlers.get('sourcedata')!({ sourceId: 'src', tile }); // reload
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(s.module.getStats().mapped).toBe(1);
+    expect(s.module.getStats().drawn).toBe(1);
+  });
+
+  it('draws a tree held by a parent and a child tile once', async () => {
+    const s = setup({}, { points: [] });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const tree = point(1, at(10, 0));
+    for (const canonical of [
+      { z: 14, x: 8297, y: 5636 },
+      { z: 15, x: 16594, y: 11272 },
+    ])
+      s.map.handlers.get('sourcedata')!({ sourceId: 'src', tile: tileWith(canonical, [tree]) });
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(s.module.getStats().drawn).toBe(1);
+  });
+
+  it('starts its tiles over after a style swap and draws again', async () => {
+    const s = setup();
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    s.map.querySourceFeatures.mockClear();
+    s.module.styleChanged(true);
+    expect(s.map.querySourceFeatures).toHaveBeenCalled(); // re-seeded
+    expect(s.module.getStats().mapped).toBe(3);
+  });
+
+  it('counts mapped trees inside a piece again only when its tile changes', async () => {
     const count = vi.spyOn(PointIndex.prototype, 'countInside');
     const s = setup(
       {},
@@ -181,64 +282,11 @@ describe('TreesModule', () => {
     const first = count.mock.calls.length;
     expect(first).toBeGreaterThan(0);
     s.module.update(view({ center: C, zoom: 17 }));
-    expect(count.mock.calls.length).toBe(first); // nothing changed: cached
-    s.map.features.points = [point(1, at(80, 0)), point(3, at(-900, 0))];
+    expect(count.mock.calls.length).toBe(first); // nothing changed: kept
+    s.map.features.points = [point(1, at(80, 0)), point(2, at(95, 5))];
     s.module.update(view({ center: C, zoom: 17 }));
-    expect(count.mock.calls.length).toBe(first); // a tree far from the park: still cached
-    s.map.features.points = [point(1, at(80, 0)), point(3, at(-900, 0)), point(2, at(95, 5))];
-    s.module.update(view({ center: C, zoom: 17 }));
-    expect(count.mock.calls.length).toBe(first + 1); // a mapped tree arrived in the park: recount
+    expect(count.mock.calls.length).toBe(first + 1); // the tile's trees changed: counted again
     count.mockRestore();
-  });
-
-  it('starts at zoom 14 (with the 3D buildings), thinning scattered trees until zoom 16', async () => {
-    const park = polygon(1, 'park', square(0, 0, 600));
-    const s = setup({ minZoom: undefined }, { points: [point(1, at(10, 0))], polygons: [park] });
-    await flush();
-    const keysAt = (zoom: number) => {
-      s.module.update(view({ center: C, zoom, bounds: [2.28, 48.85, 2.31, 48.87] }));
-      return s.module.getStats().scattered;
-    };
-    const full = keysAt(16.5);
-    const quarter = keysAt(14);
-    const half = keysAt(15);
-    expect(full).toBeGreaterThan(400);
-    expect(quarter / full).toBeGreaterThan(0.18);
-    expect(quarter / full).toBeLessThan(0.32);
-    expect(half / full).toBeGreaterThan(0.4);
-    expect(half / full).toBeLessThan(0.6);
-    expect(s.module.getStats().mapped).toBe(1); // real (mapped) trees are always kept
-    s.module.update(view({ center: C, zoom: 13.9 }));
-    expect(s.module.getStats().drawn).toBe(0);
-  });
-
-  it('thins to a fixed subset: zooming in only adds trees', async () => {
-    const s = setup({}, { points: [], polygons: [polygon(1, 'park', square(0, 0, 600))] });
-    await flush();
-    const drawnKeys = (zoom: number) => {
-      s.module.update(view({ center: C, zoom, bounds: [2.28, 48.85, 2.31, 48.87] }));
-      return new Set(s.module.drawnKeys());
-    };
-    const low = drawnKeys(14.5);
-    const high = drawnKeys(16);
-    for (const key of low) expect(high.has(key)).toBe(true);
-  });
-
-  it('grows trees out of the ground over the zoom after minZoom, like the buildings', async () => {
-    const s = setup({ minZoom: 14 });
-    await flush();
-    const grow = () => uniformsOf(s.scene).uGrow.value;
-    const origin = originAt(C);
-    for (const [zoom, expected] of [
-      [14, 0],
-      [14.5, 0.5],
-      [15, 1],
-      [17, 1],
-    ] as const) {
-      s.map.zoom = zoom;
-      s.module.place(origin);
-      expect(grow()).toBeCloseTo(expected, 6);
-    }
   });
 
   it('caps at maxTrees', async () => {

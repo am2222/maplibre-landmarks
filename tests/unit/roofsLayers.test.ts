@@ -33,6 +33,7 @@ const gabled = (id: number, east: number) => ({
 /** Overture's official tiles: buildings and building parts in separate source layers. */
 function fakeMap() {
   const handlers = new Map<string, (e?: unknown) => void>();
+  const listeners = new Map<string, ((e?: unknown) => void)[]>();
   const layers: Record<
     string,
     { id: string; sourceLayer: string; paint: Record<string, unknown> }
@@ -55,8 +56,16 @@ function fakeMap() {
     layers,
     states,
     features,
-    on: vi.fn((t: string, fn: (e?: unknown) => void) => handlers.set(t, fn)),
-    off: vi.fn((t: string) => handlers.delete(t)),
+    // Several listeners per event (the module and its tile feeds); handlers.get(t) calls them all.
+    on: vi.fn((t: string, fn: (e?: unknown) => void) => {
+      listeners.set(t, [...(listeners.get(t) ?? []), fn]);
+      handlers.set(t, (e?: unknown) => [...(listeners.get(t) ?? [])].forEach((f) => f(e)));
+    }),
+    off: vi.fn((t: string, fn?: (e?: unknown) => void) => {
+      const list = (listeners.get(t) ?? []).filter((f) => f !== fn);
+      listeners.set(t, list);
+      if (!list.length) handlers.delete(t);
+    }),
     getSource: (id: string) =>
       id === 'overture' ? { vectorLayerIds: ['building', 'building_part'] } : undefined,
     querySourceFeatures: vi.fn(

@@ -16,6 +16,23 @@ implement `onAdd`, `update(view)`, `place(origin)`, optional `frame(time)` and `
 wrap it in `new ModuleLayer(id, module)`. Coordinates are metres in glTF axes (X east, Y up, Z south)
 relative to the per-frame `origin`; use `localPosition(origin, lngLat, elevation)`.
 
+## How layers use tiles
+
+Trees, water, roofs and landmark replacement build each source tile once, when MapLibre loads
+it, and keep the result until the tile goes (as MapLibre does for its own layers). A shared
+`TileFeed` (`src/core/tileFeed.ts`) turns the source into per-tile callbacks:
+
+- **Arrivals:** MapLibre's `sourcedata` event carries the loaded tile; only that tile is read
+  (`tile.querySourceFeatures`).
+- **Departures:** when the camera settles, the feed holds exactly the tiles the source's tile
+  manager renders, so tiles that left the view or were replaced on zooming are dropped.
+- **Inactive layers** (below `minZoom`, no source) suspend their feeds and hold nothing.
+
+Moving the camera then costs drawing plus a cheap selection; a new tile costs its own work.
+Both hooks are MapLibre internals. Without them the feed falls back to the public
+`map.querySourceFeatures`, grouped by tile: everything still works, as slowly as before.
+`tests/browser/tileFeed.pw.ts` fails when a MapLibre upgrade breaks the fast path.
+
 ## Releases
 
 Releases are automated with [release-please](https://github.com/googleapis/release-please).

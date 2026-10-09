@@ -10,6 +10,7 @@ import {
   WaterLayer,
   type LandmarkInfo,
 } from '../src/index';
+import { TileFeed } from '../src/core/tileFeed';
 
 setWorkerUrl(workerUrl);
 
@@ -33,6 +34,9 @@ declare global {
     __addWater(data: object): void;
     /** Add one gabled test building (GeoJSON, id 1) with roofs. */
     __addRoofs(polygon: number[][][]): RoofsLayer;
+    /** Follow a source with a TileFeed: what arrives, and what it holds after settling. */
+    __followTiles(source: string): void;
+    __tiles?: { fastPath: () => boolean; arrivals: string[]; settle: () => string[] };
     __state: { models: LandmarkInfo[]; errors: string[] };
     __map?: MlMap;
   }
@@ -174,6 +178,23 @@ window.__addRoofs = (polygon) => {
 
 window.__addFog = (options) => {
   window.__map!.addLayer(new FogLayer({ id: 'fog', minZoom: 0, ...options }));
+};
+
+window.__followTiles = (source) => {
+  const arrivals: string[] = [];
+  const feed = new TileFeed(window.__map!, {
+    source,
+    onTile: (key) => arrivals.push(key),
+    onDrop: () => {},
+  });
+  window.__tiles = {
+    fastPath: () => feed.fastPath,
+    arrivals,
+    settle: () => {
+      feed.settle();
+      return feed.keys();
+    },
+  };
 };
 
 window.__addWater = (data) => {

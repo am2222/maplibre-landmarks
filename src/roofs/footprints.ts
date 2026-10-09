@@ -73,7 +73,45 @@ function vertexAverage(rings: number[][][]): LngLat {
   return n ? [x / n, y / n] : [0, 0];
 }
 
-type Union = typeof polygonClipping.union;
+export type Union = typeof polygonClipping.union;
+
+/** Identity of a building's pieces (order-independent). */
+export const signatureOf = (pieces: number[][][][]): string =>
+  pieces
+    .map((p) => JSON.stringify(p))
+    .sort()
+    .join('|');
+
+/** A building's tile pieces unioned back into its whole footprint. */
+export function mergeFootprint(
+  key: string,
+  id: number | string,
+  pieces: number[][][][],
+  properties: Record<string, unknown>,
+  signature: string,
+  union: Union = polygonClipping.union,
+  onError?: (key: string, err: unknown) => void,
+): Footprint | undefined {
+  const [first, ...rest] = pieces as unknown as Polygon[];
+  let polygons: number[][][][];
+  try {
+    polygons = (rest.length ? union(first!, ...rest) : [first!]) as number[][][][];
+  } catch (err) {
+    // The clipper can fail on near-coincident pieces: keep the biggest one, not nothing.
+    onError?.(key, err);
+    polygons = [largest(pieces)];
+  }
+  if (!polygons.length) return undefined;
+  return {
+    id,
+    key,
+    polygons,
+    properties,
+    centroid: centroidOf(polygons),
+    terrainPoint: vertexAverage(largest(polygons)),
+    signature,
+  };
+}
 
 /** Groups vector-tile pieces by feature id and unions them back into whole footprints. */
 export class FootprintIndex {
@@ -112,34 +150,22 @@ export class FootprintIndex {
     }
     const next = new Map<string, Footprint>();
     for (const [key, g] of groups) {
-      const signature = g.pieces
-        .map((p) => JSON.stringify(p))
-        .sort()
-        .join('|');
+      const signature = signatureOf(g.pieces);
       const cached = this.cache.get(key);
       if (cached?.signature === signature) {
         next.set(key, cached);
         continue;
       }
-      const [first, ...rest] = g.pieces as unknown as Polygon[];
-      let polygons: number[][][][];
-      try {
-        polygons = (rest.length ? this.union(first!, ...rest) : [first!]) as number[][][][];
-      } catch (err) {
-        // The clipper can fail on near-coincident pieces: keep the biggest one, not nothing.
-        this.onError?.(key, err);
-        polygons = [largest(g.pieces)];
-      }
-      if (!polygons.length) continue;
-      next.set(key, {
-        id: g.id,
+      const footprint = mergeFootprint(
         key,
-        polygons,
-        properties: g.properties,
-        centroid: centroidOf(polygons),
-        terrainPoint: vertexAverage(largest(polygons)),
+        g.id,
+        g.pieces,
+        g.properties,
         signature,
-      });
+        this.union,
+        this.onError,
+      );
+      if (footprint) next.set(key, footprint);
     }
     this.cache = next;
     return next;
