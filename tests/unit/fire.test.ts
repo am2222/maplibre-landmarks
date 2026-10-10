@@ -235,7 +235,8 @@ describe('FireModule', () => {
     // A real rebuild (new data) keeps the particles' seeds: nothing jumps.
     module.setData(data);
     module.update(view({ center: [2.3, 48.857], bounds: [2.28, 48.845, 2.32, 48.87] }));
-    expect(module.uniforms.uField.value).not.toBe(field);
+    // By uuid: a failed `toBe` deep-compares the two ~1M-float textures for its hint.
+    expect(module.uniforms.uField.value!.uuid).not.toBe(field!.uuid);
     expect(module.smoke!.geometry.attributes.aSeed!.array).toEqual(seeds);
   });
 
