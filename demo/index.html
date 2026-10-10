@@ -24,6 +24,7 @@
             <button data-place="chamonix">Chamonix</button>
             <button data-place="alps">Alps · satellite</button>
             <button data-place="globe">Globe</button>
+            <button data-place="fire">Wildfire</button>
           </div>
           <div class="row">
             <label
@@ -74,6 +75,7 @@
           <button data-tab="clouds">Clouds</button>
           <button data-tab="rain">Rain</button>
           <button data-tab="snow">Snow</button>
+          <button data-tab="fire">Fire</button>
         </nav>
 
         <div class="layer-controls">
@@ -338,6 +340,39 @@
               <input id="snow-settle" type="range" min="0" max="120" step="5" value="40"
             /></label>
             <p class="stats" id="snow-stats"></p>
+          </section>
+
+          <section class="controls" data-controls="fire">
+            <label class="switch"><input type="checkbox" data-toggle="fire" /> Show fire</label>
+            <div class="row">
+              <label
+                >Wind <output></output>
+                <input id="fire-wind" type="range" min="0" max="15" step="0.5" value="5"
+              /></label>
+              <label
+                >From <output></output>
+                <input id="fire-wind-dir" type="range" min="0" max="359" step="1" value="225"
+              /></label>
+            </div>
+            <div class="row">
+              <label
+                >Spread <output></output>
+                <input id="fire-rate" type="range" min="0" max="30" step="0.5" value="6"
+              /></label>
+              <label
+                >Front depth <output></output>
+                <input id="fire-depth" type="range" min="10" max="150" step="5" value="60"
+              /></label>
+            </div>
+            <div class="row">
+              <button type="button" id="fire-play" class="pill">Pause</button>
+              <button type="button" id="fire-reset" class="pill">Reset to mapped</button>
+            </div>
+            <p class="hint">
+              Three sample perimeters near Topanga (the Wildfire place). Turn terrain on to see
+              fronts climb the hills faster.
+            </p>
+            <p class="stats" id="fire-stats"></p>
           </section>
         </div>
       </div>

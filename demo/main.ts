@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { Protocol } from 'pmtiles';
 import {
   CloudsLayer,
+  FireLayer,
   FogLayer,
   LabelOcclusion,
   LandmarksLayer,
@@ -19,6 +20,7 @@ import {
   type Theme,
   type TreeSeason,
 } from '../src/index';
+import { FIRE_CENTER, sampleFires } from './fires';
 import { $, initCollapse, initTabs, range, syncTabDots, toggle } from './panel';
 import {
   firstPointLabel,
@@ -112,6 +114,7 @@ let fog: FogLayer | undefined;
 let clouds: CloudsLayer | undefined;
 let rain: RainLayer | undefined;
 let snow: SnowLayer | undefined;
+let fire: FireLayer | undefined;
 let power: PowerLinesLayer | undefined;
 
 let occlusion: LabelOcclusion | undefined;
@@ -261,6 +264,21 @@ function addSnow() {
   map.addLayer(snow, firstSymbol());
 }
 
+/** Under the 3D layers: buildings and trees stand in front of the flames. */
+function addFire() {
+  remove('fire');
+  fire = new FireLayer({
+    id: 'fire',
+    data: sampleFires(),
+    frontDepth: fireDepth.value(),
+    rate: fireRate.value(),
+    wind: { speed: fireWind.value(), directionDeg: fireWindDir.value() },
+    playing: firePlaying,
+    onError: (err) => console.warn('[fire]', err),
+  });
+  map.addLayer(fire, before3D());
+}
+
 /** Above the 3D layers and the fog: the shadows darken them, the clouds hang over them. */
 function addClouds() {
   remove('clouds');
@@ -292,6 +310,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   clouds: { add: addClouds, id: () => 'clouds' },
   rain: { add: addRain, id: () => 'rain' },
   snow: { add: addSnow, id: () => 'snow' },
+  fire: { add: addFire, id: () => 'fire' },
   power: { add: addPower, id: () => 'power' },
   labels: { add: addLabels, id: () => occlusion?.id },
 };
@@ -397,6 +416,33 @@ $<HTMLInputElement>('rain-lightning').onchange = () =>
     $<HTMLInputElement>('rain-lightning').checked ? { intervalS: rainInterval.value() } : false,
   );
 $('rain-strike').addEventListener('click', () => rain?.strike());
+let firePlaying = true;
+const fireWind = range(
+  'fire-wind',
+  (v) => fire?.setWind({ speed: v }),
+  (v) => `${v} m/s`,
+);
+const fireWindDir = range('fire-wind-dir', (v) => fire?.setWind({ directionDeg: v }), degrees);
+const fireRate = range(
+  'fire-rate',
+  (v) => fire?.setRate(v),
+  (v) => `${v} m/min`,
+);
+// Fixed at construction: rebuilds the layer when let go.
+const fireDepth = range(
+  'fire-depth',
+  () => {},
+  (v) => `${v} m`,
+);
+$('fire-depth').addEventListener('change', () => {
+  if (toggle('fire').checked) addFire();
+});
+$('fire-play').addEventListener('click', () => {
+  firePlaying = !firePlaying;
+  $('fire-play').textContent = firePlaying ? 'Pause' : 'Play';
+  fire?.setPlaying(firePlaying);
+});
+$('fire-reset').addEventListener('click', () => fire?.resetSpread());
 const snowIntensity = range(
   'snow-intensity',
   (v) => snow?.setIntensity(v),
@@ -611,6 +657,13 @@ const PLACES: Record<string, Place> = {
     terrain: true,
     fog: 450,
   },
+  fire: {
+    view: { center: FIRE_CENTER, zoom: 13.2, bearing: 20, pitch: 68 },
+    basemap: 'satellite',
+    projection: 'mercator',
+    terrain: true,
+    fog: false,
+  },
   globe: {
     view: { center: [6.9, 45.9], zoom: 2.2, bearing: 0, pitch: 0 },
     projection: 'globe',
@@ -671,6 +724,11 @@ setInterval(() => {
     ss && toggle('snow').checked
       ? `${ss.flakes.toLocaleString()} flakes · roofs ${Math.round(ss.cover * 100)}% covered`
       : '';
+  const fs = fire?.getStats();
+  $('fire-stats').textContent =
+    fs && toggle('fire').checked
+      ? `${fs.fires} fires · ${Math.round(fs.mappedHa)} ha mapped · T+${Math.floor(fs.elapsedMin / 60)}:${String(Math.floor(fs.elapsedMin % 60)).padStart(2, '0')} · +${Math.round(fs.spreadM)} m · update ${fs.updateMs.toFixed(0)} ms`
+      : '';
   const w = water?.getStats();
   $('water-stats').textContent =
     w && toggle('water').checked
@@ -696,5 +754,8 @@ renderModels(models);
   },
   get snow() {
     return snow;
+  },
+  get fire() {
+    return fire;
   },
 };
