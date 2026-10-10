@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.3.0...maplibre-landmarks-v0.4.0) (2026-10-10)
+
+
+### Features
+
+* **fire:** add fire simulation shaders and unit tests for fire module ([e06e748](https://github.com/am2222/maplibre-landmarks/commit/e06e7483ea1c1f93132f6505eeece21aca31f1ef))
+
+
+### Bug Fixes
+
+* **fire:** update fire module test to compare texture UUIDs ([760c790](https://github.com/am2222/maplibre-landmarks/commit/760c79022ebfded77ffa285617c52ca7153c5991))
+
 ## [0.3.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.2.0...maplibre-landmarks-v0.3.0) (2026-10-09)
 
 
