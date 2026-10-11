@@ -67,4 +67,13 @@ describe('mergeFootprint', () => {
     expect(fp.terrainPoint[0]).toBeCloseTo((0.004 * 2) / 7, 9);
     expect(fp.centroid[0]).toBeCloseTo(0.002, 9);
   });
+
+  it('keeps the centroid of a small part far from (0, 0) on the part', () => {
+    // A 1.5 m roof turret in Bavaria: raw lng/lat products cancel catastrophically.
+    const [w, s] = [11.31901, 48.979136];
+    const [dx, dy] = [1.5 / 73_000, 1.5 / 111_320];
+    const fp = merge([box(w, s, w + dx, s + dy)]);
+    expect(fp.centroid[0]).toBeCloseTo(w + dx / 2, 9);
+    expect(fp.centroid[1]).toBeCloseTo(s + dy / 2, 9);
+  });
 });

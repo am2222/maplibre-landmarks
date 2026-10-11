@@ -17,27 +17,31 @@ export interface Footprint {
   signature: string;
 }
 
-/** Area-weighted centroid of the outer rings. */
+/**
+ * Area-weighted centroid of the outer rings. Measured from the first vertex: raw lng/lat
+ * products cancel catastrophically for small parts far from (0, 0), throwing a 1.5 m turret's
+ * centroid hundreds of metres off (and past the far cutoff).
+ */
 function centroidOf(polygons: number[][][][]): LngLat {
+  const [ox, oy] = (polygons[0]?.[0]?.[0] ?? [0, 0]) as [number, number];
   let a = 0;
   let x = 0;
   let y = 0;
   for (const rings of polygons) {
     const r = rings[0] ?? [];
     for (let i = 0; i + 1 < r.length; i++) {
-      const [x0, y0] = r[i] as [number, number];
-      const [x1, y1] = r[i + 1] as [number, number];
+      const x0 = r[i]![0]! - ox;
+      const y0 = r[i]![1]! - oy;
+      const x1 = r[i + 1]![0]! - ox;
+      const y1 = r[i + 1]![1]! - oy;
       const k = x0 * y1 - x1 * y0;
       a += k;
       x += (x0 + x1) * k;
       y += (y0 + y1) * k;
     }
   }
-  if (Math.abs(a) < 1e-18) {
-    const r = polygons[0]?.[0] ?? [[0, 0]];
-    return r[0] as LngLat;
-  }
-  return [x / (3 * a), y / (3 * a)];
+  if (Math.abs(a) < 1e-18) return [ox, oy];
+  return [ox + x / (3 * a), oy + y / (3 * a)];
 }
 
 function ringArea(ring: number[][]): number {
