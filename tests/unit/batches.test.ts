@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BoxGeometry, InstancedMesh, Matrix4, MeshBasicMaterial, Vector3 } from 'three';
+import {
+  BoxGeometry,
+  InstancedBufferAttribute,
+  InstancedMesh,
+  Matrix4,
+  MeshBasicMaterial,
+  Vector3,
+} from 'three';
 import { TreeBatches } from '../../src/trees/batches';
 import { prepareVariant, type PreparedModel } from '../../src/trees/models/prepare';
 import type { PlacedTree } from '../../src/trees/select';
@@ -55,6 +62,22 @@ describe('TreeBatches', () => {
     expect(p.x).toBeCloseTo(100, 0);
     expect(new Vector3().setFromMatrixScale(m).x).toBeCloseTo(2, 5);
     expect(v1!.geometry.getAttribute('aTint').getX(0)).toBe(0.25);
+  });
+
+  it('uploads only the instances written, and nothing for empty meshes', () => {
+    const b = new TreeBatches(new MeshBasicMaterial(), 1000);
+    b.setModels([model('a', 2)]);
+    const [v0, v1] = b.group.children as InstancedMesh[];
+    const before = v0!.instanceMatrix.version;
+    b.write([tree({ key: '1', variant: 1 }), tree({ key: '2', variant: 1 })], C);
+    expect(v0!.instanceMatrix.version).toBe(before); // drew nothing, sends nothing
+    expect(v1!.instanceMatrix.updateRanges).toEqual([{ start: 0, count: 2 * 16 }]);
+    for (const name of ['aTint', 'aPhase', 'aBorn'])
+      expect((v1!.geometry.getAttribute(name) as InstancedBufferAttribute).updateRanges).toEqual([
+        { start: 0, count: 2 },
+      ]);
+    b.write([tree({ key: '1', variant: 1 })], C);
+    expect(v1!.instanceMatrix.updateRanges).toEqual([{ start: 0, count: 16 }]);
   });
 
   it('adds terrain elevation and clamps to capacity', () => {

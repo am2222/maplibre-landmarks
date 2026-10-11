@@ -26,6 +26,11 @@ export interface TreesWind {
   strength?: number;
   /** Where the wind blows from, degrees clockwise from north. */
   directionDeg?: number;
+  /**
+   * Frame rate of the sway while nothing else redraws the map (default 30): each sway frame
+   * redraws the whole map. 0: every frame the browser offers.
+   */
+  fps?: number;
 }
 
 export interface TreesOptions {
@@ -157,6 +162,7 @@ export class TreesModule implements LayerModule {
     this.wind = {
       strength: opts.wind?.strength ?? 1,
       directionDeg: opts.wind?.directionDeg ?? 250,
+      fps: opts.wind?.fps ?? 30,
     };
     this.themeOption = opts.theme;
     this.density = clamp01(opts.density ?? 0.6);
@@ -305,13 +311,17 @@ export class TreesModule implements LayerModule {
     this.batches.group.updateMatrixWorld(true);
   }
 
-  frame(timeMs: number): boolean {
+  frame(timeMs: number): boolean | number {
     const t = timeMs / 1000;
     this.look.uniforms.uTime.value = t;
     const turning = this.stepSeason(timeMs);
     if (!(this.batches?.drawn ?? 0)) return false;
     const rising = t < this.batches!.lastBorn + this.look.uniforms.uRise.value;
-    return rising || turning || this.wind.strength > 0;
+    if (rising || turning) return true;
+    if (!(this.wind.strength > 0)) return false;
+    // The sway is slow: it need not redraw the whole map at the display's rate.
+    const fps = this.wind.fps;
+    return fps > 0 && Number.isFinite(fps) ? 1000 / fps : true;
   }
 
   themeChanged(theme: Theme): void {

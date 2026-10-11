@@ -507,6 +507,52 @@ describe('BuildingReplacement (feature-state)', () => {
     renderTiles(map, {});
     map.handlers.get('sourcedata')!({ sourceId: 'protomaps' });
     vi.advanceTimersByTime(200);
+    // Still hidden: MapLibre may take the tile back from its cache without an event.
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+    r.update([]);
+    expect(map.states.get(1)?.[FADE_STATE]).toBeUndefined();
+  });
+
+  it('keeps hiding a building through a tile swap MapLibre makes from its cache', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    const here = tileAt(2.2945, 48.85845);
+    renderTiles(map, { [here]: [building(1, 2.2945, 48.85845)] });
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    r.update([full(landmark())]);
+    // Panning away drops the tile; panning back takes it from the cache: no event either way.
+    renderTiles(map, {});
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps' });
+    vi.advanceTimersByTime(200);
+    renderTiles(map, { [here]: [building(1, 2.2945, 48.85845)] });
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+  });
+
+  it('refresh reads tiles MapLibre renders again without an event', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    renderTiles(map, {});
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    r.update([full(landmark())]);
+    renderTiles(map, { [tileAt(2.2945, 48.85845)]: [building(1, 2.2945, 48.85845)] });
+    r.refresh();
+    vi.advanceTimersByTime(200);
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+  });
+
+  it('forgets the claims of dropped tiles once their landmark leaves', () => {
+    vi.useFakeTimers();
+    const { map, target } = fakeStyle();
+    const here = tileAt(2.2945, 48.85845);
+    renderTiles(map, { [here]: [building(1, 2.2945, 48.85845)] });
+    const elsewhere = entry('z', { bounds: [2.3299, 48.8699, 2.3301, 48.8701] });
+    const r = new BuildingReplacement(target, ['buildings'], 1.5);
+    r.update([full(landmark()), full(elsewhere)]);
+    renderTiles(map, {});
+    map.handlers.get('sourcedata')!({ sourceId: 'protomaps' });
+    vi.advanceTimersByTime(200);
+    expect(map.states.get(1)?.[FADE_STATE]).toBe(1);
+    r.update([full(elsewhere)]); // the source stays followed for the other landmark
     expect(map.states.get(1)?.[FADE_STATE]).toBeUndefined();
   });
 

@@ -509,10 +509,23 @@ describe('TreesModule', () => {
     expect(s.module.frame(1000)).toBe(false); // nothing drawn yet
     s.module.update(view({ center: C, zoom: 17 }));
     await flush();
-    expect(s.module.frame(2000)).toBe(true);
+    expect(s.module.frame(2000)).toBeTruthy(); // a frame now, or after the wind's frame time
     expect(uniformsOf(s.scene).uTime.value).toBe(2);
     s.module.setWind({ strength: 0 });
     expect(s.module.frame(3000)).toBe(false);
+  });
+
+  it('sways at the wind frame rate once nothing else animates', async () => {
+    const s = setup({ riseMs: 400 });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const now = performance.now();
+    expect(s.module.frame(now)).toBe(true); // rising: every frame
+    expect(s.module.frame(now + 1000)).toBeCloseTo(1000 / 30, 6); // standing, swaying: 30 fps
+    s.module.setWind({ fps: 10 });
+    expect(s.module.frame(now + 2000)).toBeCloseTo(100, 6);
+    s.module.setWind({ fps: 0 }); // as often as the map draws
+    expect(s.module.frame(now + 3000)).toBe(true);
   });
 
   it('starts in summer with snow on, or in the season given', async () => {
