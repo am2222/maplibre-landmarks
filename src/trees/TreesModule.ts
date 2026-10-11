@@ -104,11 +104,22 @@ const DEFAULT_WEIGHTS: Record<string, number> = { deciduous: 0.6, conifer: 0.2, 
 const DEFAULT_SCATTER: Record<string, number> = { forest: 1 / 120, wood: 1 / 120, park: 1 / 400 };
 const SOURCE_DEBOUNCE_MS = 200;
 const SEASON_DURATION_MS = 1500;
+/**
+ * Season steps below this (about two days of the year) are not visible: they apply at once, with
+ * one redraw, instead of easing (an animation redraws the whole map every frame).
+ */
+const UNSEEN_SEASON_STEP = 0.02;
 
 export interface SeasonTransition {
   /** Milliseconds to ease into the new season, moving forward through the year (default 1500). */
   durationMs?: number;
 }
+
+/** Distance between two times of year, either way round (0 to 2). */
+const seasonGap = (a: number, b: number) => {
+  const d = wrapSeason(b - a);
+  return Math.min(d, 4 - d);
+};
 
 const inBounds = ([lng, lat]: LngLat, [w, s, e, n]: Bounds) =>
   lng >= w && lng <= e && lat >= s && lat <= n;
@@ -154,6 +165,8 @@ export class TreesModule implements LayerModule {
   private season: TreeSeason;
   /** Season easing: from → to over durationMs, starting at the next frame (startMs undefined). */
   private seasonEase?: { from: number; to: number; durationMs: number; startMs?: number };
+  /** 'auto' not yet placed (no latitude before the first update): placed at once, not eased in. */
+  private autoUnplaced: boolean;
   private sourceErrorReported = false;
   private disposed = false;
   private timer?: ReturnType<typeof setTimeout>;
@@ -169,6 +182,7 @@ export class TreesModule implements LayerModule {
     this.look.setWind(this.wind.strength, this.wind.directionDeg);
     this.look.uniforms.uRise.value = Math.max(0, opts.riseMs ?? 400) / 1000;
     this.season = opts.season ?? 'summer';
+    this.autoUnplaced = this.season === 'auto';
     this.look.uniforms.uSeason.value = seasonValue(this.season) ?? 1;
     this.look.uniforms.uSnow.value = opts.snow === false ? 0 : 1;
   }
@@ -192,7 +206,10 @@ export class TreesModule implements LayerModule {
 
   update(view: ViewState): void {
     this.lastView = view;
-    if (this.season === 'auto') this.easeSeason(seasonAt(new Date(), view.center[1]));
+    if (this.season === 'auto') {
+      this.easeSeason(seasonAt(new Date(), view.center[1]), this.autoUnplaced ? 0 : undefined);
+      this.autoUnplaced = false;
+    }
     const ctx = this.ctx;
     if (!ctx || !this.batches || !this.models.length) return;
     const t0 = performance.now();
@@ -412,8 +429,9 @@ export class TreesModule implements LayerModule {
       this.seasonEase = undefined;
       return;
     }
-    if (this.seasonEase && Math.abs(this.seasonEase.to - to) < 1e-6) return;
-    if (!(durationMs > 0)) {
+    // Already easing there ('auto' recomputed a moment later): let it finish.
+    if (this.seasonEase && seasonGap(this.seasonEase.to, target) < UNSEEN_SEASON_STEP) return;
+    if (!(durationMs > 0) || (!this.seasonEase && seasonGap(from, target) < UNSEEN_SEASON_STEP)) {
       this.seasonEase = undefined;
       u.value = wrapSeason(to);
     } else this.seasonEase = { from, to, durationMs };

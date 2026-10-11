@@ -576,6 +576,21 @@ describe('TreesModule', () => {
     expect(s.module.getSeason()).toBeCloseTo(0, 1); // Sydney, October: spring
   });
 
+  it("'auto' starts at today's season and does not re-animate as the clock moves on", () => {
+    vi.useFakeTimers({ now: new Date('2026-10-15T12:00:00Z'), toFake: ['Date'] });
+    const s = setup({ season: 'auto', wind: { strength: 0 } });
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(s.module.getSeason()).toBeCloseTo(2, 1); // at once, not eased in from summer
+    expect(s.module.frame(0)).toBe(false);
+    vi.setSystemTime(new Date('2026-10-15T12:10:00Z')); // a pan ten minutes later
+    s.module.update(view({ center: [C[0] + 0.01, C[1]], zoom: 17 }));
+    expect(s.module.frame(1000)).toBe(false); // nothing visible changed: no redraw loop
+    s.module.update(view({ center: [151.2, -33.9], zoom: 17 }));
+    s.module.frame(2000);
+    s.module.frame(2750);
+    expect(s.module.getSeason()).toBeCloseTo(3, 0); // another hemisphere: eases over, mid-way
+  });
+
   it('toggles snow', async () => {
     const s = setup();
     await flush();
