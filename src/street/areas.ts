@@ -11,14 +11,12 @@ const open = (ring: Vec2[]): Vec2[] => {
 
 /** A flat face over rings (outer first, then holes) at height `y`, facing up. */
 function face(b: MeshBuilder, rings: Vec2[][], y: number, colour: RGB): void {
-  const [outer, ...holes] = rings.map(open);
+  const [outer, ...holes] = rings.map((ring) => open(ring).map(([x, z]) => new Vector2(x, z)));
   if (!outer || outer.length < 3) return;
+  // three drops repeated end points from these arrays in place: index into them afterwards.
+  const triangles = ShapeUtils.triangulateShape(outer, holes);
   const vertices = [outer, ...holes].flat();
-  const triangles = ShapeUtils.triangulateShape(
-    outer.map(([x, z]) => new Vector2(x, z)),
-    holes.map((h) => h.map(([x, z]) => new Vector2(x, z))),
-  );
-  const at = (i: number): Vec3 => [vertices[i]![0], y, vertices[i]![1]];
+  const at = (i: number): Vec3 => [vertices[i]!.x, y, vertices[i]!.y];
   for (const [i, j, k] of triangles) b.triangle(at(i!), at(j!), at(k!), colour, true);
 }
 

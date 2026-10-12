@@ -6,6 +6,8 @@ import {
   type StreetFurnitureOptions,
 } from '../../src/street/StreetFurnitureModule';
 import * as pkg from '../../src/index';
+import { tileBounds } from '../../src/core/tileFeed';
+import { localPosition, originAt } from '../../src/core/mercator';
 import { view } from './helpers';
 
 const C: [number, number] = [2.3522, 48.8566];
@@ -55,6 +57,27 @@ const scaleOf = (m: InstancedMesh, i = 0) => {
   m.getMatrixAt(i, matrix);
   return new Vector3().setFromMatrixScale(matrix);
 };
+/** The z-level tile holding C and the one east of it: keys and MapLibre tile ids. */
+function tilesAround(z: number) {
+  const n = 2 ** z;
+  const x = Math.floor(((C[0] + 180) / 360) * n);
+  const r = (C[1] * Math.PI) / 180;
+  const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n);
+  const at = (tx: number) => ({ key: `${z}/${tx}/${y}`, tile: { z, x: tx, y } });
+  return [at(x), at(x + 1)] as const;
+}
+const positions = (m: Mesh) =>
+  Array.from(m.geometry.getAttribute('position').array as Float32Array);
+/** Area of the triangles lying flat at height `y` (m²). */
+function flatArea(p: number[], y: number): number {
+  let total = 0;
+  for (let i = 0; i < p.length; i += 9) {
+    if ([p[i + 1], p[i + 4], p[i + 7]].some((v) => Math.abs(v! - y) > 1e-3)) continue;
+    const [ax, az, bx, bz, cx, cz] = [p[i]!, p[i + 2]!, p[i + 3]!, p[i + 5]!, p[i + 6]!, p[i + 8]!];
+    total += Math.abs((bx - ax) * (cz - az) - (cx - ax) * (bz - az)) / 2;
+  }
+  return total;
+}
 const areasMesh = (scene: Scene) =>
   scene.getObjectByName('street-furniture')!.getObjectByName('street-areas') as Mesh;
 
@@ -269,33 +292,105 @@ describe('StreetFurnitureModule: fountains, artworks, masts, tanks and areas', (
     ]);
     module.update(view({ center: C, zoom: 17 }));
     expect(module.getStats().areas).toBe(3);
-    const y = areasMesh(scene).geometry.getAttribute('position');
-    let top = 0;
-    for (let i = 0; i < y.count; i++) top = Math.max(top, y.getY(i));
-    expect(top).toBeCloseTo(0.9, 4); // the rail platform
+    const p = positions(areasMesh(scene));
+    expect(Math.max(...p.filter((_, i) => i % 3 === 1))).toBeCloseTo(0.9, 4); // the rail platform
+    expect(flatArea(p, 0.9)).toBeCloseTo(40 * 4, -1);
+    expect(flatArea(p, 0.32)).toBeCloseTo(36, 0); // fountain water: 80% of its 0.4 m rim
+    expect(flatArea(p, 0.6)).toBeCloseTo(30 * 3, -1); // the pier line: a 3 m deck
   });
 
-  it('skips indoor and underground platforms', () => {
+  it('keeps areas where they are on the ground when the view moves', () => {
+    const { scene, module } = setup({}, [area('fountain', 0, 0, 6, 6, { height: '0.5' }, 'f1')]);
+    const world = () => {
+      // A vertex in metres from C: the mesh is laid out around the anchor (the view centre).
+      module.place({ x: 0.5, y: 0.5, scale: 1e-8 }); // any origin: compare relative to C
+      const group = scene.getObjectByName('street-furniture')!;
+      const p = areasMesh(scene).geometry.getAttribute('position');
+      const xs = Array.from({ length: p.count }, (_, i) => p.getX(i) + group.position.x);
+      return Math.min(...xs) - group.position.x + anchorEast();
+    };
+    let anchorEast = () => 0;
+    module.update(view({ center: C, zoom: 17 }));
+    const before = world();
+    const moved: [number, number] = at(150, 0); // due east: the same map scale
+    module.update(view({ center: moved, zoom: 17 }));
+    anchorEast = () => localPosition(originAt(C), moved)[0]; // the new anchor, east of C
+    expect(world()).toBeCloseTo(before, 1);
+  });
+
+  it('skips indoor, below-ground and underground platforms', () => {
     const { module } = setup({}, [
       area('platform', 0, 0, 40, 4, { railway: 'platform', indoor: 'yes' }),
-      area('platform', 0, 10, 40, 4, { subway: 'yes', level: '-3' }),
+      area('platform', 0, 10, 40, 4, { railway: 'platform', level: '-1' }),
+      area('platform', 0, 20, 40, 4, { railway: 'platform', location: 'underground' }),
+      area('platform', 0, 30, 40, 4, { railway: 'platform', level: '0' }), // drawn
     ]);
     module.update(view({ center: C, zoom: 17 }));
-    expect(module.getStats().areas).toBe(0);
+    expect(module.getStats().areas).toBe(1);
   });
 
-  it('draws an area clipped into two tiles once, from its larger piece', () => {
-    const tiled = (w: number, x: number) => ({
-      ...area('platform', 0, 0, w, 4, { railway: 'platform' }, 'p1'),
-      tile: { z: 14, x, y: 5636 },
-    });
-    const { scene, module } = setup({}, [tiled(10, 8296), tiled(40, 8297)]);
+  it('draws an area split across two tiles in full, once', () => {
+    // A 60 m platform across the edge between two z16 tiles: each tile holds all of it (its
+    // buffer reaches past the edge); drawn, the pieces meet at the edge without overlapping.
+    const [west, east] = tilesAround(16);
+    const edge = (tileBounds(east.key)[0] - C[0]) * KX;
+    // Each tile holds its own part plus 5 m of buffer past the edge, as vector tiles do.
+    const tags = { railway: 'platform' };
+    const { scene, module } = setup({}, [
+      { ...area('platform', edge - 30, 0, 35, 4, tags, 'p1'), tile: west.tile },
+      { ...area('platform', edge - 5, 0, 35, 4, tags, 'p1'), tile: east.tile },
+    ]);
     module.update(view({ center: C, zoom: 17 }));
     expect(module.getStats().areas).toBe(1);
-    const x = areasMesh(scene).geometry.getAttribute('position');
-    let span = 0;
-    for (let i = 0; i < x.count; i++) span = Math.max(span, x.getX(i) - x.getX(0));
-    expect(span).toBeGreaterThan(30); // the 40 m piece, not the 10 m one
+    const p = positions(areasMesh(scene));
+    expect(Math.abs(flatArea(p, 0.9) - 60 * 4)).toBeLessThan(2); // not 280: no overlap
+    const xs = p.filter((_, i) => i % 3 === 0);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(60, 0);
+  });
+
+  it('draws an area held at two zooms from the more detailed tiles only', () => {
+    const [west] = tilesAround(16);
+    const parent = { z: 15, x: west.tile.x >> 1, y: west.tile.y >> 1 };
+    const fountain = area('fountain', 0, 0, 6, 6, { height: '0.5' }, 'f1');
+    const { scene, module } = setup({}, [
+      { ...fountain, tile: parent },
+      { ...fountain, tile: west.tile },
+    ]);
+    module.update(view({ center: C, zoom: 17 }));
+    expect(flatArea(positions(areasMesh(scene)), 0.4)).toBeCloseTo(36, 0); // one water surface
+  });
+
+  it('draws every part of an area made of several', () => {
+    const two = area('fountain', 0, 0, 4, 4, { height: '0.5' }, 'f2');
+    (two.geometry as { type: string; coordinates: unknown }) = {
+      type: 'MultiPolygon',
+      coordinates: [two.geometry.coordinates, area('fountain', 20, 0, 4, 4).geometry.coordinates],
+    };
+    const { scene, module } = setup({}, [two]);
+    module.update(view({ center: C, zoom: 17 }));
+    expect(flatArea(positions(areasMesh(scene)), 0.4)).toBeCloseTo(32, 0);
+  });
+
+  it('sizes a tank split across two tiles from its whole outline', () => {
+    const [west, east] = tilesAround(16);
+    const edge = (tileBounds(east.key)[0] - C[0]) * KX;
+    // 30 × 30 m, two thirds west of the tile edge.
+    // Each tile holds its own part plus 5 m of buffer past the edge.
+    const tags = { height: '12' };
+    const { scene, module } = setup({}, [
+      { ...area('storage_tank', edge - 20, 0, 25, 30, tags, 't1'), tile: west.tile },
+      { ...area('storage_tank', edge - 5, 0, 15, 30, tags, 't1'), tile: east.tile },
+    ]);
+    module.update(view({ center: C, zoom: 17 }));
+    expect(module.getStats().byKind.storage_tank).toBe(1);
+    const tanks = mesh(scene, 'storage_tank');
+    expect(scaleOf(tanks).x).toBeCloseTo(Math.sqrt(900 / Math.PI), 1);
+    const m = new Matrix4();
+    tanks.getMatrixAt(0, m);
+    const at = new Vector3().setFromMatrixPosition(m);
+    // The outline's centre: 15 m east and 15 m north of its south-west corner.
+    expect(at.x).toBeCloseTo(edge - 20 + 15, 0);
+    expect(at.z).toBeCloseTo(-15, 0);
   });
 
   it('reads no areas with areas: false', () => {

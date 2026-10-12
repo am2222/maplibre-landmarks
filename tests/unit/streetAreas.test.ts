@@ -30,6 +30,13 @@ describe('street areas', () => {
     expect(flatArea(p, 0.9)).toBeCloseTo(100 - 4, 6);
   });
 
+  it('triangulates a ring closed twice (a repeated last point) with a hole correctly', () => {
+    const b = new MeshBuilder();
+    const outer: Vec2[] = [...square(10), [0, 0], [0, 0]];
+    slab(b, [outer, square(2, 4, 4)], 1, [0.5, 0.5, 0.5]);
+    expect(flatArea(b.build().positions, 1)).toBeCloseTo(100 - 4, 6);
+  });
+
   it('builds a basin: a rim of its height around water a little below it', () => {
     const b = new MeshBuilder();
     basin(b, [square(6)], 0.5, 0.4, [0.6, 0.6, 0.6], [0.2, 0.4, 0.6]);

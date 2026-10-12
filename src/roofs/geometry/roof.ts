@@ -35,13 +35,13 @@ function pitchRun(shape: string, frame: Pick<RoofFrame, 'L' | 'W'>): number {
 
 /**
  * Spec section 3: explicit heights (or pitches) fill up to the span; defaults are capped at half
- * of it.
+ * of it. A roof standing on top of its walls (`roofAbove`) is not inside them: no cap.
  */
 export function resolveRoofHeight(
   props: RoofProps,
   frame: Pick<RoofFrame, 'L' | 'W'>,
 ): number | null {
-  const span = props.height - props.minHeight;
+  const span = props.roofAbove ? Infinity : props.height - props.minHeight;
   if (props.roofHeight !== undefined) return Math.min(props.roofHeight, span);
   if (props.roofAngle !== undefined && !ROUNDED.has(props.shape)) {
     const fromAngle = Math.tan((props.roofAngle * Math.PI) / 180) * pitchRun(props.shape, frame);

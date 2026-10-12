@@ -138,6 +138,9 @@ export interface RoofProps {
   wallColor: string;
 }
 
+/** Walls of a building whose height cannot be read, metres (`buildingHeight`'s fallback). */
+const FALLBACK_HEIGHT_M = 10;
+
 const num = (v: unknown): number | undefined => {
   // OSM sometimes writes decimals with a comma ("3,5").
   const n =
@@ -187,16 +190,15 @@ export function readRoofProps(
   const roofHeight = num(p[fields.roof_height]);
   // Without heights, floor counts: walls of FLOOR_M a floor, a tagged roof on top.
   const floors = num(p[fields.num_floors]);
+  // A height that is there but unreadable takes the walls' fallback (`buildingHeight`).
+  const tagged = p[fields.height] !== undefined && p[fields.height] !== null;
   const height =
-    num(p[fields.height]) ??
+    (tagged ? (num(p[fields.height]) ?? FALLBACK_HEIGHT_M) : undefined) ??
     (floors !== undefined && floors > 0
       ? floors * FLOOR_M + (roofHeight !== undefined && roofHeight > 0 ? roofHeight : 0)
       : undefined);
   const roofAbove =
-    num(p[fields.height]) === undefined &&
-    floors !== undefined &&
-    floors > 0 &&
-    !(roofHeight !== undefined && roofHeight > 0);
+    !tagged && floors !== undefined && floors > 0 && !(roofHeight !== undefined && roofHeight > 0);
   const minFloor = num(p[fields.min_floor]);
   const minHeight = num(p[fields.min_height]) ?? (minFloor !== undefined ? minFloor * FLOOR_M : 0);
   if (height === undefined || !(height > minHeight)) return null;
@@ -228,7 +230,10 @@ export function readRoofProps(
  * plus a tagged roof, else `fallback` metres. The same heights `readRoofProps` uses, so roofs
  * sit on their walls.
  */
-export function buildingHeight(fields: Fields = DEFAULT_FIELDS, fallback = 10): unknown[] {
+export function buildingHeight(
+  fields: Fields = DEFAULT_FIELDS,
+  fallback = FALLBACK_HEIGHT_M,
+): unknown[] {
   const floors = ['to-number', ['get', fields.num_floors], 0];
   return [
     'case',

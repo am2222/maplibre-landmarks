@@ -66,11 +66,11 @@ interface Drawn {
   built: BuiltRoof;
 }
 
-/** Real roof shapes on top of an app's fill-extrusion buildings. */
 /** How far a building's walls are shortened for its roof (none when the roof stands on top). */
 const wallCut = ({ props, built }: Pick<Drawn, 'props' | 'built'>): number =>
   props.roofAbove ? 0 : built.roofHeight;
 
+/** Real roof shapes on top of an app's fill-extrusion buildings. */
 export class RoofsModule implements LayerModule {
   private ctx?: ModuleContext;
   /** Our paint wrappers, by extrusion layer id. */

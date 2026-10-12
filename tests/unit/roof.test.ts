@@ -36,6 +36,15 @@ describe('resolveRoofHeight', () => {
     expect(resolveRoofHeight(props({ height: 0.8 }), frame)).toBeNull();
   });
 
+  it('does not cap a roof standing on top of its walls by the wall height', () => {
+    // A 1-floor building (3 m): within the walls a roof could take at most 3 m (half for
+    // defaults); standing on top it takes its full pitch over the 10 m half-width.
+    const above = { height: 3, roofAbove: true };
+    expect(resolveRoofHeight(props({ ...above, roofAngle: 45 }), frame)).toBeCloseTo(10, 9);
+    expect(resolveRoofHeight(props(above), frame)).toBeCloseTo(10 * TAN_30, 9);
+    expect(resolveRoofHeight(props({ height: 3, roofAngle: 45 }), frame)).toBe(3); // within
+  });
+
   it("derives the height from roof_angle over each shape's run; roof_height wins", () => {
     const tan = (deg: number) => Math.tan((deg * Math.PI) / 180);
     expect(resolveRoofHeight(props({ roofAngle: 45 }), frame)).toBeCloseTo(10, 9);

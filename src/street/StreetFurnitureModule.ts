@@ -11,12 +11,13 @@ import {
   Quaternion,
   Vector3,
 } from 'three';
+import polygonClipping, { type Polygon } from 'polygon-clipping';
 import { farCutoffM, tileNearestM } from '../core/cutoff';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
 import { localPosition, originAt } from '../core/mercator';
-import { TileFeed, type FeedFeature, type FeedMap } from '../core/tileFeed';
+import { TileFeed, tileBounds, type FeedFeature, type FeedMap } from '../core/tileFeed';
 import type { LngLat, Origin, ViewState } from '../core/types';
-import { MeshBuilder, type RGB } from '../roofs/geometry/mesh';
+import { MeshBuilder, type RGB, type RoofMesh } from '../roofs/geometry/mesh';
 import { basin, slab, strip, type Vec2 } from './areas';
 import {
   directionDeg,
@@ -65,17 +66,26 @@ interface Prop {
 }
 
 type AreaClass = 'fountain' | 'platform' | 'pier';
+type Bbox = [number, number, number, number];
 
-/** A fountain basin, platform or pier: an outline (rings) or a line (piers). */
+/**
+ * One tile's piece of a fountain basin, platform, pier or tank outline, clipped to the tile's own
+ * bounds: the pieces of an area from neighbouring tiles meet at their edges without overlapping.
+ */
 interface Area {
-  cls: AreaClass;
+  cls: AreaClass | 'tank';
   id?: string;
   rings?: LngLat[][];
   line?: LngLat[];
   centre: LngLat;
-  /** Square metres (or the length for lines): the biggest clipped piece of an area wins. */
+  /** Square metres (outlines): tank pieces add up to the whole tank. */
   size: number;
+  /** Zoom of the tile it came from: of an area held at two zooms, the more detailed tiles win. */
+  z: number;
+  bbox: Bbox;
   tags: Record<string, unknown>;
+  /** Its mesh around its own centre, built on first draw. */
+  built?: RoofMesh;
 }
 
 const AREA_CLASSES: AreaClass[] = ['fountain', 'platform', 'pier'];
@@ -102,6 +112,79 @@ const hidden = (tags: Record<string, unknown>) =>
   String(tags.indoor ?? '') === 'yes' ||
   String(tags.location ?? '') === 'underground' ||
   (Number.parseFloat(String(tags.level ?? '0')) || 0) < 0;
+
+const bboxOf = (points: LngLat[]): Bbox => {
+  const b: Bbox = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [x, y] of points) {
+    b[0] = Math.min(b[0], x);
+    b[1] = Math.min(b[1], y);
+    b[2] = Math.max(b[2], x);
+    b[3] = Math.max(b[3], y);
+  }
+  return b;
+};
+
+/** A polygon cut to a tile's bounds (several polygons where it leaves and comes back). */
+function clipPolygon(rings: LngLat[][], b: Bbox | undefined): LngLat[][][] {
+  if (!b) return [rings];
+  const [w, s, e, n] = b;
+  const box: Polygon = [
+    [
+      [w, s],
+      [e, s],
+      [e, n],
+      [w, n],
+      [w, s],
+    ],
+  ];
+  try {
+    return polygonClipping.intersection(rings as Polygon, box) as LngLat[][][];
+  } catch {
+    return [rings];
+  }
+}
+
+/** A line cut to a tile's bounds (Liang–Barsky per segment), as the runs inside it. */
+function clipLine(line: LngLat[], b: Bbox | undefined): LngLat[][] {
+  if (!b) return [line];
+  const [w, s, e, n] = b;
+  const runs: LngLat[][] = [];
+  let run: LngLat[] = [];
+  for (let i = 0; i + 1 < line.length; i++) {
+    const [x0, y0] = line[i]!;
+    const [x1, y1] = line[i + 1]!;
+    const [dx, dy] = [x1 - x0, y1 - y0];
+    let t0 = 0;
+    let t1 = 1;
+    let inside = true;
+    for (const [p, q] of [
+      [-dx, x0 - w],
+      [dx, e - x0],
+      [-dy, y0 - s],
+      [dy, n - y0],
+    ] as const) {
+      if (p === 0) {
+        if (q < 0) inside = false;
+      } else if (p < 0) t0 = Math.max(t0, q / p);
+      else t1 = Math.min(t1, q / p);
+    }
+    if (!inside || t0 > t1) {
+      if (run.length > 1) runs.push(run);
+      run = [];
+      continue;
+    }
+    const a: LngLat = [x0 + dx * t0, y0 + dy * t0];
+    const c: LngLat = [x0 + dx * t1, y0 + dy * t1];
+    const last = run.at(-1);
+    if (!last || last[0] !== a[0] || last[1] !== a[1]) {
+      if (run.length > 1) runs.push(run);
+      run = [a];
+    }
+    run.push(c);
+  }
+  if (run.length > 1) runs.push(run);
+  return runs;
+}
 
 /** Shoelace area (m²) and centroid of an outer ring in lng/lat. */
 function ringArea(ring: LngLat[]): { area: number; centre: LngLat } {
@@ -236,7 +319,7 @@ export class StreetFurnitureModule implements LayerModule {
     }
     if (!hasSource || view.zoom < (this.options.minZoom ?? 16)) {
       this.feed?.suspend();
-      this.draw(view, [], []);
+      this.draw(view, [], [], 0);
       return;
     }
     this.feedFor(ctx).settle();
@@ -264,16 +347,53 @@ export class StreetFurnitureModule implements LayerModule {
         .slice(0, this.maxPerKind)
         .map(({ p }) => p),
     );
-    // An area is clipped into every tile holding it: keep its biggest piece.
-    const areas = new Map<string, Area>();
+    // Every tile holding an area has its own piece of it: keep all the pieces from the most
+    // detailed tiles (a parent and its children are both held while zooming).
+    const byArea = new Map<string, Area[]>();
+    let loose = 0;
     for (const tile of this.tiles.values())
       for (const a of tile.areas) {
-        const key = a.id ?? `${a.cls}|${a.centre[0].toFixed(7)},${a.centre[1].toFixed(7)}`;
-        const known = areas.get(key);
-        if (!known || a.size > known.size) areas.set(key, a);
+        const key = a.id ?? `#${loose++}`;
+        const list = byArea.get(key);
+        if (!list || a.z > list[0]!.z) byArea.set(key, [a]);
+        else if (a.z === list[0]!.z) list.push(a);
       }
-    const nearAreas = [...areas.values()].filter((a) => distance(a.centre) <= cutoff);
-    this.draw(view, chosen, nearAreas);
+    // Nearest point of a piece's bounds: a long platform shows while either end is near.
+    const near = ({ bbox: [w, s, e, n] }: Area) =>
+      distance([
+        Math.min(Math.max(view.center[0], w), e),
+        Math.min(Math.max(view.center[1], s), n),
+      ]) <= cutoff;
+    const tanks: Prop[] = [];
+    const nearAreas: Area[] = [];
+    let areaCount = 0;
+    for (const pieces of byArea.values()) {
+      const first = pieces[0]!;
+      if (first.cls === 'tank') {
+        // One cylinder of the whole outline: its total area at the area-weighted centre.
+        const area = pieces.reduce((t, a) => t + a.size, 0);
+        const centre: LngLat = [
+          pieces.reduce((t, a) => t + a.centre[0] * a.size, 0) / area,
+          pieces.reduce((t, a) => t + a.centre[1] * a.size, 0) / area,
+        ];
+        const r = Math.sqrt(area / Math.PI);
+        if (r > 0.5 && distance(centre) <= cutoff)
+          tanks.push({
+            kind: 'storage_tank',
+            ...(first.id ? { id: first.id } : {}),
+            lngLat: centre,
+            facing: 0,
+            scale: [r, num(first.tags.height) ?? 8, r],
+          });
+        continue;
+      }
+      const shown = pieces.filter(near);
+      if (shown.length) areaCount++;
+      nearAreas.push(...shown);
+    }
+    const tankRoom = this.maxPerKind - chosen.filter((p) => p.kind === 'storage_tank').length;
+    chosen.push(...tanks.slice(0, Math.max(0, tankRoom)));
+    this.draw(view, chosen, nearAreas, areaCount);
   }
 
   /** The terrain's elevation tiles arrived: stand the props on the ground they now have. */
@@ -293,7 +413,7 @@ export class StreetFurnitureModule implements LayerModule {
         this.options.farCutoff === false ||
         tileNearestM(key, this.view.center) <= farCutoffM(this.view),
       onTile: (key, features) => {
-        this.tiles.set(key, this.read(features));
+        this.tiles.set(key, this.read(key, features));
         this.schedule();
       },
       onDrop: (key) => {
@@ -310,10 +430,36 @@ export class StreetFurnitureModule implements LayerModule {
     return [...new Set<string>([...this.kinds, ...areas])];
   }
 
-  private read(features: FeedFeature[]): { props: Prop[]; areas: Area[] } {
+  private read(key: string, features: FeedFeature[]): { props: Prop[]; areas: Area[] } {
     const props: Prop[] = [];
     const areas: Area[] = [];
     const areasOn = this.options.areas !== false;
+    // GeoJSON sources come as one piece ('*'): nothing to cut.
+    const tile = key === '*' ? undefined : tileBounds(key);
+    const z = key === '*' ? 0 : Number(key.split('/')[0]);
+    const piece = (
+      cls: Area['cls'],
+      id: string | undefined,
+      tags: Record<string, unknown>,
+      rings: LngLat[][] | undefined,
+      line?: LngLat[],
+    ) => {
+      const outline = rings?.[0];
+      const { area, centre } = outline
+        ? ringArea(outline)
+        : { area: 0, centre: line![Math.floor(line!.length / 2)]! };
+      if (outline && !(area > 0)) return;
+      areas.push({
+        cls,
+        ...(id ? { id } : {}),
+        ...(rings ? { rings } : { line: line! }),
+        centre,
+        size: area,
+        z,
+        bbox: bboxOf(outline ?? line!),
+        tags,
+      });
+    };
     for (const f of features) {
       const cls = String(f.properties?.class);
       const tags = tagsOf(f);
@@ -339,51 +485,23 @@ export class StreetFurnitureModule implements LayerModule {
           scale,
         });
       } else if (cls === 'storage_tank' && polygons.length && this.kinds.includes('storage_tank')) {
-        // A tank's outline: a cylinder of the same area at its centre.
+        // A tank's outline: pieces now, one cylinder of their total area once they are gathered.
         if (!propScale('storage_tank', tags)) continue;
-        const { area, centre } = ringArea(polygons[0]![0] ?? []);
-        const r = Math.sqrt(area / Math.PI);
-        if (!(r > 0.5)) continue;
-        props.push({
-          kind: 'storage_tank',
-          ...(id ? { id } : {}),
-          lngLat: centre,
-          facing: 0,
-          scale: [r, num(tags.height) ?? 8, r],
-        });
+        for (const rings of polygons)
+          for (const cut of clipPolygon(rings, tile)) piece('tank', id, tags, cut);
       } else if (areasOn && AREA_CLASSES.includes(cls as AreaClass)) {
         const areaCls = cls as AreaClass;
         if (areaCls === 'platform' && hidden(tags)) continue;
-        for (const rings of polygons) {
-          const { area, centre } = ringArea(rings[0] ?? []);
-          if (area > 0)
-            areas.push({ cls: areaCls, ...(id ? { id } : {}), rings, centre, size: area, tags });
-        }
+        for (const rings of polygons)
+          for (const cut of clipPolygon(rings, tile)) piece(areaCls, id, tags, cut);
         // Piers mapped as lines become decks; platform lines are bus stops (not drawn here).
         if (areaCls === 'pier' && (type === 'LineString' || type === 'MultiLineString')) {
           const lines =
             type === 'LineString'
               ? [f.geometry.coordinates as LngLat[]]
               : (f.geometry.coordinates as LngLat[][]);
-          for (const line of lines) {
-            if (line.length < 2) continue;
-            const mid = line[Math.floor(line.length / 2)]!;
-            const k = M_PER_DEG * Math.cos((mid[1] * Math.PI) / 180);
-            let length = 0;
-            for (let i = 1; i < line.length; i++)
-              length += Math.hypot(
-                (line[i]![0] - line[i - 1]![0]) * k,
-                (line[i]![1] - line[i - 1]![1]) * M_PER_DEG,
-              );
-            areas.push({
-              cls: 'pier',
-              ...(id ? { id } : {}),
-              line,
-              centre: mid,
-              size: length,
-              tags,
-            });
-          }
+          for (const line of lines)
+            for (const cut of clipLine(line, tile)) piece('pier', id, tags, undefined, cut);
         }
       }
     }
@@ -391,7 +509,7 @@ export class StreetFurnitureModule implements LayerModule {
   }
 
   /** Write the chosen props into their meshes, around the view centre. */
-  private draw(view: ViewState, chosen: Prop[], areas: Area[]): void {
+  private draw(view: ViewState, chosen: Prop[], areas: Area[], areaCount: number): void {
     const ctx = this.ctx!;
     this.anchor = view.center;
     const origin = originAt(this.anchor);
@@ -419,7 +537,7 @@ export class StreetFurnitureModule implements LayerModule {
       if (mesh.count) byKind[kind] = mesh.count;
     }
     this.drawAreas(areas, origin, ground);
-    this.stats = { total: chosen.length, byKind, areas: this.areasMesh ? areas.length : 0 };
+    this.stats = { total: chosen.length, byKind, areas: this.areasMesh ? areaCount : 0 };
     ctx.requestRepaint();
   }
 
@@ -430,33 +548,15 @@ export class StreetFurnitureModule implements LayerModule {
     const positions: number[] = [];
     const normals: number[] = [];
     const colors: number[] = [];
-    const local = (p: LngLat): Vec2 => {
-      const [x, , z] = localPosition(origin, p, 0);
-      return [x, z];
-    };
     for (const a of areas) {
-      const b = new MeshBuilder();
-      const rings = a.rings?.map((ring) => ring.map(local));
-      if (a.cls === 'fountain' && rings) {
-        const rim = num(a.tags.height) ?? 0.5;
-        basin(b, rings, rim, rim * 0.8, STONE, WATER);
-      } else if (a.cls === 'platform' && rings) {
-        const rail = a.tags.railway === 'platform' || a.tags.train === 'yes';
-        slab(b, rings, rail ? 0.9 : 0.2, rail ? RAIL_PLATFORM : BUS_PLATFORM);
-      } else if (a.cls === 'pier') {
-        if (rings) slab(b, rings, 0.6, DECK);
-        else if (a.line) strip(b, a.line.map(local), 3, 0.6, DECK);
-      }
-      const built = b.build();
-      const lift = ground(a.centre);
-      for (let i = 0; i < built.positions.length; i += 3)
-        positions.push(
-          built.positions[i]!,
-          built.positions[i + 1]! + lift,
-          built.positions[i + 2]!,
-        );
-      normals.push(...built.normals);
-      colors.push(...built.colors);
+      // Built once per piece around its own centre; moved to the anchor on every draw.
+      const built = (a.built ??= buildArea(a));
+      const [ox, oy, oz] = localPosition(origin, a.centre, ground(a.centre));
+      const p = built.positions;
+      for (let i = 0; i < p.length; i += 3)
+        positions.push(p[i]! + ox, p[i + 1]! + oy, p[i + 2]! + oz);
+      for (const n of built.normals) normals.push(n);
+      for (const c of built.colors) colors.push(c);
     }
     const geometry = mesh.geometry;
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
@@ -464,4 +564,26 @@ export class StreetFurnitureModule implements LayerModule {
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
     geometry.computeBoundingSphere();
   }
+}
+
+/** A basin, platform or deck in metres around the piece's own centre (y up from its ground). */
+function buildArea(a: Area): RoofMesh {
+  const origin = originAt(a.centre);
+  const local = (p: LngLat): Vec2 => {
+    const [x, , z] = localPosition(origin, p, 0);
+    return [x, z];
+  };
+  const b = new MeshBuilder();
+  const rings = a.rings?.map((ring) => ring.map(local));
+  if (a.cls === 'fountain' && rings) {
+    const rim = num(a.tags.height) ?? 0.5;
+    basin(b, rings, rim, rim * 0.8, STONE, WATER);
+  } else if (a.cls === 'platform' && rings) {
+    const rail = a.tags.railway === 'platform' || a.tags.train === 'yes';
+    slab(b, rings, rail ? 0.9 : 0.2, rail ? RAIL_PLATFORM : BUS_PLATFORM);
+  } else if (a.cls === 'pier') {
+    if (rings) slab(b, rings, 0.6, DECK);
+    else if (a.line) strip(b, a.line.map(local), 3, 0.6, DECK);
+  }
+  return b.build();
 }

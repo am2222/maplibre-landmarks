@@ -90,6 +90,11 @@ describe('readRoofProps', () => {
     expect(tagged.height).toBe(15); // the tagged roof is already on top of the floors
     expect(tagged.roofAbove).toBeFalsy();
     expect(read({ height: 12, roof_shape: 'gabled' })!.roofAbove).toBeFalsy();
+    // A height that is there but unreadable: the walls take the 10 m fallback, so does the roof.
+    expect(read({ height: 'tall', num_floors: 4, roof_shape: 'gabled' })).toMatchObject({
+      height: 10,
+    });
+    expect(read({ height: 'tall', num_floors: 4, roof_shape: 'gabled' })!.roofAbove).toBeFalsy();
     expect(read({ num_floors: 4, min_floor: 1, roof_shape: 'gabled' })!.minHeight).toBe(3);
     expect(read({ height: 20, num_floors: 4, roof_shape: 'gabled' })!.height).toBe(20); // tagged wins
     expect(read({ height: '12,5', roof_height: '3,5', roof_shape: 'gabled' })).toMatchObject({
