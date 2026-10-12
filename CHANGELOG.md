@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.5.0...maplibre-landmarks-v0.6.0) (2026-10-12)
+
+
+### Features
+
+* **roof:** add roofAbove property for floors-only buildings ([c3f1d1b](https://github.com/am2222/maplibre-landmarks/commit/c3f1d1be120b2994f60a9f57ce2448e9b5e571e1))
+* **roof:** enhance roof height calculations for roofs above walls ([9e9d89d](https://github.com/am2222/maplibre-landmarks/commit/9e9d89d899e84b0afa2b8770fbbc61a673bd6b2d))
+* **street:** add street gallery page and associated script ([58e6fb9](https://github.com/am2222/maplibre-landmarks/commit/58e6fb9a01b0957a8d35fd632f99c39ba2ffd224))
+* **street:** add StreetFurnitureLayer and StreetFurnitureModule for props ([9e4b968](https://github.com/am2222/maplibre-landmarks/commit/9e4b968ee468cfdb783f5d15bccc579bde989c52))
+* **street:** enhance StreetFurnitureModule with Overture id support ([a0cd067](https://github.com/am2222/maplibre-landmarks/commit/a0cd06754aa0d97851ce6cd11fa8722a1e056e8f))
+* **street:** implement drawing of fountains, platforms, and piers ([c3f1d1b](https://github.com/am2222/maplibre-landmarks/commit/c3f1d1be120b2994f60a9f57ce2448e9b5e571e1))
+* **street:** introduce new street furniture types and areas handling ([c3f1d1b](https://github.com/am2222/maplibre-landmarks/commit/c3f1d1be120b2994f60a9f57ce2448e9b5e571e1))
+
 ## [0.5.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.4.0...maplibre-landmarks-v0.5.0) (2026-10-12)
 
 
