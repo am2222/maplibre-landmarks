@@ -118,6 +118,12 @@ export interface RoofProps {
   minHeight: number;
   /** Explicit roof height (positive), if tagged. */
   roofHeight?: number;
+  /**
+   * The roof stands on top of `height` instead of within it: floors-only buildings without a
+   * tagged roof height, as OSM's building:levels counts the floors under the roof (OSM2World
+   * builds them so). Their walls keep their full height.
+   */
+  roofAbove?: boolean;
   /** Pitch of the roof faces in degrees (0–90 exclusive), if tagged; `roofHeight` wins. */
   roofAngle?: number;
   /** Bearing the roof faces, degrees clockwise from north. */
@@ -186,6 +192,11 @@ export function readRoofProps(
     (floors !== undefined && floors > 0
       ? floors * FLOOR_M + (roofHeight !== undefined && roofHeight > 0 ? roofHeight : 0)
       : undefined);
+  const roofAbove =
+    num(p[fields.height]) === undefined &&
+    floors !== undefined &&
+    floors > 0 &&
+    !(roofHeight !== undefined && roofHeight > 0);
   const minFloor = num(p[fields.min_floor]);
   const minHeight = num(p[fields.min_height]) ?? (minFloor !== undefined ? minFloor * FLOOR_M : 0);
   if (height === undefined || !(height > minHeight)) return null;
@@ -196,6 +207,7 @@ export function readRoofProps(
     height,
     minHeight,
     roofHeight: roofHeight !== undefined && roofHeight > 0 ? roofHeight : undefined,
+    ...(roofAbove ? { roofAbove } : {}),
     roofAngle: roofAngle !== undefined && roofAngle > 0 && roofAngle < 90 ? roofAngle : undefined,
     ...((d) => (d ? { direction: d.deg, directionSnap: d.snap } : { direction: undefined }))(
       direction(p[fields.roof_direction]),

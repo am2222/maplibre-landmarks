@@ -67,6 +67,10 @@ interface Drawn {
 }
 
 /** Real roof shapes on top of an app's fill-extrusion buildings. */
+/** How far a building's walls are shortened for its roof (none when the roof stands on top). */
+const wallCut = ({ props, built }: Pick<Drawn, 'props' | 'built'>): number =>
+  props.roofAbove ? 0 : built.roofHeight;
+
 export class RoofsModule implements LayerModule {
   private ctx?: ModuleContext;
   /** Our paint wrappers, by extrusion layer id. */
@@ -424,10 +428,9 @@ export class RoofsModule implements LayerModule {
       if (!next.has(key)) this.unsetState(map, d);
     }
     for (const [key, d] of next) {
-      if (this.drawn.get(key)?.built.roofHeight === d.built.roofHeight) continue;
-      this.safely(() =>
-        map.setFeatureState(this.featureOf(d), { [ROOF_STATE]: d.built.roofHeight }),
-      );
+      const old = this.drawn.get(key);
+      if (old && wallCut(old) === wallCut(d)) continue;
+      this.safely(() => map.setFeatureState(this.featureOf(d), { [ROOF_STATE]: wallCut(d) }));
     }
   }
 
@@ -447,7 +450,7 @@ export class RoofsModule implements LayerModule {
         const [ox, , oz] = localPosition(anchorOrigin, footprint.centroid);
         const lift =
           props.height -
-          built.roofHeight +
+          wallCut({ props, built }) +
           this.elevation(map, `${sourceLayer ?? ''}|${footprint.key}`, footprint.terrainPoint) -
           this.anchorElevation;
         const p = built.mesh.positions;

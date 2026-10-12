@@ -15,6 +15,10 @@ export const PROP_KINDS = [
   'information',
   'street_cabinet',
   'charging_station',
+  'fountain',
+  'artwork',
+  'communication_tower',
+  'storage_tank',
 ] as const;
 export type PropKind = (typeof PROP_KINDS)[number];
 
@@ -32,6 +36,10 @@ export const PROP_COLOURS: Record<PropKind, number> = {
   information: 0x50606e,
   street_cabinet: 0x8c8f87,
   charging_station: 0x3d7a5a,
+  fountain: 0x2f4a3a,
+  artwork: 0x9a9184,
+  communication_tower: 0x8d9096,
+  storage_tank: 0xb9bcb8,
 };
 
 /** A box `w` × `h` × `d` metres standing on y = `y0`, centred at (x, z). */
@@ -81,6 +89,34 @@ function parts(kind: PropKind): BufferGeometry[] {
       return [box(0.8, 1.2, 0.4)];
     case 'charging_station':
       return [box(0.45, 1.6, 0.3)];
+    case 'fountain':
+      // Wallace-style: a base, a slender column and a small domed canopy (about 2.6 m).
+      return [
+        post(0.35, 0.4, 0, 0, 0, 12),
+        post(0.12, 1.5, 0, 0.4, 0, 10),
+        new CylinderGeometry(0.1, 0.42, 0.45, 12).translate(0, 2.12, 0).toNonIndexed(),
+      ];
+    case 'artwork':
+      // A figure on a stone plinth.
+      return [
+        box(1.0, 1.2, 1.0),
+        new CylinderGeometry(0.18, 0.26, 1.4, 8).translate(0, 1.9, 0).toNonIndexed(),
+        post(0.13, 0.28, 0, 2.6, 0, 8),
+      ];
+    case 'communication_tower':
+      // Unit height (scaled to the tagged height): a tapering square mast and a top antenna.
+      return [
+        new CylinderGeometry(0.012, 0.045, 0.92, 4, 1, false, Math.PI / 4)
+          .translate(0, 0.46, 0)
+          .toNonIndexed(),
+        post(0.004, 0.08, 0, 0.92, 0, 4),
+      ];
+    case 'storage_tank':
+      // Unit radius and height (scaled to the tank): a cylinder with a shallow cone roof.
+      return [
+        post(1, 1, 0, 0, 0, 20),
+        new CylinderGeometry(0.05, 1, 0.15, 20).translate(0, 1.075, 0).toNonIndexed(),
+      ];
   }
 }
 
@@ -94,6 +130,40 @@ export function propGeometry(kind: PropKind): BufferGeometry {
   if (!merged) throw new Error(`street prop geometry: ${kind}`);
   merged.computeVertexNormals();
   return merged;
+}
+
+const num = (v: unknown): number | undefined => {
+  const n = Number.parseFloat(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
+/** Artwork types drawn: free-standing figures (not murals, architecture or installations). */
+const FIGURES = new Set(['sculpture', 'statue', 'bust']);
+
+/**
+ * Scale of a prop from its OSM tags (`[x, y, z]`), or null when it is not drawn: masts are built
+ * at unit height and tanks at unit radius and height; artworks other than figures and
+ * underground tanks are skipped.
+ */
+export function propScale(
+  kind: PropKind,
+  tags: Record<string, unknown>,
+): [number, number, number] | null {
+  switch (kind) {
+    case 'artwork':
+      return FIGURES.has(String(tags.artwork_type ?? '').toLowerCase()) ? [1, 1, 1] : null;
+    case 'communication_tower': {
+      const h = num(tags.height) ?? 30;
+      return [h, h, h];
+    }
+    case 'storage_tank': {
+      if (String(tags.location ?? '') === 'underground') return null;
+      const r = (num(tags.diameter) ?? 10) / 2;
+      return [r, num(tags.height) ?? 8, r];
+    }
+    default:
+      return [1, 1, 1];
+  }
 }
 
 const COMPASS = [

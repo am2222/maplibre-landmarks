@@ -846,3 +846,26 @@ Expected: everything passes. Then run `npm run docs:build` and expect a successf
 - Coverage: every item in "Run 1 scope" has a task. The catalogue, orientation and colours are in Task 1; the feed, selection, cutoff, minZoom, stats and errors in Task 2; the layer, exports, demo, docs and README in Task 3.
 - Names used across tasks: `PropKind`, `PROP_KINDS`, `PROP_COLOURS`, `propGeometry`, `directionDeg`, `hashedTurnDeg`, `StreetFurnitureModule`, `StreetFurnitureOptions`, `StreetFurnitureStats`, `StreetFurnitureLayer`, `StreetFurnitureLayerOptions`, and the group name `'street-furniture'`.
 - Review Focus tests: de-duplication, kind filtering, minZoom and missing source are in Task 2; the bad `direction` tag is in Task 1.
+
+---
+
+## Run 4 (in progress): fountains, artworks, masts, tanks, platforms, piers
+
+Data checked in central Paris, zoom 14, on 2026-10-11. Points: fountains 65, artworks 1,472, communication towers 10, storage tanks 1. Areas: fountain basins 29, platforms 192, storage tanks 2, piers 2 (plus 8 pier lines).
+
+Points join the street furniture catalogue:
+
+- `fountain`: a Wallace-style fountain, about 2.6 m.
+- `artwork`: a plinth with a figure, only for `artwork_type` sculpture, statue or bust. Murals, architecture and the rest are skipped.
+- `communication_tower`: a tapering mast, scaled to the `height` tag (30 m when untagged).
+- `storage_tank`: a cylinder with a shallow cone top, sized by the `height` and `diameter` tags (8 m and 10 m when untagged). `location=underground` is skipped. A tank mapped as an area becomes a cylinder at its centroid, radius √(area/π).
+
+Areas go into one merged mesh with vertex colours (`src/street/areas.ts`):
+
+- Fountain basins: a rim of the tagged `height` (0.5 m when untagged), with water at 80% of it.
+- Platforms: a slab 0.9 m high (`railway=platform`) or 0.2 m (bus). `indoor=yes`, `level` < 0 and `location=underground` are skipped.
+- Piers: a deck 0.6 m high. Lines become a 3 m wide deck.
+
+The same area appears clipped in every tile that holds it, so areas are de-duplicated by `id`, keeping the largest piece.
+
+Options: `areas` (default true). Stats gain `areas`.

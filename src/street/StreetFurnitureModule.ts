@@ -1,15 +1,30 @@
-import { Group, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
+import {
+  BufferGeometry,
+  Color,
+  DoubleSide,
+  Float32BufferAttribute,
+  Group,
+  InstancedMesh,
+  Matrix4,
+  Mesh,
+  MeshStandardMaterial,
+  Quaternion,
+  Vector3,
+} from 'three';
 import { farCutoffM, tileNearestM } from '../core/cutoff';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
 import { localPosition, originAt } from '../core/mercator';
 import { TileFeed, type FeedFeature, type FeedMap } from '../core/tileFeed';
 import type { LngLat, Origin, ViewState } from '../core/types';
+import { MeshBuilder, type RGB } from '../roofs/geometry/mesh';
+import { basin, slab, strip, type Vec2 } from './areas';
 import {
   directionDeg,
   hashedTurnDeg,
   PROP_COLOURS,
   PROP_KINDS,
   propGeometry,
+  propScale,
   type PropKind,
 } from './props';
 
@@ -26,12 +41,16 @@ export interface StreetFurnitureOptions {
   kinds?: PropKind[];
   /** Pitched views draw props only to about three screen heights away (default true). */
   farCutoff?: boolean;
+  /** Fountain basins, platforms and pier decks (default true). */
+  areas?: boolean;
   onError?: (err: unknown) => void;
 }
 
 export interface StreetFurnitureStats {
   total: number;
   byKind: Partial<Record<PropKind, number>>;
+  /** Fountain basins, platforms and pier decks drawn. */
+  areas: number;
 }
 
 interface Prop {
@@ -41,9 +60,67 @@ interface Prop {
   lngLat: LngLat;
   /** Degrees clockwise from north the prop's front faces. */
   facing: number;
+  /** Size from its tags (masts and tanks); 1 for the rest. */
+  scale: [number, number, number];
 }
 
+type AreaClass = 'fountain' | 'platform' | 'pier';
+
+/** A fountain basin, platform or pier: an outline (rings) or a line (piers). */
+interface Area {
+  cls: AreaClass;
+  id?: string;
+  rings?: LngLat[][];
+  line?: LngLat[];
+  centre: LngLat;
+  /** Square metres (or the length for lines): the biggest clipped piece of an area wins. */
+  size: number;
+  tags: Record<string, unknown>;
+}
+
+const AREA_CLASSES: AreaClass[] = ['fountain', 'platform', 'pier'];
 const REBUILD_DEBOUNCE_MS = 150;
+const M_PER_DEG = 111_320;
+
+const linear = (hex: number): RGB => {
+  const c = new Color(hex);
+  return [c.r, c.g, c.b];
+};
+const STONE = linear(0xb7b2a6);
+const WATER = linear(0x4f86a8);
+const RAIL_PLATFORM = linear(0x9b9890);
+const BUS_PLATFORM = linear(0xa8a49b);
+const DECK = linear(0x8a6f52);
+
+const num = (v: unknown): number | undefined => {
+  const n = Number.parseFloat(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
+/** Platforms indoors, below ground or underground are not seen from the street. */
+const hidden = (tags: Record<string, unknown>) =>
+  String(tags.indoor ?? '') === 'yes' ||
+  String(tags.location ?? '') === 'underground' ||
+  (Number.parseFloat(String(tags.level ?? '0')) || 0) < 0;
+
+/** Shoelace area (m²) and centroid of an outer ring in lng/lat. */
+function ringArea(ring: LngLat[]): { area: number; centre: LngLat } {
+  const lat0 = ring[0]?.[1] ?? 0;
+  const kx = M_PER_DEG * Math.cos((lat0 * Math.PI) / 180);
+  let a = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x0, y0] = ring[i]!;
+    const [x1, y1] = ring[(i + 1) % ring.length]!;
+    const cross = x0 * kx * (y1 * M_PER_DEG) - x1 * kx * (y0 * M_PER_DEG);
+    a += cross;
+    cx += (x0 + x1) * cross;
+    cy += (y0 + y1) * cross;
+  }
+  if (Math.abs(a) < 1e-9) return { area: 0, centre: ring[0] ?? [0, 0] };
+  return { area: Math.abs(a) / 2, centre: [cx / (3 * a), cy / (3 * a)] };
+}
 
 const tagsOf = (f: FeedFeature): Record<string, unknown> => {
   try {
@@ -58,12 +135,13 @@ export class StreetFurnitureModule implements LayerModule {
   private ctx?: ModuleContext;
   private readonly group = new Group();
   private readonly meshes = new Map<PropKind, InstancedMesh>();
+  private areasMesh?: Mesh<BufferGeometry, MeshStandardMaterial>;
   private feed?: TileFeed;
-  private readonly tiles = new Map<string, Prop[]>();
+  private readonly tiles = new Map<string, { props: Prop[]; areas: Area[] }>();
   private anchor: LngLat = [0, 0];
   private view?: ViewState;
   private timer?: ReturnType<typeof setTimeout>;
-  private stats: StreetFurnitureStats = { total: 0, byKind: {} };
+  private stats: StreetFurnitureStats = { total: 0, byKind: {}, areas: 0 };
   private reported = false;
   private readonly kinds: PropKind[];
 
@@ -84,6 +162,15 @@ export class StreetFurnitureModule implements LayerModule {
       this.meshes.set(kind, mesh);
       this.group.add(mesh);
     }
+    if (this.options.areas !== false) {
+      this.areasMesh = new Mesh(
+        new BufferGeometry(),
+        new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.85 }),
+      );
+      this.areasMesh.name = 'street-areas';
+      this.areasMesh.frustumCulled = false;
+      this.group.add(this.areasMesh);
+    }
     ctx.scene.add(this.group);
     ctx.map.on('terrain', this.schedule);
     ctx.map.on('sourcedata', this.onSourceData);
@@ -100,7 +187,7 @@ export class StreetFurnitureModule implements LayerModule {
   }
 
   getStats(): StreetFurnitureStats {
-    return { total: this.stats.total, byKind: { ...this.stats.byKind } };
+    return { ...this.stats, byKind: { ...this.stats.byKind } };
   }
 
   styleChanged(attached: boolean): void {
@@ -121,6 +208,9 @@ export class StreetFurnitureModule implements LayerModule {
       mesh.dispose();
     }
     this.meshes.clear();
+    this.areasMesh?.geometry.dispose();
+    this.areasMesh?.material.dispose();
+    this.areasMesh = undefined;
     this.ctx = undefined;
   }
 
@@ -146,7 +236,7 @@ export class StreetFurnitureModule implements LayerModule {
     }
     if (!hasSource || view.zoom < (this.options.minZoom ?? 16)) {
       this.feed?.suspend();
-      this.draw(view, []);
+      this.draw(view, [], []);
       return;
     }
     this.feedFor(ctx).settle();
@@ -157,7 +247,7 @@ export class StreetFurnitureModule implements LayerModule {
     // A prop near a tile edge is in both tiles' buffers, and in a parent and a child tile while
     // zooming: once each, by id (by position when the data has none).
     const unique = new Map<string, Prop>();
-    for (const props of this.tiles.values())
+    for (const { props } of this.tiles.values())
       for (const p of props)
         unique.set(p.id ?? `${p.kind}|${p.lngLat[0].toFixed(7)},${p.lngLat[1].toFixed(7)}`, p);
     const byKind = new Map<PropKind, { p: Prop; d: number }[]>();
@@ -174,7 +264,16 @@ export class StreetFurnitureModule implements LayerModule {
         .slice(0, this.maxPerKind)
         .map(({ p }) => p),
     );
-    this.draw(view, chosen);
+    // An area is clipped into every tile holding it: keep its biggest piece.
+    const areas = new Map<string, Area>();
+    for (const tile of this.tiles.values())
+      for (const a of tile.areas) {
+        const key = a.id ?? `${a.cls}|${a.centre[0].toFixed(7)},${a.centre[1].toFixed(7)}`;
+        const known = areas.get(key);
+        if (!known || a.size > known.size) areas.set(key, a);
+      }
+    const nearAreas = [...areas.values()].filter((a) => distance(a.centre) <= cutoff);
+    this.draw(view, chosen, nearAreas);
   }
 
   /** The terrain's elevation tiles arrived: stand the props on the ground they now have. */
@@ -187,7 +286,7 @@ export class StreetFurnitureModule implements LayerModule {
     this.feed ??= new TileFeed(ctx.map as unknown as FeedMap, {
       source: this.options.source,
       sourceLayer: this.options.sourceLayer ?? 'infrastructure',
-      filter: ['in', ['get', 'class'], ['literal', this.kinds]],
+      filter: ['in', ['get', 'class'], ['literal', this.classes()]],
       wants: (key) =>
         key === '*' ||
         !this.view ||
@@ -205,25 +304,94 @@ export class StreetFurnitureModule implements LayerModule {
     return this.feed;
   }
 
-  private read(features: FeedFeature[]): Prop[] {
+  /** Overture classes read: the prop kinds, and the area classes unless areas are off. */
+  private classes(): string[] {
+    const areas = this.options.areas === false ? [] : AREA_CLASSES;
+    return [...new Set<string>([...this.kinds, ...areas])];
+  }
+
+  private read(features: FeedFeature[]): { props: Prop[]; areas: Area[] } {
     const props: Prop[] = [];
+    const areas: Area[] = [];
+    const areasOn = this.options.areas !== false;
     for (const f of features) {
-      const kind = String(f.properties?.class) as PropKind;
-      if (!this.kinds.includes(kind) || f.geometry.type !== 'Point') continue;
-      const lngLat = f.geometry.coordinates as LngLat;
-      const id = f.properties?.id;
-      props.push({
-        kind,
-        ...(id !== undefined && id !== null && id !== '' ? { id: String(id) } : {}),
-        lngLat,
-        facing: directionDeg(tagsOf(f)) ?? hashedTurnDeg(lngLat),
-      });
+      const cls = String(f.properties?.class);
+      const tags = tagsOf(f);
+      const rawId = f.properties?.id;
+      const id = rawId !== undefined && rawId !== null && rawId !== '' ? String(rawId) : undefined;
+      const type = f.geometry.type;
+      const polygons =
+        type === 'Polygon'
+          ? [f.geometry.coordinates as LngLat[][]]
+          : type === 'MultiPolygon'
+            ? (f.geometry.coordinates as LngLat[][][])
+            : [];
+      if (type === 'Point' && this.kinds.includes(cls as PropKind)) {
+        const kind = cls as PropKind;
+        const scale = propScale(kind, tags);
+        if (!scale) continue;
+        const lngLat = f.geometry.coordinates as LngLat;
+        props.push({
+          kind,
+          ...(id ? { id } : {}),
+          lngLat,
+          facing: directionDeg(tags) ?? hashedTurnDeg(lngLat),
+          scale,
+        });
+      } else if (cls === 'storage_tank' && polygons.length && this.kinds.includes('storage_tank')) {
+        // A tank's outline: a cylinder of the same area at its centre.
+        if (!propScale('storage_tank', tags)) continue;
+        const { area, centre } = ringArea(polygons[0]![0] ?? []);
+        const r = Math.sqrt(area / Math.PI);
+        if (!(r > 0.5)) continue;
+        props.push({
+          kind: 'storage_tank',
+          ...(id ? { id } : {}),
+          lngLat: centre,
+          facing: 0,
+          scale: [r, num(tags.height) ?? 8, r],
+        });
+      } else if (areasOn && AREA_CLASSES.includes(cls as AreaClass)) {
+        const areaCls = cls as AreaClass;
+        if (areaCls === 'platform' && hidden(tags)) continue;
+        for (const rings of polygons) {
+          const { area, centre } = ringArea(rings[0] ?? []);
+          if (area > 0)
+            areas.push({ cls: areaCls, ...(id ? { id } : {}), rings, centre, size: area, tags });
+        }
+        // Piers mapped as lines become decks; platform lines are bus stops (not drawn here).
+        if (areaCls === 'pier' && (type === 'LineString' || type === 'MultiLineString')) {
+          const lines =
+            type === 'LineString'
+              ? [f.geometry.coordinates as LngLat[]]
+              : (f.geometry.coordinates as LngLat[][]);
+          for (const line of lines) {
+            if (line.length < 2) continue;
+            const mid = line[Math.floor(line.length / 2)]!;
+            const k = M_PER_DEG * Math.cos((mid[1] * Math.PI) / 180);
+            let length = 0;
+            for (let i = 1; i < line.length; i++)
+              length += Math.hypot(
+                (line[i]![0] - line[i - 1]![0]) * k,
+                (line[i]![1] - line[i - 1]![1]) * M_PER_DEG,
+              );
+            areas.push({
+              cls: 'pier',
+              ...(id ? { id } : {}),
+              line,
+              centre: mid,
+              size: length,
+              tags,
+            });
+          }
+        }
+      }
     }
-    return props;
+    return { props, areas };
   }
 
   /** Write the chosen props into their meshes, around the view centre. */
-  private draw(view: ViewState, chosen: Prop[]): void {
+  private draw(view: ViewState, chosen: Prop[], areas: Area[]): void {
     const ctx = this.ctx!;
     this.anchor = view.center;
     const origin = originAt(this.anchor);
@@ -233,7 +401,7 @@ export class StreetFurnitureModule implements LayerModule {
     const m = new Matrix4();
     const q = new Quaternion();
     const up = new Vector3(0, 1, 0);
-    const one = new Vector3(1, 1, 1);
+    const scale = new Vector3();
     for (const p of chosen) {
       const mesh = this.meshes.get(p.kind);
       if (!mesh) continue;
@@ -241,7 +409,7 @@ export class StreetFurnitureModule implements LayerModule {
       const base = new Vector3(...localPosition(origin, p.lngLat, ground(p.lngLat)));
       // Front is −Z (north); turning clockwise seen from above is negative about +Y.
       q.setFromAxisAngle(up, (-p.facing * Math.PI) / 180);
-      mesh.setMatrixAt(i, m.compose(base, q, one));
+      mesh.setMatrixAt(i, m.compose(base, q, scale.set(...p.scale)));
       counts.set(p.kind, i + 1);
     }
     const byKind: Partial<Record<PropKind, number>> = {};
@@ -250,7 +418,50 @@ export class StreetFurnitureModule implements LayerModule {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.count) byKind[kind] = mesh.count;
     }
-    this.stats = { total: chosen.length, byKind };
+    this.drawAreas(areas, origin, ground);
+    this.stats = { total: chosen.length, byKind, areas: this.areasMesh ? areas.length : 0 };
     ctx.requestRepaint();
+  }
+
+  /** Basins, platforms and decks in one mesh, each standing on the ground at its centre. */
+  private drawAreas(areas: Area[], origin: Origin, ground: (p: LngLat) => number): void {
+    const mesh = this.areasMesh;
+    if (!mesh) return;
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const colors: number[] = [];
+    const local = (p: LngLat): Vec2 => {
+      const [x, , z] = localPosition(origin, p, 0);
+      return [x, z];
+    };
+    for (const a of areas) {
+      const b = new MeshBuilder();
+      const rings = a.rings?.map((ring) => ring.map(local));
+      if (a.cls === 'fountain' && rings) {
+        const rim = num(a.tags.height) ?? 0.5;
+        basin(b, rings, rim, rim * 0.8, STONE, WATER);
+      } else if (a.cls === 'platform' && rings) {
+        const rail = a.tags.railway === 'platform' || a.tags.train === 'yes';
+        slab(b, rings, rail ? 0.9 : 0.2, rail ? RAIL_PLATFORM : BUS_PLATFORM);
+      } else if (a.cls === 'pier') {
+        if (rings) slab(b, rings, 0.6, DECK);
+        else if (a.line) strip(b, a.line.map(local), 3, 0.6, DECK);
+      }
+      const built = b.build();
+      const lift = ground(a.centre);
+      for (let i = 0; i < built.positions.length; i += 3)
+        positions.push(
+          built.positions[i]!,
+          built.positions[i + 1]! + lift,
+          built.positions[i + 2]!,
+        );
+      normals.push(...built.normals);
+      colors.push(...built.colors);
+    }
+    const geometry = mesh.geometry;
+    geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
+    geometry.computeBoundingSphere();
   }
 }

@@ -80,11 +80,16 @@ describe('readRoofProps', () => {
   });
 
   it('falls back to floor counts for heights (3 m a floor, roof on top), and reads 3,5', () => {
+    // OSM's building:levels counts the floors under the roof: an untagged roof goes on top.
     expect(read({ num_floors: 4, roof_shape: 'gabled' })).toMatchObject({
       height: 12,
       minHeight: 0,
+      roofAbove: true,
     });
-    expect(read({ num_floors: 4, roof_height: 3, roof_shape: 'gabled' })!.height).toBe(15);
+    const tagged = read({ num_floors: 4, roof_height: 3, roof_shape: 'gabled' })!;
+    expect(tagged.height).toBe(15); // the tagged roof is already on top of the floors
+    expect(tagged.roofAbove).toBeFalsy();
+    expect(read({ height: 12, roof_shape: 'gabled' })!.roofAbove).toBeFalsy();
     expect(read({ num_floors: 4, min_floor: 1, roof_shape: 'gabled' })!.minHeight).toBe(3);
     expect(read({ height: 20, num_floors: 4, roof_shape: 'gabled' })!.height).toBe(20); // tagged wins
     expect(read({ height: '12,5', roof_height: '3,5', roof_shape: 'gabled' })).toMatchObject({

@@ -744,7 +744,7 @@ setInterval(() => {
       : '';
   const st = street?.getStats();
   $('street-stats').textContent =
-    st && toggle('street').checked ? `${st.total} props (zoom 16+)` : '';
+    st && toggle('street').checked ? `${st.total} props · ${st.areas} areas (zoom 16+)` : '';
   const rs = rain?.getStats();
   $('rain-stats').textContent =
     rs && toggle('rain').checked
