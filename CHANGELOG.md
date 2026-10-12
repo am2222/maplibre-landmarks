@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.4.0...maplibre-landmarks-v0.5.0) (2026-10-12)
+
+
+### Features
+
+* **compare:** add compare page with OSM2World 3D viewer integration ([ed9a836](https://github.com/am2222/maplibre-landmarks/commit/ed9a83687f27001aab27a1a72f30e42239f99de0))
+* **power:** add power layer toggle functionality before map rendering ([4b02e12](https://github.com/am2222/maplibre-landmarks/commit/4b02e12788dff9bd64ebf642d81d83aee0270a71))
+* **trees:** add fps option for wind sway and improve frame handling ([02481b0](https://github.com/am2222/maplibre-landmarks/commit/02481b0b0de74fdd03fd2cedd85b6c5a7adf7d0d))
+* **trees:** enhance auto season handling and add related tests ([b9befe7](https://github.com/am2222/maplibre-landmarks/commit/b9befe7d51778744d0932648ba4d1c09962c136e))
+
+
+### Bug Fixes
+
+* **centroid:** improve centroid calculation for small parts far from (0, 0) ([9337dcb](https://github.com/am2222/maplibre-landmarks/commit/9337dcb569405d2088ad0a0cf92033362e03c5e8))
+* **labelOcclusion:** update minZoom to 14 and adjust related tests ([b2b8b30](https://github.com/am2222/maplibre-landmarks/commit/b2b8b306439ebe691409dae6ef7234d86659479f))
+
 ## [0.4.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.3.0...maplibre-landmarks-v0.4.0) (2026-10-10)
 
 
