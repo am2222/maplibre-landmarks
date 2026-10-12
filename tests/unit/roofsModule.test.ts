@@ -130,6 +130,23 @@ describe('RoofsModule', () => {
     expect(roofMesh(scene).geometry.getAttribute('position').count).toBeGreaterThan(0);
   });
 
+  it('stands an untagged roof on top of a floors-only building, its walls kept whole', () => {
+    // Boulogne town hall's courtyard vaults: building:levels=5, roof:shape=round, no heights.
+    const { map, scene, module } = setup();
+    map.features = [feature(1, rectAt(0, 0, 30, 12), { num_floors: 5, roof_shape: 'round' })];
+    module.update(view());
+    expect(stateOf(map, 1)).toBe(0); // walls keep all 15 m
+    const ys = roofMesh(scene).geometry.getAttribute('position');
+    let low = Infinity;
+    let high = -Infinity;
+    for (let i = 0; i < ys.count; i++) {
+      low = Math.min(low, ys.getY(i));
+      high = Math.max(high, ys.getY(i));
+    }
+    expect(low).toBeCloseTo(15, 6); // eaves on the top floor
+    expect(high).toBeCloseTo(15 + 6, 6); // a round roof rises half the 12 m span
+  });
+
   it('merges tile pieces before sizing the roof', () => {
     const { map, module } = setup();
     // 40 × 30 m building cut in two 20 × 30 m pieces (overlapping slightly, like tile buffers).

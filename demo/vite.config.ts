@@ -35,6 +35,7 @@ export default defineConfig({
             roofs: page('roofs-gallery.html'),
             seasons: page('tree-seasons.html'),
             compare: page('compare.html'),
+            street: page('street-gallery.html'),
           }
         : {
             main: page('index.html'),
@@ -43,6 +44,7 @@ export default defineConfig({
             roofs: page('roofs-gallery.html'),
             seasons: page('tree-seasons.html'),
             compare: page('compare.html'),
+            street: page('street-gallery.html'),
           },
     },
   },

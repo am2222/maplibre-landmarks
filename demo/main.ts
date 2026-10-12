@@ -9,6 +9,7 @@ import {
   LabelOcclusion,
   LandmarksLayer,
   PowerLinesLayer,
+  StreetFurnitureLayer,
   RainLayer,
   RoofsLayer,
   SnowLayer,
@@ -50,9 +51,10 @@ const OVERTURE_BUILDINGS =
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
 // `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?clouds` (or
 // `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
-// `?snow=<intensity 0–1>`), `?power` (power lines and street lamps).
+// `?snow=<intensity 0–1>`), `?power` (power lines and street lamps), `?street` (street furniture).
 const params = new URLSearchParams(location.search);
-// Power lines: Overture's base theme (only fetched while the power layer is on).
+// Power lines, lamps and street furniture: Overture's base theme (only fetched while the power
+// or street layer is on).
 const OVERTURE_BASE =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/base.pmtiles';
 const roofsParam = params.get('roofs');
@@ -87,15 +89,19 @@ const style = () =>
     ...state,
     roofsUrl: state.roofData === 'local' && localRoofsUrl ? localRoofsUrl : OVERTURE_BUILDINGS,
     roofParts: roofParts(),
-    powerUrl: toggle('power').checked ? OVERTURE_BASE : undefined,
+    powerUrl: toggle('power').checked || toggle('street').checked ? OVERTURE_BASE : undefined,
     protomaps: pmtilesUrl
       ? `pmtiles://${pmtilesUrl}`
       : `https://api.protomaps.com/tiles/v4.json?key=${key}`,
   });
 
-// Before the map: the power layer's source is part of the first style.
+// Before the map: the power and street layers' source is part of the first style.
 if (params.has('power')) {
   toggle('power').checked = true;
+  syncTabDots();
+}
+if (params.has('street')) {
+  toggle('street').checked = true;
   syncTabDots();
 }
 
@@ -122,6 +128,7 @@ let rain: RainLayer | undefined;
 let snow: SnowLayer | undefined;
 let fire: FireLayer | undefined;
 let power: PowerLinesLayer | undefined;
+let street: StreetFurnitureLayer | undefined;
 
 let occlusion: LabelOcclusion | undefined;
 let models: LandmarkInfo[] = [];
@@ -234,6 +241,18 @@ function addPower() {
   map.addLayer(power, before3D());
 }
 
+function addStreet() {
+  remove('street');
+  // Without its source yet: restyle, and the style reload adds this layer (restoreLayers).
+  if (!map.getSource('overture-base')) return restyle();
+  street = new StreetFurnitureLayer({
+    id: 'street',
+    source: 'overture-base',
+    onError: (err) => console.warn('[street]', err),
+  });
+  map.addLayer(street, before3D());
+}
+
 function addFog() {
   remove('fog');
   fog = new FogLayer({
@@ -318,6 +337,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   snow: { add: addSnow, id: () => 'snow' },
   fire: { add: addFire, id: () => 'fire' },
   power: { add: addPower, id: () => 'power' },
+  street: { add: addStreet, id: () => 'street' },
   labels: { add: addLabels, id: () => occlusion?.id },
 };
 
@@ -722,6 +742,9 @@ setInterval(() => {
     p && toggle('power').checked
       ? `${p.supports} supports · ${p.spans} spans · ${p.lamps} lamps (zoom 14+)`
       : '';
+  const st = street?.getStats();
+  $('street-stats').textContent =
+    st && toggle('street').checked ? `${st.total} props · ${st.areas} areas (zoom 16+)` : '';
   const rs = rain?.getStats();
   $('rain-stats').textContent =
     rs && toggle('rain').checked
@@ -753,6 +776,9 @@ renderModels(models);
   },
   get power() {
     return power;
+  },
+  get street() {
+    return street;
   },
   get clouds() {
     return clouds;

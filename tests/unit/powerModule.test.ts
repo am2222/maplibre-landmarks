@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  Matrix4,
   Scene,
+  Vector3,
   type InstancedMesh,
   type LineSegments,
   type MeshStandardMaterial,
@@ -19,8 +21,8 @@ const towerAt = (east: number, tags = '{"power":"tower"}') => ({
   properties: { subtype: 'power', class: 'power_tower', source_tags: tags },
   geometry: { type: 'Point', coordinates: at(east) },
 });
-const lampAt = (east: number, north = 0) => ({
-  properties: { subtype: 'transportation', class: 'street_lamp' },
+const lampAt = (east: number, north = 0, id?: string) => ({
+  properties: { subtype: 'transportation', class: 'street_lamp', ...(id ? { id } : {}) },
   geometry: { type: 'Point', coordinates: at(east, north) },
 });
 const line = (id: string, from: number, to: number, cls = 'power_line') => ({
@@ -35,8 +37,8 @@ function setup(over: Partial<PowerOptions> = {}, features: unknown[] = [], water
     features,
     handlers,
     getSource: (id: string) => (id === 'base' ? { type: 'vector' } : undefined),
-    getTerrain: () => null,
-    queryTerrainElevation: () => 0,
+    getTerrain: (): { source: string } | null => null,
+    queryTerrainElevation: (_p: unknown): number | null => 0,
     getZoom: () => 16,
     getCenter: () => ({ lng: C[0], lat: C[1] }),
     querySourceFeatures: vi.fn((_s: string, o: { sourceLayer?: string }) =>
@@ -181,5 +183,37 @@ describe('PowerModule', () => {
       { filter: unknown[] },
     ];
     expect(JSON.stringify(options.filter)).not.toContain('street_lamp');
+  });
+
+  it('matches a lamp by its Overture id across tiles of different zooms', () => {
+    const { module } = setup({}, [lampAt(0, 0, 'l1'), lampAt(0.4, 0.3, 'l1'), lampAt(20, 0, 'l2')]);
+    module.update(view({ center: C, zoom: 16 }));
+    expect(module.getStats().lamps).toBe(2);
+  });
+
+  it('stands supports and lamps on terrain that loads after them', () => {
+    vi.useFakeTimers();
+    const { map, scene, module } = setup({}, [lampAt(0)]);
+    let ground = 0;
+    map.getTerrain = () => ({ source: 'dem' });
+    map.queryTerrainElevation = () => ground;
+    module.update(view({ center: C, zoom: 16 }));
+    const posts = meshes(scene).find((m) => m.name === 'lamp-posts') as InstancedMesh;
+    const y = () => {
+      const m = new Matrix4();
+      posts.getMatrixAt(0, m);
+      return new Vector3().setFromMatrixPosition(m).y;
+    };
+    expect(y()).toBe(0);
+    ground = 35; // the DEM tiles arrived
+    map.handlers.get('sourcedata')!({ sourceId: 'dem' });
+    vi.advanceTimersByTime(200);
+    expect(y()).toBe(35);
+    ground = 10; // terrain switched or exaggerated
+    map.handlers.get('terrain')!();
+    vi.advanceTimersByTime(200);
+    expect(y()).toBe(10);
+    module.onRemove();
+    expect(map.handlers.has('terrain')).toBe(false);
   });
 });
