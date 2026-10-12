@@ -51,13 +51,22 @@ const OVERTURE_BUILDINGS =
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
 // `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?clouds` (or
 // `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
-// `?snow=<intensity 0–1>`), `?power` (power lines and street lamps), `?street` (street furniture).
+// `?snow=<intensity 0–1>`), `?power` (power lines and street lamps), `?street` (street furniture),
+// `?catalogue=<catalogue.json>` (landmarks from your own catalogue).
 const params = new URLSearchParams(location.search);
 // Power lines, lamps and street furniture: Overture's base theme (only fetched while the power
 // or street layer is on).
 const OVERTURE_BASE =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/base.pmtiles';
 const roofsParam = params.get('roofs');
+// `?catalogue=http://localhost:5190/catalogue.json`: landmarks from a catalogue of your own (same
+// format as Open Landmarks; paths in it resolve against its folder) instead of
+// open-landmarks.benmaps.fr.
+const catalogueParam = params.get('catalogue');
+const localCatalogue = (path: string) => {
+  const url = new URL(path, location.href);
+  return { baseUrl: new URL('.', url).href, catalogueUrl: url.href };
+};
 const themeParam = params.get('theme');
 const SEASONS = ['spring', 'summer', 'autumn', 'winter'] as const;
 const seasonParam = params.get('season');
@@ -167,6 +176,7 @@ function addLandmarks() {
     fadeMs: landmarkFade.value(),
     onModelsChanged: renderModels,
     onError: (err, ctx) => console.warn('[landmarks]', ctx, err),
+    ...(catalogueParam ? localCatalogue(catalogueParam) : {}),
   });
   map.addLayer(landmarks, before3D());
 }
