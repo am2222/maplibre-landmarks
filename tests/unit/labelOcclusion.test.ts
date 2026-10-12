@@ -254,7 +254,7 @@ describe('LabelOcclusion', () => {
   it('ignores late probe answers while every label is being shown', () => {
     const { map, f, layer } = setup();
     layer.render(f.gl, FRAME); // queries in flight
-    map.zoom = 14; // below minZoom: show everything
+    map.zoom = 13.5; // below minZoom: show everything
     layer.render(f.gl, FRAME);
     f.answer(() => false); // the earlier queries now say "hidden"
     vi.advanceTimersByTime(20);
@@ -267,12 +267,23 @@ describe('LabelOcclusion', () => {
     f.answer(() => false);
     vi.advanceTimersByTime(20);
     expect(stateOf(map, 1)).toBe(0);
-    map.zoom = 14;
+    map.zoom = 13.5;
     map.handlers.get('moveend')!();
     vi.advanceTimersByTime(100);
     expect(map.states.has(1)).toBe(false); // dropped labels are reset to the default (shown)
     layer.render(f.gl, FRAME);
     expect(f.drawn).toHaveLength(0);
+  });
+
+  it('hides labels from zoom 14, where landmarks and 3D buildings start', () => {
+    const { map, f, layer } = setup();
+    map.zoom = 14.5;
+    map.handlers.get('moveend')!();
+    vi.advanceTimersByTime(100);
+    layer.render(f.gl, FRAME);
+    f.answer(() => false);
+    vi.advanceTimersByTime(20);
+    expect(stateOf(map, 1)).toBe(0);
   });
 
   it('only scans label layers that still exist', () => {

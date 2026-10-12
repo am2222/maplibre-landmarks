@@ -71,7 +71,7 @@ it manages point labels of `pois`/`poi`/`buildings`/`building` source layers.
 | ------------- | ------------------- | -------------------------------------------------- |
 | `id`          | `'label-occlusion'` | Layer id                                           |
 | `labelLayers` | auto                | Symbol layer ids to manage                         |
-| `minZoom`     | `15`                | Below this zoom every label is shown               |
+| `minZoom`     | `14`                | Below this zoom every label is shown               |
 | `fadeMs`      | `180`               | Fade duration                                      |
 | `maxLabels`   | `256`               | Labels tested at once, nearest to the centre first |
 | `onError`     | `console.warn`      | Shader or GL setup failures                        |

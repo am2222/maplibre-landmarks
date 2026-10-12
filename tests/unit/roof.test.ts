@@ -224,3 +224,47 @@ describe('buildRoof', () => {
     }
   });
 });
+
+describe('buildRoof on a footprint of separate pieces', () => {
+  // A stand mapped as one building of small pieces tens of metres apart (Roland-Garros).
+  const piece = (cx: number, cz: number): Vec2[][] => [
+    rect(4, 2).map(([x, z]): Vec2 => [x + cx, z + cz]),
+  ];
+  const pieces = [piece(0, 0), piece(20, 5), piece(45, 12)];
+
+  it('gives each piece its own roof, as OSM2World does: never above the roof height', () => {
+    for (const shape of ['skillion', 'gabled', 'hipped'] as const) {
+      const built = buildRoof(
+        props({ shape, height: 14.5, roofHeight: 4.2, direction: 201.1 }),
+        pieces,
+      )!;
+      expect(built.roofHeight).toBeCloseTo(4.2, 9);
+      expect(Math.max(...ys(built.mesh.positions))).toBeCloseTo(4.2, 6);
+      expect(Math.min(...ys(built.mesh.positions))).toBeGreaterThanOrEqual(-1e-9);
+    }
+  });
+
+  it('slopes every piece the same way with a direction, each over its own width', () => {
+    const built = buildRoof(props({ shape: 'skillion', roofHeight: 3, direction: 180 }), pieces)!;
+    const p = built.mesh.positions;
+    // Facing south (+z): each piece runs from 3 m on its north edge down to 0 on its south edge.
+    for (const [, cz] of [
+      [0, 0],
+      [20, 5],
+      [45, 12],
+    ] as const) {
+      const at = (z: number) => p.filter((_, i) => i % 3 === 1 && Math.abs(p[i + 1]! - z) < 1e-6);
+      expect(Math.max(...at(cz - 1))).toBeCloseTo(3, 6);
+      expect(Math.min(...at(cz + 1))).toBeCloseTo(0, 6);
+    }
+  });
+
+  it('lowers the walls by the tallest piece roof', () => {
+    // No roof_height: each piece gets the default pitch over its own span.
+    const built = buildRoof(props({ shape: 'gabled', height: 30 }), [
+      piece(0, 0),
+      [rect(10, 6, 40)],
+    ])!;
+    expect(built.roofHeight).toBeCloseTo(3 * TAN_30, 6); // half the 6 m span of the bigger piece
+  });
+});
