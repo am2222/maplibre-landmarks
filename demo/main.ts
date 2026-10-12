@@ -53,7 +53,8 @@ const OVERTURE_BUILDINGS =
 // `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
 // `?snow=<intensity 0–1>`), `?power` (power lines and street lamps), `?street` (street furniture).
 const params = new URLSearchParams(location.search);
-// Power lines: Overture's base theme (only fetched while the power layer is on).
+// Power lines, lamps and street furniture: Overture's base theme (only fetched while the power
+// or street layer is on).
 const OVERTURE_BASE =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/base.pmtiles';
 const roofsParam = params.get('roofs');
@@ -94,7 +95,7 @@ const style = () =>
       : `https://api.protomaps.com/tiles/v4.json?key=${key}`,
   });
 
-// Before the map: the power layer's source is part of the first style.
+// Before the map: the power and street layers' source is part of the first style.
 if (params.has('power')) {
   toggle('power').checked = true;
   syncTabDots();

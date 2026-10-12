@@ -89,6 +89,12 @@ const heightOf = (f: FeedFeature): number | undefined => {
   }
 };
 
+/** A street lamp; Overture's id finds it in every tile and zoom (positions are quantised). */
+interface Lamp {
+  id?: string;
+  lngLat: LngLat;
+}
+
 /** Power lines: pylons and poles where they are mapped, with sagging wires between them. */
 export class PowerModule implements LayerModule {
   private ctx?: ModuleContext;
@@ -103,7 +109,7 @@ export class PowerModule implements LayerModule {
   /** Each held tile's line pieces and supports. */
   private readonly tiles = new Map<
     string,
-    { lines: LinePiece[]; supports: Support[]; lamps: LngLat[] }
+    { lines: LinePiece[]; supports: Support[]; lamps: Lamp[] }
   >();
   private network?: ReturnType<typeof buildNetwork>;
   private anchor: LngLat = [0, 0];
@@ -134,7 +140,15 @@ export class PowerModule implements LayerModule {
     if (this.options.streetLamps !== false) this.addLamps();
     this.themeChanged(ctx.core.theme);
     ctx.scene.add(this.group);
+    ctx.map.on('terrain', this.schedule);
+    ctx.map.on('sourcedata', this.onSourceData);
   }
+
+  /** The terrain's elevation tiles arrived: stand supports and lamps on the ground they now have. */
+  private readonly onSourceData = (e: { sourceId?: string }): void => {
+    const terrain = this.ctx?.map.getTerrain()?.source;
+    if (terrain && e.sourceId === terrain) this.schedule();
+  };
 
   /** Lamps glow at dusk and night: lantern and halo brightness follow the theme. */
   themeChanged(theme: Theme): void {
@@ -170,6 +184,8 @@ export class PowerModule implements LayerModule {
 
   onRemove(): void {
     clearTimeout(this.timer);
+    this.ctx?.map.off('terrain', this.schedule);
+    this.ctx?.map.off('sourcedata', this.onSourceData);
     this.feed?.dispose();
     this.feed = undefined;
     this.water?.dispose();
@@ -292,10 +308,12 @@ export class PowerModule implements LayerModule {
       .sort((a, b) => a.d - b.d)
       .slice(0, this.maxSupports)
       .map(({ i }) => i);
-    // A lamp near a tile edge is in both tiles' buffers: once each.
+    // A lamp near a tile edge is in both tiles' buffers, and in a parent and a child tile while
+    // zooming: once each, by id (by position when the data has none).
     const lamps = new Map<string, LngLat>();
     for (const t of this.tiles.values())
-      for (const p of t.lamps) lamps.set(`${p[0].toFixed(7)},${p[1].toFixed(7)}`, p);
+      for (const { id, lngLat: p } of t.lamps)
+        lamps.set(id ?? `${p[0].toFixed(7)},${p[1].toFixed(7)}`, p);
     const nearLamps = [...lamps.values()]
       .map((p) => ({ p, d: distance(p) }))
       .filter(({ d }) => d <= cutoff)
@@ -354,15 +372,20 @@ export class PowerModule implements LayerModule {
   private read(features: FeedFeature[]): {
     lines: LinePiece[];
     supports: Support[];
-    lamps: LngLat[];
+    lamps: Lamp[];
   } {
     const lines: LinePiece[] = [];
     const supports: Support[] = [];
-    const lamps: LngLat[] = [];
+    const lamps: Lamp[] = [];
     for (const f of features) {
       const cls = String(f.properties?.class);
       if (cls === LAMP_CLASS && f.geometry.type === 'Point') {
-        if (this.maxLamps > 0) lamps.push(f.geometry.coordinates as LngLat);
+        const id = f.properties?.id;
+        if (this.maxLamps > 0)
+          lamps.push({
+            ...(id !== undefined && id !== null && id !== '' ? { id: String(id) } : {}),
+            lngLat: f.geometry.coordinates as LngLat,
+          });
       } else if (SUPPORT_CLASSES.includes(cls) && f.geometry.type === 'Point') {
         const height = heightOf(f);
         supports.push({

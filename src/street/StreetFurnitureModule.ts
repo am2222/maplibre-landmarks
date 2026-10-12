@@ -36,6 +36,8 @@ export interface StreetFurnitureStats {
 
 interface Prop {
   kind: PropKind;
+  /** Overture's id: the same prop in every tile and zoom (its position is quantised per tile). */
+  id?: string;
   lngLat: LngLat;
   /** Degrees clockwise from north the prop's front faces. */
   facing: number;
@@ -83,6 +85,8 @@ export class StreetFurnitureModule implements LayerModule {
       this.group.add(mesh);
     }
     ctx.scene.add(this.group);
+    ctx.map.on('terrain', this.schedule);
+    ctx.map.on('sourcedata', this.onSourceData);
   }
 
   update(view: ViewState): void {
@@ -106,6 +110,8 @@ export class StreetFurnitureModule implements LayerModule {
 
   onRemove(): void {
     clearTimeout(this.timer);
+    this.ctx?.map.off('terrain', this.schedule);
+    this.ctx?.map.off('sourcedata', this.onSourceData);
     this.feed?.dispose();
     this.feed = undefined;
     this.ctx?.scene.remove(this.group);
@@ -148,24 +154,34 @@ export class StreetFurnitureModule implements LayerModule {
     const k = 111_320 * Math.cos((view.center[1] * Math.PI) / 180);
     const distance = ([lng, lat]: LngLat) =>
       Math.hypot((lng - view.center[0]) * k, (lat - view.center[1]) * 111_320);
-    // A prop near a tile edge is in both tiles' buffers: once each.
+    // A prop near a tile edge is in both tiles' buffers, and in a parent and a child tile while
+    // zooming: once each, by id (by position when the data has none).
     const unique = new Map<string, Prop>();
     for (const props of this.tiles.values())
       for (const p of props)
-        unique.set(`${p.kind}|${p.lngLat[0].toFixed(7)},${p.lngLat[1].toFixed(7)}`, p);
-    const chosen: Prop[] = [];
-    for (const kind of this.kinds)
-      chosen.push(
-        ...[...unique.values()]
-          .filter((p) => p.kind === kind)
-          .map((p) => ({ p, d: distance(p.lngLat) }))
-          .filter(({ d }) => d <= cutoff)
-          .sort((a, b) => a.d - b.d)
-          .slice(0, this.maxPerKind)
-          .map(({ p }) => p),
-      );
+        unique.set(p.id ?? `${p.kind}|${p.lngLat[0].toFixed(7)},${p.lngLat[1].toFixed(7)}`, p);
+    const byKind = new Map<PropKind, { p: Prop; d: number }[]>();
+    for (const p of unique.values()) {
+      const d = distance(p.lngLat);
+      if (d > cutoff) continue;
+      const list = byKind.get(p.kind);
+      if (list) list.push({ p, d });
+      else byKind.set(p.kind, [{ p, d }]);
+    }
+    const chosen = [...byKind.values()].flatMap((list) =>
+      list
+        .sort((a, b) => a.d - b.d)
+        .slice(0, this.maxPerKind)
+        .map(({ p }) => p),
+    );
     this.draw(view, chosen);
   }
+
+  /** The terrain's elevation tiles arrived: stand the props on the ground they now have. */
+  private readonly onSourceData = (e: { sourceId?: string }): void => {
+    const terrain = this.ctx?.map.getTerrain()?.source;
+    if (terrain && e.sourceId === terrain) this.schedule();
+  };
 
   private feedFor(ctx: ModuleContext): TileFeed {
     this.feed ??= new TileFeed(ctx.map as unknown as FeedMap, {
@@ -195,7 +211,13 @@ export class StreetFurnitureModule implements LayerModule {
       const kind = String(f.properties?.class) as PropKind;
       if (!this.kinds.includes(kind) || f.geometry.type !== 'Point') continue;
       const lngLat = f.geometry.coordinates as LngLat;
-      props.push({ kind, lngLat, facing: directionDeg(tagsOf(f)) ?? hashedTurnDeg(lngLat) });
+      const id = f.properties?.id;
+      props.push({
+        kind,
+        ...(id !== undefined && id !== null && id !== '' ? { id: String(id) } : {}),
+        lngLat,
+        facing: directionDeg(tagsOf(f)) ?? hashedTurnDeg(lngLat),
+      });
     }
     return props;
   }

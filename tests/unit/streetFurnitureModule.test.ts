@@ -12,23 +12,37 @@ const C: [number, number] = [2.3522, 48.8566];
 const M = 111_320;
 const KX = M * Math.cos((C[1] * Math.PI) / 180);
 const at = (east: number, north = 0): [number, number] => [C[0] + east / KX, C[1] + north / M];
-const prop = (cls: string, east: number, north = 0, tags: object = {}) => ({
-  properties: { subtype: 'pedestrian', class: cls, source_tags: JSON.stringify(tags) },
+const prop = (cls: string, east: number, north = 0, tags: object = {}, id?: string) => ({
+  properties: {
+    subtype: 'pedestrian',
+    class: cls,
+    source_tags: JSON.stringify(tags),
+    ...(id ? { id } : {}),
+  },
   geometry: { type: 'Point', coordinates: at(east, north) },
 });
 
 function setup(over: Partial<StreetFurnitureOptions> = {}, features: unknown[] = []) {
   const handlers = new Map<string, (e?: unknown) => void>();
+  const listeners = new Map<string, ((e?: unknown) => void)[]>();
   const map = {
     features,
     getSource: (id: string) => (id === 'base' ? { type: 'vector' } : undefined),
-    getTerrain: () => null,
-    queryTerrainElevation: () => 0,
+    getTerrain: (): { source: string } | null => null,
+    queryTerrainElevation: (_p: unknown): number | null => 0,
     getZoom: () => 17,
     getCenter: () => ({ lng: C[0], lat: C[1] }),
     querySourceFeatures: vi.fn(() => map.features),
-    on: vi.fn((t: string, fn: (e?: unknown) => void) => handlers.set(t, fn)),
-    off: vi.fn((t: string) => handlers.delete(t)),
+    // Several listeners per event (the module and its tile feed); handlers.get(t) calls them all.
+    on: vi.fn((t: string, fn: (e?: unknown) => void) => {
+      listeners.set(t, [...(listeners.get(t) ?? []), fn]);
+      handlers.set(t, (e?: unknown) => [...(listeners.get(t) ?? [])].forEach((f) => f(e)));
+    }),
+    off: vi.fn((t: string, fn?: (e?: unknown) => void) => {
+      const list = (listeners.get(t) ?? []).filter((f) => f !== fn);
+      listeners.set(t, list);
+      if (!list.length) handlers.delete(t);
+    }),
   };
   const scene = new Scene();
   const onError = vi.fn();
@@ -68,6 +82,40 @@ describe('StreetFurnitureModule', () => {
     const { module } = setup({}, [inTile(33196), inTile(33197)]);
     module.update(view({ center: C, zoom: 17 }));
     expect(module.getStats().total).toBe(1);
+  });
+
+  it('matches a prop by its Overture id across tiles of different zooms', () => {
+    // A parent and a child tile quantise the same bench a few millimetres apart.
+    const { module } = setup({}, [
+      prop('bench', 0, 0, {}, 'b1'),
+      prop('bench', 0.4, 0.3, {}, 'b1'),
+      prop('bench', 10, 0, {}, 'b2'), // another bench
+    ]);
+    module.update(view({ center: C, zoom: 17 }));
+    expect(module.getStats().total).toBe(2);
+  });
+
+  it('lifts props onto terrain that loads after them', () => {
+    vi.useFakeTimers();
+    const { scene, map, module, handlers } = setup({}, [prop('bench', 0)]);
+    let ground = 0;
+    map.getTerrain = () => ({ source: 'dem' });
+    map.queryTerrainElevation = () => ground;
+    module.update(view({ center: C, zoom: 17 }));
+    const y = () => {
+      const m = new Matrix4();
+      mesh(scene, 'bench').getMatrixAt(0, m);
+      return new Vector3().setFromMatrixPosition(m).y;
+    };
+    expect(y()).toBe(0);
+    ground = 50; // the DEM tiles arrived
+    handlers.get('sourcedata')!({ sourceId: 'dem' });
+    vi.advanceTimersByTime(200);
+    expect(y()).toBe(50);
+    ground = 20; // terrain exaggeration changed
+    handlers.get('terrain')!();
+    vi.advanceTimersByTime(200);
+    expect(y()).toBe(20);
   });
 
   it('gives each kind its own mesh even when listed twice', () => {
@@ -134,12 +182,13 @@ describe('StreetFurnitureModule', () => {
   });
 
   it('reports a missing source once and cleans up on removal', () => {
-    const { scene, module, onError } = setup({ source: 'nope' });
+    const { scene, module, onError, handlers } = setup({ source: 'nope' });
     module.update(view({ center: C, zoom: 17 }));
     module.update(view({ center: C, zoom: 17 }));
     expect(onError).toHaveBeenCalledTimes(1);
     module.onRemove();
     expect(scene.getObjectByName('street-furniture')).toBeUndefined();
+    expect(handlers.has('terrain')).toBe(false);
   });
 });
 
