@@ -541,7 +541,8 @@ describe('TreesModule', () => {
   });
 
   it('eases forward through the year to a new season, repainting until it lands', async () => {
-    const s = setup({ wind: { strength: 0 } });
+    // No rise: newly planted trees would keep repainting for riseMs of real time.
+    const s = setup({ wind: { strength: 0 }, riseMs: 0 });
     s.module.update(view({ center: C, zoom: 17 }));
     await flush();
     const u = uniformsOf(s.scene);

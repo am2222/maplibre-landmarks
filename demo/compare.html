@@ -14,6 +14,7 @@
           sans-serif;
       }
       body {
+        overflow: hidden;
         display: grid;
         grid-template-columns: 1fr 1fr;
         grid-template-rows: 100%;
@@ -26,6 +27,7 @@
       }
       .pane {
         position: relative;
+        overflow: hidden;
         min-width: 0;
         min-height: 0;
       }
@@ -49,7 +51,6 @@
         padding: 3px 10px;
         border-radius: 12px;
         box-shadow: 0 1px 3px #0003;
-        pointer-events: none;
         white-space: nowrap;
       }
     </style>
@@ -60,8 +61,11 @@
       <div id="map"></div>
     </div>
     <div class="pane">
-      <div class="tag" id="o2w-tag">OSM2World (dev server only)</div>
-      <iframe id="osm2world" title="OSM2World 3D map"></iframe>
+      <div class="tag" id="o2w-tag">
+        <a href="https://osm2world.org" target="_blank" rel="noopener">OSM2World</a> · ©
+        OpenStreetMap, 3DMR
+      </div>
+      <canvas id="osm2world" aria-label="OSM2World 3D map" touch-action="none"></canvas>
     </div>
     <script type="module" src="./compare.ts"></script>
   </body>

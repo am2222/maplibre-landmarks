@@ -713,7 +713,9 @@ setInterval(() => {
       : '';
   const p = power?.getStats();
   $('power-stats').textContent =
-    p && toggle('power').checked ? `${p.supports} supports · ${p.spans} spans (zoom 14+)` : '';
+    p && toggle('power').checked
+      ? `${p.supports} supports · ${p.spans} spans · ${p.lamps} lamps (zoom 14+)`
+      : '';
   const rs = rain?.getStats();
   $('rain-stats').textContent =
     rs && toggle('rain').checked

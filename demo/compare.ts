@@ -1,6 +1,4 @@
-// Our map beside OSM2World's 3D viewer, cameras kept in step: drag either one. OSM2World is served
-// through the dev server's `/osm2world` proxy (vite.config.ts), so its frame is same-origin and its
-// Babylon camera can be read and set directly. Dev server only.
+// Our map beside OSM2World's 3D viewer, cameras kept in step: drag, zoom or turn either one.
 import { Map as MlMap, addProtocol, setWorkerUrl } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -106,7 +104,21 @@ const viewOf = (): View => {
   };
 };
 
-// ---- OSM2World frame -----------------------------------------------------------------------
+// ---- OSM2World viewer ----------------------------------------------------------------------
+
+// OSM2World's own web frontend, loaded from osm2world.org (as its demo page does), drawing tiles
+// from its tile server. Its sky files have no CORS headers, so copies are served with the demo
+// (public/osm2world).
+const OSM2WORLD = 'https://osm2world.org/demo/';
+const SCRIPTS = [
+  'https://cdn.babylonjs.com/babylon.js',
+  'https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js',
+  'https://cdn.babylonjs.com/loaders/babylon.glTF2FileLoader.js',
+  'https://code.jquery.com/pep/0.4.3/pep.js',
+  `${OSM2WORLD}src/geocoords.js`,
+  `${OSM2WORLD}src/osm2world-frontend.js`,
+];
+const SKY = ['DaySkyHDRI041B.env', 'DaySkyHDRI041B.jpg'];
 
 interface XZ {
   x: number;
@@ -121,37 +133,49 @@ interface O2WCamera {
   upperBetaLimit: number;
   onViewMatrixChangedObservable: { add(fn: () => void): void };
 }
-interface O2WWindow extends Window {
-  eval(code: string): unknown;
-  BABYLON: { Vector3: new (x: number, y: number, z: number) => O2WCamera['target'] };
+interface Viewer {
+  camera: O2WCamera;
+  originLatLon: unknown;
+  setView(origin: unknown, radius: number, alpha: number, beta: number): void;
+}
+interface Babylon {
+  Vector3: new (x: number, y: number, z: number) => O2WCamera['target'];
+  Tools: { PreprocessUrl: (url: string) => string };
 }
 interface Projection {
   toXZ(latLon: unknown): XZ;
   toLatLon(xz: XZ): { lat: number; lon: number };
 }
 
-const frame = document.getElementById('osm2world') as HTMLIFrameElement;
-const start = viewOf();
-frame.src =
-  `/osm2world/demo/?lat=${start.lat}&lon=${start.lng}&radius=${radiusOf(start).toFixed(2)}` +
-  `&alpha=${alphaOf(start.bearing).toFixed(4)}&beta=${(start.pitch * RAD).toFixed(4)}`;
+/** A top-level `const`/`class` of OSM2World's classic scripts (not a property of `window`). */
+const global = <T>(name: string): T => (0, eval)(name) as T;
+
+const loadScript = (src: string) =>
+  new Promise<void>((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = () => resolve();
+    el.onerror = () => reject(new Error(`could not load ${src}`));
+    document.head.append(el);
+  });
 
 /** Which pane the user last touched: it drives the other one. */
 let driver: 'map' | 'osm2world' = 'map';
 
-function connect(w: O2WWindow): void {
-  const viewer = w.eval('viewer') as { camera: O2WCamera; originLatLon: unknown };
-  const LatLon = w.eval('LatLon') as new (lat: number, lon: number) => unknown;
-  const Proj = w.eval('OrthographicAzimuthalMapProjection') as new (origin: unknown) => Projection;
+function connect(viewer: Viewer, BABYLON: Babylon): void {
+  const LatLon = global<new (lat: number, lon: number) => unknown>('LatLon');
+  const Proj = global<new (origin: unknown) => Projection>('OrthographicAzimuthalMapProjection');
   const camera = viewer.camera;
-  // The scene stays around the origin it loaded with: tiles are placed relative to it.
+  // The scene stays around the origin it started with: tiles are placed relative to it.
+  const start = viewOf();
+  viewer.setView(new LatLon(start.lat, start.lng), radiusOf(start), 0, 0);
   const proj = new Proj(viewer.originLatLon);
 
   const push = () => {
     const v = viewOf();
     const xz = proj.toXZ(new LatLon(v.lat, v.lng));
     camera.fov = fov();
-    camera.target = new w.BABYLON.Vector3(-xz.x, 0, -xz.z);
+    camera.target = new BABYLON.Vector3(-xz.x, 0, -xz.z);
     camera.radius = radiusOf(v);
     camera.alpha = alphaOf(v.bearing);
     camera.beta = Math.min(v.pitch * RAD, camera.upperBetaLimit);
@@ -174,24 +198,39 @@ function connect(w: O2WWindow): void {
     if (driver === 'map') push();
   });
   camera.onViewMatrixChangedObservable.add(pull);
-  for (const type of ['pointerdown', 'wheel', 'touchstart'])
-    w.document.addEventListener(type, () => (driver = 'osm2world'), { capture: true });
 }
 
 for (const type of ['pointerdown', 'wheel', 'touchstart', 'keydown'])
   map.getContainer().addEventListener(type, () => (driver = 'map'), { capture: true });
+const canvas = document.getElementById('osm2world') as HTMLCanvasElement;
+for (const type of ['pointerdown', 'wheel', 'touchstart'])
+  canvas.addEventListener(type, () => (driver = 'osm2world'), { capture: true });
 
-frame.addEventListener('load', () => {
-  const w = frame.contentWindow as O2WWindow | null;
-  if (!w) return;
-  // The viewer is created by an inline script after OSM2World's own scripts load.
-  const wait = setInterval(() => {
-    try {
-      if (w.eval('typeof viewer') !== 'object') return;
-    } catch {
-      return;
-    }
-    clearInterval(wait);
-    connect(w);
-  }, 100);
+async function startOsm2World(): Promise<void> {
+  for (const src of SCRIPTS) await loadScript(src);
+  const BABYLON = (window as unknown as { BABYLON: Babylon }).BABYLON;
+  // Its sky (lighting and backdrop) from our copies: the originals are not served cross-origin.
+  BABYLON.Tools.PreprocessUrl = (url) =>
+    SKY.includes(url) ? `${import.meta.env.BASE_URL}osm2world/${url}` : url;
+  // The viewer writes its view into the page URL (?lat=…): the map's #hash is this page's URL.
+  const replaceState = history.replaceState.bind(history);
+  history.replaceState = (data, unused, url) => {
+    if (typeof url === 'string' && url.startsWith('?lat=')) return;
+    replaceState(data, unused, url);
+  };
+  const O2W = global<{
+    Viewer: { fromCanvas(id: string, roots: string[], options: unknown): Viewer };
+    defaultRenderOptions: { high: unknown };
+  }>('OSM2World');
+  const viewer = O2W.Viewer.fromCanvas(
+    'osm2world',
+    ['https://tiles.osm2world.org/glb/'],
+    O2W.defaultRenderOptions.high,
+  );
+  connect(viewer, BABYLON);
+}
+
+startOsm2World().catch((err) => {
+  console.warn('[compare] OSM2World viewer', err);
+  document.getElementById('o2w-tag')!.textContent = 'OSM2World could not load';
 });

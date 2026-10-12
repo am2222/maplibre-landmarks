@@ -1,4 +1,5 @@
 import {
+  AdditiveBlending,
   BufferGeometry,
   Float32BufferAttribute,
   Group,
@@ -7,16 +8,27 @@ import {
   LineSegments,
   Matrix4,
   MeshStandardMaterial,
+  Points,
+  PointsMaterial,
   Quaternion,
   Vector3,
 } from 'three';
 import { farCutoffM, tileNearestM } from '../core/cutoff';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
-import { localPosition, originAt } from '../core/mercator';
+import { EARTH_RADIUS_M, localPosition, originAt } from '../core/mercator';
+import type { Theme } from '../core/theme';
 import { TileFeed, type FeedFeature, type FeedMap } from '../core/tileFeed';
 import { WaterMask } from '../core/waterMask';
 import type { LngLat, Origin, ViewState } from '../core/types';
-import { attachments, sagCurve, supportGeometry } from './geometry';
+import {
+  attachments,
+  haloTexture,
+  LAMP_HEAD,
+  lampHeadGeometry,
+  lampPostGeometry,
+  sagCurve,
+  supportGeometry,
+} from './geometry';
 import { buildNetwork, type LinePiece, type Support } from './network';
 
 export interface PowerOptions {
@@ -35,6 +47,11 @@ export interface PowerOptions {
    * lines without mapped supports get no pole in water. `false` turns this off.
    */
   water?: false | { source?: string; sourceLayer?: string };
+  /**
+   * Street lamps from the same source's `street_lamp` points: posts whose lamps glow at dusk and
+   * night (default true). `maxLamps`: the nearest drawn at most (default 3000).
+   */
+  streetLamps?: boolean | { maxLamps?: number };
   onError?: (err: unknown) => void;
 }
 
@@ -43,6 +60,8 @@ export interface PowerStats {
   spans: number;
   /** Tallest support drawn, metres. */
   tallest: number;
+  /** Street lamps drawn. */
+  lamps: number;
 }
 
 const REBUILD_DEBOUNCE_MS = 150;
@@ -50,6 +69,15 @@ const REBUILD_DEBOUNCE_MS = 150;
 const WIRE_STEPS = 12;
 const LINE_CLASSES = ['power_line', 'minor_line'];
 const SUPPORT_CLASSES = ['power_tower', 'power_pole'];
+const LAMP_CLASS = 'street_lamp';
+/** Street lamps are rarely tagged with a height: a typical urban lamp post. */
+const LAMP_HEIGHT_M = 6;
+/** Width of the glow around a lit lamp head, metres. */
+const HALO_M = 9;
+/** Warm sodium-like light. */
+const LAMP_LIGHT = 0xffcf8a;
+/** How brightly the lamps glow in each theme (off by day). */
+const LAMP_GLOW: Record<Theme, number> = { day: 0, dawn: 0.5, dusk: 0.85, night: 1 };
 
 const heightOf = (f: FeedFeature): number | undefined => {
   try {
@@ -67,15 +95,21 @@ export class PowerModule implements LayerModule {
   private readonly group = new Group();
   private readonly supportMeshes = new Map<'tower' | 'pole', InstancedMesh>();
   private wires?: LineSegments<BufferGeometry, LineBasicMaterial>;
+  private lampPosts?: InstancedMesh<BufferGeometry, MeshStandardMaterial>;
+  private lampHeads?: InstancedMesh<BufferGeometry, MeshStandardMaterial>;
+  private halos?: Points<BufferGeometry, PointsMaterial>;
   private feed?: TileFeed;
   private water?: WaterMask;
   /** Each held tile's line pieces and supports. */
-  private readonly tiles = new Map<string, { lines: LinePiece[]; supports: Support[] }>();
+  private readonly tiles = new Map<
+    string,
+    { lines: LinePiece[]; supports: Support[]; lamps: LngLat[] }
+  >();
   private network?: ReturnType<typeof buildNetwork>;
   private anchor: LngLat = [0, 0];
   private view?: ViewState;
   private timer?: ReturnType<typeof setTimeout>;
-  private stats: PowerStats = { supports: 0, spans: 0, tallest: 0 };
+  private stats: PowerStats = { supports: 0, spans: 0, tallest: 0, lamps: 0 };
   private reported = false;
 
   constructor(private readonly options: PowerOptions) {
@@ -97,7 +131,20 @@ export class PowerModule implements LayerModule {
     this.wires.name = 'wires';
     this.wires.frustumCulled = false;
     this.group.add(this.wires);
+    if (this.options.streetLamps !== false) this.addLamps();
+    this.themeChanged(ctx.core.theme);
     ctx.scene.add(this.group);
+  }
+
+  /** Lamps glow at dusk and night: lantern and halo brightness follow the theme. */
+  themeChanged(theme: Theme): void {
+    const glow = LAMP_GLOW[theme] ?? 0;
+    if (this.lampHeads) this.lampHeads.material.emissiveIntensity = 1.6 * glow;
+    if (this.halos) {
+      this.halos.material.opacity = 0.75 * glow;
+      this.halos.visible = glow > 0;
+    }
+    this.ctx?.requestRepaint();
   }
 
   update(view: ViewState): void {
@@ -108,6 +155,7 @@ export class PowerModule implements LayerModule {
   place(origin: Origin): void {
     this.group.position.set(...localPosition(origin, this.anchor, 0));
     this.group.updateMatrixWorld(true);
+    if (this.halos) this.halos.material.size = this.haloSize();
   }
 
   getStats(): PowerStats {
@@ -131,6 +179,14 @@ export class PowerModule implements LayerModule {
       mesh.geometry.dispose();
       mesh.dispose();
     }
+    for (const lamp of [this.lampPosts, this.lampHeads]) {
+      lamp?.geometry.dispose();
+      lamp?.material.dispose();
+      lamp?.dispose();
+    }
+    this.halos?.geometry.dispose();
+    this.halos?.material.map?.dispose();
+    this.halos?.material.dispose();
     (this.supportMeshes.get('tower')?.material as MeshStandardMaterial | undefined)?.dispose();
     this.wires?.geometry.dispose();
     this.wires?.material.dispose();
@@ -139,6 +195,59 @@ export class PowerModule implements LayerModule {
 
   private get maxSupports(): number {
     return this.options.maxSupports ?? 2000;
+  }
+
+  private get maxLamps(): number {
+    const lamps = this.options.streetLamps;
+    return lamps === false ? 0 : ((typeof lamps === 'object' ? lamps.maxLamps : undefined) ?? 3000);
+  }
+
+  private addLamps(): void {
+    const post = new MeshStandardMaterial({ color: 0x3d4146, roughness: 0.6, metalness: 0.4 });
+    const head = new MeshStandardMaterial({
+      color: 0x2e3135,
+      emissive: LAMP_LIGHT,
+      emissiveIntensity: 0,
+      roughness: 0.4,
+    });
+    this.lampPosts = new InstancedMesh(lampPostGeometry(), post, this.maxLamps);
+    this.lampHeads = new InstancedMesh(lampHeadGeometry(), head, this.maxLamps);
+    this.halos = new Points(
+      new BufferGeometry(),
+      new PointsMaterial({
+        map: haloTexture(),
+        color: LAMP_LIGHT,
+        transparent: true,
+        depthWrite: false,
+        blending: AdditiveBlending,
+        sizeAttenuation: true,
+      }),
+    );
+    this.lampPosts.name = 'lamp-posts';
+    this.lampHeads.name = 'lamp-heads';
+    this.halos.name = 'lamp-halos';
+    for (const o of [this.lampPosts, this.lampHeads, this.halos]) {
+      if ('count' in o) o.count = 0;
+      o.frustumCulled = false;
+      this.group.add(o);
+    }
+  }
+
+  /**
+   * Point size giving the halos HALO_M metres across. Camera space is in screen pixels here (the
+   * view matrix comes from MapLibre's), and three scales a point by half the drawing-buffer
+   * height over its depth: so metres × pixels per metre over tan(fov / 2).
+   */
+  private haloSize(): number {
+    const map = this.ctx?.map as
+      | { getZoom(): number; getCenter(): { lat: number }; getVerticalFieldOfView?(): number }
+      | undefined;
+    if (!map) return 1;
+    const lat = map.getCenter().lat;
+    const pixelsPerMetre =
+      (512 * 2 ** map.getZoom()) / (2 * Math.PI * EARTH_RADIUS_M * Math.cos((lat * Math.PI) / 180));
+    const fov = ((map.getVerticalFieldOfView?.() ?? 36.87) * Math.PI) / 180;
+    return (HALO_M * pixelsPerMetre) / Math.tan(fov / 2);
   }
 
   private readonly schedule = (): void => {
@@ -165,7 +274,7 @@ export class PowerModule implements LayerModule {
     if (!active || !ctx.map.getSource(this.options.source)) {
       this.feed?.suspend();
       this.water?.suspend();
-      this.draw(view, []);
+      this.draw(view, [], []);
       return;
     }
     this.network ??= buildNetwork(
@@ -183,18 +292,24 @@ export class PowerModule implements LayerModule {
       .sort((a, b) => a.d - b.d)
       .slice(0, this.maxSupports)
       .map(({ i }) => i);
-    this.draw(view, chosen);
+    // A lamp near a tile edge is in both tiles' buffers: once each.
+    const lamps = new Map<string, LngLat>();
+    for (const t of this.tiles.values())
+      for (const p of t.lamps) lamps.set(`${p[0].toFixed(7)},${p[1].toFixed(7)}`, p);
+    const nearLamps = [...lamps.values()]
+      .map((p) => ({ p, d: distance(p) }))
+      .filter(({ d }) => d <= cutoff)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, this.maxLamps)
+      .map(({ p }) => p);
+    this.draw(view, chosen, nearLamps);
   }
 
   private feedFor(ctx: ModuleContext): TileFeed {
     this.feed ??= new TileFeed(ctx.map as unknown as FeedMap, {
       source: this.options.source,
       sourceLayer: this.options.sourceLayer ?? 'infrastructure',
-      filter: [
-        'all',
-        ['==', ['get', 'subtype'], 'power'],
-        ['in', ['get', 'class'], ['literal', [...SUPPORT_CLASSES, ...LINE_CLASSES]]],
-      ],
+      filter: this.filter(),
       wants: (key) =>
         key === '*' ||
         !this.view ||
@@ -213,6 +328,15 @@ export class PowerModule implements LayerModule {
     return this.feed;
   }
 
+  private filter(): unknown[] {
+    const power = [
+      'all',
+      ['==', ['get', 'subtype'], 'power'],
+      ['in', ['get', 'class'], ['literal', [...SUPPORT_CLASSES, ...LINE_CLASSES]]],
+    ];
+    return this.maxLamps > 0 ? ['any', power, ['==', ['get', 'class'], LAMP_CLASS]] : power;
+  }
+
   private waterFor(ctx: ModuleContext): WaterMask | undefined {
     const water = this.options.water;
     if (water === false) return undefined;
@@ -227,12 +351,19 @@ export class PowerModule implements LayerModule {
     return this.water;
   }
 
-  private read(features: FeedFeature[]): { lines: LinePiece[]; supports: Support[] } {
+  private read(features: FeedFeature[]): {
+    lines: LinePiece[];
+    supports: Support[];
+    lamps: LngLat[];
+  } {
     const lines: LinePiece[] = [];
     const supports: Support[] = [];
+    const lamps: LngLat[] = [];
     for (const f of features) {
       const cls = String(f.properties?.class);
-      if (SUPPORT_CLASSES.includes(cls) && f.geometry.type === 'Point') {
+      if (cls === LAMP_CLASS && f.geometry.type === 'Point') {
+        if (this.maxLamps > 0) lamps.push(f.geometry.coordinates as LngLat);
+      } else if (SUPPORT_CLASSES.includes(cls) && f.geometry.type === 'Point') {
         const height = heightOf(f);
         supports.push({
           lngLat: f.geometry.coordinates as LngLat,
@@ -251,11 +382,11 @@ export class PowerModule implements LayerModule {
         for (const coords of parts) lines.push({ id, kind, coords });
       }
     }
-    return { lines, supports };
+    return { lines, supports, lamps };
   }
 
   /** Instance the chosen supports and string the wires between them, around the view centre. */
-  private draw(view: ViewState, chosen: number[]): void {
+  private draw(view: ViewState, chosen: number[], lamps: LngLat[]): void {
     const ctx = this.ctx!;
     const net = this.network;
     this.anchor = view.center;
@@ -308,7 +439,35 @@ export class PowerModule implements LayerModule {
       spans++;
     }
     this.wires!.geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
-    this.stats = { supports: chosen.length, spans, tallest };
+    this.drawLamps(lamps, origin, ground);
+    this.stats = { supports: chosen.length, spans, tallest, lamps: lamps.length };
     ctx.requestRepaint();
+  }
+
+  /** Posts, lamp heads and their halos; each turned its own way (the street side is unknown). */
+  private drawLamps(lamps: LngLat[], origin: Origin, ground: (p: LngLat) => number): void {
+    if (!this.lampPosts || !this.lampHeads || !this.halos) return;
+    const m = new Matrix4();
+    const q = new Quaternion();
+    const up = new Vector3(0, 1, 0);
+    const scale = new Vector3(LAMP_HEIGHT_M, LAMP_HEIGHT_M, LAMP_HEIGHT_M);
+    const halos: number[] = [];
+    lamps.forEach((p, i) => {
+      const base = new Vector3(...localPosition(origin, p, ground(p)));
+      // A stable turn per lamp from its position.
+      const turn = ((Math.abs(Math.sin(p[0] * 12_989.8 + p[1] * 78_233.1)) * 43_758.5) % 1) * 2;
+      q.setFromAxisAngle(up, turn * Math.PI);
+      m.compose(base, q, scale);
+      this.lampPosts!.setMatrixAt(i, m);
+      this.lampHeads!.setMatrixAt(i, m);
+      const head = new Vector3(LAMP_HEAD[0], LAMP_HEAD[1], 0).multiplyScalar(LAMP_HEIGHT_M);
+      head.applyQuaternion(q).add(base);
+      halos.push(head.x, head.y, head.z);
+    });
+    for (const mesh of [this.lampPosts, this.lampHeads]) {
+      mesh.count = lamps.length;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    this.halos.geometry.setAttribute('position', new Float32BufferAttribute(halos, 3));
   }
 }
