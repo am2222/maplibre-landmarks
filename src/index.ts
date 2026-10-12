@@ -45,6 +45,16 @@ export { LabelOcclusion, type LabelOcclusionOptions } from './labels/LabelOcclus
 export { LABEL_STATE } from './labels/opacity';
 export { PowerLinesLayer, type PowerLinesLayerOptions } from './power/PowerLayer';
 export { PowerModule, type PowerOptions, type PowerStats } from './power/PowerModule';
+export {
+  StreetFurnitureLayer,
+  type StreetFurnitureLayerOptions,
+} from './street/StreetFurnitureLayer';
+export {
+  StreetFurnitureModule,
+  type StreetFurnitureOptions,
+  type StreetFurnitureStats,
+} from './street/StreetFurnitureModule';
+export { PROP_KINDS, type PropKind } from './street/props';
 export { TreesLayer, type TreesLayerOptions } from './trees/TreesLayer';
 export {
   TreesModule,

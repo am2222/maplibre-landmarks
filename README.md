@@ -2,7 +2,7 @@
 
 3D for [MapLibre GL JS](https://maplibre.org), rendered with [three.js](https://threejs.org):
 [Open Landmarks](https://open-landmarks.benmaps.fr) models, real roof shapes, trees,
-volumetric fog, animated water, power lines and street lamps, on one shared 3D core.
+volumetric fog, animated water, power lines, street lamps and street furniture, on one shared 3D core.
 
 > [!WARNING]
 > **Experimental and AI-generated.** This project is largely written with AI assistance and is
@@ -34,7 +34,7 @@ map.on('load', () => {
 });
 ```
 
-Roofs, trees, fog, clouds, rain, snow, water, power lines and street lamps: see the [guide](https://am2222.github.io/maplibre-landmarks/guide/getting-started).
+Roofs, trees, fog, clouds, rain, snow, water, power lines, street lamps and street furniture: see the [guide](https://am2222.github.io/maplibre-landmarks/guide/getting-started).
 
 ## Development
 
