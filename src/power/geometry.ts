@@ -1,4 +1,4 @@
-import { BoxGeometry, BufferGeometry, CylinderGeometry } from 'three';
+import { BoxGeometry, BufferGeometry, CylinderGeometry, DataTexture } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 type Vec3 = [number, number, number];
@@ -32,6 +32,46 @@ export function supportGeometry(kind: 'tower' | 'pole'): BufferGeometry {
   if (!merged) throw new Error('power support geometry');
   merged.computeVertexNormals();
   return merged;
+}
+
+/** Street lamp proportions, unit height: an arm reaching out from the top to the lamp head. */
+const LAMP_ARM = 0.13;
+/** Where the lamp head hangs on a post of unit height: (along the arm, height). */
+export const LAMP_HEAD: readonly [number, number] = [LAMP_ARM, 0.95];
+
+/** A street lamp post of unit height with its arm along x (the head is drawn on its own). */
+export function lampPostGeometry(): BufferGeometry {
+  const merged = mergeGeometries(
+    [
+      new CylinderGeometry(0.009, 0.016, 1, 6).translate(0, 0.5, 0).toNonIndexed(),
+      box(LAMP_ARM, 0.008, 0.008, 0.98).translate(LAMP_ARM / 2, 0, 0),
+    ].map((g) => g.deleteAttribute('uv')),
+  );
+  if (!merged) throw new Error('lamp post geometry');
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/** The lamp head: a flat lantern at the arm's end (scaled with the post). */
+export function lampHeadGeometry(): BufferGeometry {
+  const head = box(0.07, 0.025, 0.045, LAMP_HEAD[1]).translate(LAMP_HEAD[0], 0, 0);
+  head.deleteAttribute('uv');
+  head.computeVertexNormals();
+  return head;
+}
+
+/** A soft round glow (white, alpha falling off from the centre) for the lamp halos. */
+export function haloTexture(size = 64): DataTexture {
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const r = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2) / (size / 2);
+      const a = Math.max(0, 1 - r) ** 2;
+      data.set([255, 255, 255, Math.round(a * 255)], (y * size + x) * 4);
+    }
+  const texture = new DataTexture(data, size, size);
+  texture.needsUpdate = true;
+  return texture;
 }
 
 /** Where the wires hang on a support of unit height: (across the line, height). */

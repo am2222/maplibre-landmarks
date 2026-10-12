@@ -50,7 +50,7 @@ const OVERTURE_BUILDINGS =
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
 // `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?clouds` (or
 // `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
-// `?snow=<intensity 0–1>`).
+// `?snow=<intensity 0–1>`), `?power` (power lines and street lamps).
 const params = new URLSearchParams(location.search);
 // Power lines: Overture's base theme (only fetched while the power layer is on).
 const OVERTURE_BASE =
@@ -92,6 +92,12 @@ const style = () =>
       ? `pmtiles://${pmtilesUrl}`
       : `https://api.protomaps.com/tiles/v4.json?key=${key}`,
   });
+
+// Before the map: the power layer's source is part of the first style.
+if (params.has('power')) {
+  toggle('power').checked = true;
+  syncTabDots();
+}
 
 const map = new MlMap({
   container: 'map',
@@ -713,7 +719,9 @@ setInterval(() => {
       : '';
   const p = power?.getStats();
   $('power-stats').textContent =
-    p && toggle('power').checked ? `${p.supports} supports · ${p.spans} spans (zoom 14+)` : '';
+    p && toggle('power').checked
+      ? `${p.supports} supports · ${p.spans} spans · ${p.lamps} lamps (zoom 14+)`
+      : '';
   const rs = rain?.getStats();
   $('rain-stats').textContent =
     rs && toggle('rain').checked

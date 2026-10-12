@@ -147,6 +147,7 @@ export class LandmarksModule implements LayerModule {
 
   update(view: ViewState): void {
     const run = ++this.run;
+    this.replacement?.refresh();
     if (view.zoom < DISCOVERY_MIN_ZOOM) {
       this.residency.setWanted([]);
       return;

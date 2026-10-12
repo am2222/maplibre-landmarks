@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Compare with OSM2World</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font:
+          13px system-ui,
+          sans-serif;
+      }
+      body {
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 100%;
+      }
+      @media (max-width: 800px) {
+        body {
+          grid-template-columns: 100%;
+          grid-template-rows: 1fr 1fr;
+        }
+      }
+      .pane {
+        position: relative;
+        overflow: hidden;
+        min-width: 0;
+        min-height: 0;
+      }
+      #map,
+      #osm2world {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+      }
+      #osm2world {
+        border-left: 2px solid #333;
+      }
+      .tag {
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 2;
+        background: #fffe;
+        padding: 3px 10px;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px #0003;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pane">
+      <div class="tag">maplibre-landmarks</div>
+      <div id="map"></div>
+    </div>
+    <div class="pane">
+      <div class="tag" id="o2w-tag">
+        <a href="https://osm2world.org" target="_blank" rel="noopener">OSM2World</a> · ©
+        OpenStreetMap, 3DMR
+      </div>
+      <canvas id="osm2world" aria-label="OSM2World 3D map" touch-action="none"></canvas>
+    </div>
+    <script type="module" src="./compare.ts"></script>
+  </body>
+</html>

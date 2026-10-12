@@ -4,6 +4,9 @@ import type { LayerModule } from './LayerModule';
 import { acquireCore, releaseCore, type RendererFactory, type ThreeCore } from './ThreeCore';
 import type { ViewState } from './types';
 
+/** Half a 60 Hz display frame. */
+const HALF_FRAME_MS = 8;
+
 export function viewStateOf(map: MlMap): ViewState {
   const b = map.getBounds();
   const c = map.getCenter();
@@ -32,6 +35,8 @@ export class ModuleLayer implements CustomLayerInterface {
   private core?: ThreeCore;
   private scene?: Scene;
   private timer?: ReturnType<typeof setTimeout>;
+  /** Pending repaint of a module that asked to wait before its next frame. */
+  private frameTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     readonly id: string,
@@ -58,6 +63,7 @@ export class ModuleLayer implements CustomLayerInterface {
   onRemove(_map?: MlMap, _gl?: WebGL2RenderingContext): void {
     if (!this.map) return; // already torn down (e.g. by a style swap)
     clearTimeout(this.timer);
+    clearTimeout(this.frameTimer);
     this.map.off('moveend', this.onMoveEnd);
     this.map.off('style.load', this.onStyleLoad);
     this.core?.unregister(this.module);
@@ -87,7 +93,17 @@ export class ModuleLayer implements CustomLayerInterface {
       );
     }
     // Animations keep running while drawing is skipped, so fades never freeze half-way.
-    if (this.module.frame?.(performance.now())) this.map.triggerRepaint();
+    const next = this.module.frame?.(performance.now());
+    // Any frame (the camera moving, another layer animating) restarts the wait.
+    clearTimeout(this.frameTimer);
+    if (next === true) this.map.triggerRepaint();
+    else if (typeof next === 'number' && next > 0)
+      // The repaint lands on the next display frame after the timer: start half a frame early so
+      // a 33 ms wait gives 30 fps rather than 20.
+      this.frameTimer = setTimeout(
+        () => this.map?.triggerRepaint(),
+        Math.max(0, next - HALF_FRAME_MS),
+      );
   }
 
   /** setStyle never calls onRemove on custom layers: re-sync, or tear down if the layer is gone. */

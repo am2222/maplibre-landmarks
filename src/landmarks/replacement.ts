@@ -193,6 +193,12 @@ interface Followed {
   feed: TileFeed;
   /** Claims found in each held tile. */
   tiles: Map<string, Map<string, Claimed>>;
+  /**
+   * Claims of dropped tiles, kept while their landmarks stay: MapLibre takes a tile back from
+   * its cache without an event (panning back, zoom levels swapping in a pitched view), and its
+   * buildings would show through the model until the next one.
+   */
+  kept: Map<string, Claimed>;
 }
 
 /**
@@ -255,6 +261,11 @@ export class BuildingReplacement {
     this.apply();
   }
 
+  /** The camera settled: read the tiles MapLibre took back from its cache (no event for them). */
+  refresh(): void {
+    if (this.regions.length) this.schedule();
+  }
+
   /** Forget state tied to a replaced style without touching the map. */
   reset(): void {
     this.originals.clear();
@@ -262,6 +273,7 @@ export class BuildingReplacement {
     for (const f of this.followed.values()) {
       f.feed.reset();
       f.tiles.clear();
+      f.kept.clear();
     }
     this.claimed.clear();
     this.applied.clear();
@@ -374,6 +386,7 @@ export class BuildingReplacement {
       ...before.filter((r) => !now.has(r.key)),
       ...this.regions.filter((r) => !was.has(r.key)),
     ].map((r) => r.bbox);
+    for (const f of this.followed.values()) keepOwners(f.kept, now);
     for (const sourceKey of wanted) {
       const f = this.follow(sourceKey);
       const arrived = (this.arrived = new Set<string>());
@@ -398,9 +411,11 @@ export class BuildingReplacement {
     if (known) return known;
     const target = this.targets().find((t) => `${t.source}/${t.sourceLayer ?? ''}` === sourceKey)!;
     const tiles = new Map<string, Map<string, Claimed>>();
+    const kept = new Map<string, Claimed>();
     const followed: Followed = {
       target,
       tiles,
+      kept,
       feed: new TileFeed(this.map as unknown as FeedMap, {
         source: target.source,
         ...(target.sourceLayer ? { sourceLayer: target.sourceLayer } : {}),
@@ -414,8 +429,11 @@ export class BuildingReplacement {
           else this.schedule();
         },
         onDrop: (key) => {
-          if (tiles.delete(key)) this.claimsChanged = true;
-          if (!this.arrived) this.schedule();
+          // Its buildings stay hidden: the claimed set does not change.
+          const claims = tiles.get(key);
+          if (!claims) return;
+          tiles.delete(key);
+          for (const [k, c] of claims) for (const o of c.owners) claimInto(kept, k, c.feature, o);
         },
       }),
     };
@@ -467,7 +485,10 @@ export class BuildingReplacement {
         for (const owner of c.owners) claimInto(next, k, c.feature, owner);
     };
     merge(this.idClaims);
-    for (const f of this.followed.values()) for (const claims of f.tiles.values()) merge(claims);
+    for (const f of this.followed.values()) {
+      for (const claims of f.tiles.values()) merge(claims);
+      merge(f.kept);
+    }
     this.claimed = next;
   }
 
@@ -540,6 +561,14 @@ const at = (t: Target, id: number | string): FeatureIdentifier => ({
   sourceLayer: t.sourceLayer,
   id,
 });
+
+/** Drop the owners no longer in `current`, and the claims left without one. */
+function keepOwners(claims: Map<string, Claimed>, current: Set<string>): void {
+  for (const [k, c] of claims) {
+    c.owners = c.owners.filter((o) => current.has(o));
+    if (!c.owners.length) claims.delete(k);
+  }
+}
 
 function claimInto(
   claims: Map<string, Claimed>,

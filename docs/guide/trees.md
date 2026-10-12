@@ -11,8 +11,8 @@ Trees come from Protomaps `pois` points with `kind=tree` (zoom 15+ tiles). Green
 (`forest`, `wood`, `park` by default) are filled with seeded, stable trees only where mapped trees
 are sparse. The nearest `maxTrees` (4000) are drawn from zoom 16, with cheap impostors beyond
 `lodDistanceM` (300 m). The `source` must be used by at least one style layer (MapLibre only loads
-tiles for used sources; a basemap source always is). Trees sway with `wind: { strength, directionDeg }` (`setWind`), and calm
-wind stops the repaint loop.
+tiles for used sources; a basemap source always is). Trees sway with `wind: { strength, directionDeg, fps }` (`setWind`). Each sway frame redraws the
+whole map, so while nothing else moves the sway runs at `fps` (30); calm wind stops the repaint loop.
 
 | Option                                  | Default                                     | Description                                                               |
 | --------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
@@ -29,7 +29,7 @@ wind stops the repaint loop.
 | `avoidWater` | `true` | No scattered tree in water (lakes and streams inside parks and woods); mapped trees stay |
 | `riseMs` | `400` | A newly shown tree rises from the ground over this time (`0`: appears at once) |
 | `scatterSkipRatio`                      | `0.25`                                      | Don't scatter a tile piece whose mapped trees reach this share of its target |
-| `wind`                                  | `{ strength: 1, directionDeg: 250 }`        | Direction the wind blows from                                             |
+| `wind`                                  | `{ strength: 1, directionDeg: 250, fps: 30 }` | Direction the wind blows from; `fps` caps the sway frame rate while the map is otherwise still (`0`: every frame) |
 | `season` | `'summer'` | `'spring'`, `'summer'`, `'autumn'`, `'winter'`, `'auto'` or a number (0 spring … 3 winter); see [Seasons](#seasons) |
 | `snow` | `true` | Snow on evergreens and bare branches in winter |
 | `theme`                                 | —                                           | Sets the map-wide theme                                                   |

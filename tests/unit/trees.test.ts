@@ -509,10 +509,23 @@ describe('TreesModule', () => {
     expect(s.module.frame(1000)).toBe(false); // nothing drawn yet
     s.module.update(view({ center: C, zoom: 17 }));
     await flush();
-    expect(s.module.frame(2000)).toBe(true);
+    expect(s.module.frame(2000)).toBeTruthy(); // a frame now, or after the wind's frame time
     expect(uniformsOf(s.scene).uTime.value).toBe(2);
     s.module.setWind({ strength: 0 });
     expect(s.module.frame(3000)).toBe(false);
+  });
+
+  it('sways at the wind frame rate once nothing else animates', async () => {
+    const s = setup({ riseMs: 400 });
+    s.module.update(view({ center: C, zoom: 17 }));
+    await flush();
+    const now = performance.now();
+    expect(s.module.frame(now)).toBe(true); // rising: every frame
+    expect(s.module.frame(now + 1000)).toBeCloseTo(1000 / 30, 6); // standing, swaying: 30 fps
+    s.module.setWind({ fps: 10 });
+    expect(s.module.frame(now + 2000)).toBeCloseTo(100, 6);
+    s.module.setWind({ fps: 0 }); // as often as the map draws
+    expect(s.module.frame(now + 3000)).toBe(true);
   });
 
   it('starts in summer with snow on, or in the season given', async () => {
@@ -528,7 +541,8 @@ describe('TreesModule', () => {
   });
 
   it('eases forward through the year to a new season, repainting until it lands', async () => {
-    const s = setup({ wind: { strength: 0 } });
+    // No rise: newly planted trees would keep repainting for riseMs of real time.
+    const s = setup({ wind: { strength: 0 }, riseMs: 0 });
     s.module.update(view({ center: C, zoom: 17 }));
     await flush();
     const u = uniformsOf(s.scene);
@@ -561,6 +575,21 @@ describe('TreesModule', () => {
     s.module.frame(6000);
     s.module.frame(9000);
     expect(s.module.getSeason()).toBeCloseTo(0, 1); // Sydney, October: spring
+  });
+
+  it("'auto' starts at today's season and does not re-animate as the clock moves on", () => {
+    vi.useFakeTimers({ now: new Date('2026-10-15T12:00:00Z'), toFake: ['Date'] });
+    const s = setup({ season: 'auto', wind: { strength: 0 } });
+    s.module.update(view({ center: C, zoom: 17 }));
+    expect(s.module.getSeason()).toBeCloseTo(2, 1); // at once, not eased in from summer
+    expect(s.module.frame(0)).toBe(false);
+    vi.setSystemTime(new Date('2026-10-15T12:10:00Z')); // a pan ten minutes later
+    s.module.update(view({ center: [C[0] + 0.01, C[1]], zoom: 17 }));
+    expect(s.module.frame(1000)).toBe(false); // nothing visible changed: no redraw loop
+    s.module.update(view({ center: [151.2, -33.9], zoom: 17 }));
+    s.module.frame(2000);
+    s.module.frame(2750);
+    expect(s.module.getSeason()).toBeCloseTo(3, 0); // another hemisphere: eases over, mid-way
   });
 
   it('toggles snow', async () => {

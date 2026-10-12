@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Scene, type InstancedMesh, type LineSegments } from 'three';
+import {
+  Scene,
+  type InstancedMesh,
+  type LineSegments,
+  type MeshStandardMaterial,
+  type Points,
+  type PointsMaterial,
+} from 'three';
 import type { ModuleContext } from '../../src/core/LayerModule';
 import { PowerModule, type PowerOptions } from '../../src/power/PowerModule';
 import { view } from './helpers';
@@ -11,6 +18,10 @@ const at = (east: number, north = 0): [number, number] => [C[0] + east / KX, C[1
 const towerAt = (east: number, tags = '{"power":"tower"}') => ({
   properties: { subtype: 'power', class: 'power_tower', source_tags: tags },
   geometry: { type: 'Point', coordinates: at(east) },
+});
+const lampAt = (east: number, north = 0) => ({
+  properties: { subtype: 'transportation', class: 'street_lamp' },
+  geometry: { type: 'Point', coordinates: at(east, north) },
 });
 const line = (id: string, from: number, to: number, cls = 'power_line') => ({
   properties: { subtype: 'power', class: cls, id },
@@ -117,5 +128,58 @@ describe('PowerModule', () => {
     module.onRemove();
     expect(scene.getObjectByName('power')).toBeUndefined();
     expect(map.handlers.has('sourcedata')).toBe(false);
+  });
+
+  it('stands a post at each street lamp, its head and halo lit only at dusk and night', () => {
+    const { scene, module, requestRepaint } = setup({}, [lampAt(0), lampAt(30), lampAt(0, 30)]);
+    module.update(view({ center: C, zoom: 16 }));
+    expect(module.getStats().lamps).toBe(3);
+    const posts = meshes(scene).find((m) => m.name === 'lamp-posts') as InstancedMesh;
+    const heads = meshes(scene).find((m) => m.name === 'lamp-heads') as InstancedMesh;
+    const halos = meshes(scene).find((m) => m.name === 'lamp-halos') as Points;
+    expect(posts.count).toBe(3);
+    expect(heads.count).toBe(3);
+    expect(halos.geometry.getAttribute('position').count).toBe(3);
+    const head = heads.material as MeshStandardMaterial;
+    expect(head.emissiveIntensity).toBe(0); // day: unlit
+    expect(halos.visible).toBe(false);
+    requestRepaint.mockClear();
+    module.themeChanged('night');
+    expect(head.emissiveIntensity).toBeGreaterThan(0);
+    expect(halos.visible).toBe(true);
+    expect((halos.material as PointsMaterial).opacity).toBeGreaterThan(0);
+    expect(requestRepaint).toHaveBeenCalled();
+  });
+
+  it('sizes the halos in metres: the same lamp looks twice as big one zoom in', () => {
+    const { map, scene, module } = setup({}, [lampAt(0)]);
+    module.update(view({ center: C, zoom: 16 }));
+    const halos = meshes(scene).find((m) => m.name === 'lamp-halos') as Points;
+    const size = (zoom: number) => {
+      map.getZoom = () => zoom;
+      module.place({ x: 0.5, y: 0.5, scale: 1e-8 });
+      return (halos.material as PointsMaterial).size;
+    };
+    expect(size(17) / size(16)).toBeCloseTo(2, 6);
+  });
+
+  it('draws the nearest lamps up to maxLamps, and none with streetLamps: false', () => {
+    const lamps = [lampAt(0), lampAt(10), lampAt(500)];
+    const capped = setup({ streetLamps: { maxLamps: 2 } }, lamps);
+    capped.module.update(view({ center: C, zoom: 16 }));
+    expect(capped.module.getStats().lamps).toBe(2);
+    const off = setup({ streetLamps: false }, [
+      ...lamps,
+      line('a', 0, 300),
+      towerAt(0),
+      towerAt(300),
+    ]);
+    off.module.update(view({ center: C, zoom: 16 }));
+    expect(off.module.getStats()).toMatchObject({ lamps: 0, supports: 2 });
+    const [, options] = off.map.querySourceFeatures.mock.calls[0] as unknown as [
+      string,
+      { filter: unknown[] },
+    ];
+    expect(JSON.stringify(options.filter)).not.toContain('street_lamp');
   });
 });

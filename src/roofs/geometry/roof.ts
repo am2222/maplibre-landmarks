@@ -84,6 +84,7 @@ export function buildRoof(
    */
   attached: Vec2[] = [],
 ): BuiltRoof | null {
+  if (polygons.length > 1) return piecewiseRoof(props, polygons, variance, attached);
   const outers = polygons.map((rings) => open(rings[0] ?? []));
   const outer = outers.reduce((best, r) => (area(r) > area(best) ? r : best), outers[0] ?? []);
   if (outer.length < 3 || area(outer) < 1e-6) return null;
@@ -133,4 +134,30 @@ export function buildRoof(
       };
     }
   }
+}
+
+/**
+ * A footprint of separate pieces (a stand mapped as one building of small blocks) gets a roof per
+ * piece, as OSM2World builds one building part per outer ring: one frame over every piece would
+ * carry a slope across the gaps, tens of metres above the roof height. The walls are shortened by
+ * the tallest piece roof; lower ones (a default pitch over a narrower piece) sit on the same eaves.
+ */
+function piecewiseRoof(
+  props: RoofProps,
+  polygons: Vec2[][][],
+  variance: number,
+  attached: Vec2[],
+): BuiltRoof | null {
+  const built = polygons
+    .map((rings) => buildRoof(props, [rings], variance, attached))
+    .filter((r): r is BuiltRoof => r !== null);
+  if (!built.length) return null;
+  return {
+    mesh: {
+      positions: built.flatMap((r) => r.mesh.positions),
+      normals: built.flatMap((r) => r.mesh.normals),
+      colors: built.flatMap((r) => r.mesh.colors),
+    },
+    roofHeight: Math.max(...built.map((r) => r.roofHeight)),
+  };
 }

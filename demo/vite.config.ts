@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 
-// DEMO_SITE=1: the demo, roof gallery and tree seasons for the documentation site (GitHub Pages), served
+// DEMO_SITE=1: the demo, roof gallery, tree seasons and OSM2World comparison for the documentation site (GitHub Pages), served
 // under /maplibre-landmarks/demo/ next to the VitePress build. The e2e pages are not published.
 const site = process.env.DEMO_SITE === '1';
 const page = (name: string) => resolve(import.meta.dirname, name);
@@ -34,6 +34,7 @@ export default defineConfig({
             main: page('index.html'),
             roofs: page('roofs-gallery.html'),
             seasons: page('tree-seasons.html'),
+            compare: page('compare.html'),
           }
         : {
             main: page('index.html'),
@@ -41,6 +42,7 @@ export default defineConfig({
             trees: page('e2e-trees.html'),
             roofs: page('roofs-gallery.html'),
             seasons: page('tree-seasons.html'),
+            compare: page('compare.html'),
           },
     },
   },

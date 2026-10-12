@@ -238,6 +238,26 @@ describe('ModuleLayer', () => {
     layer.onRemove(map as unknown as MlMap, gl);
   });
 
+  it('waits the delay a module asks for before requesting the next frame', () => {
+    vi.useFakeTimers();
+    const map = fakeMap();
+    const layer = new ModuleLayer('slow', moduleSpy(40 as unknown as boolean), {
+      rendererFactory: () => fakeRenderer(),
+    });
+    layer.onAdd(map as unknown as MlMap, gl);
+    layer.render(gl, frame());
+    vi.advanceTimersByTime(30);
+    layer.render(gl, frame()); // the map redrew anyway (camera moving): wait from here
+    vi.advanceTimersByTime(31); // 40 ms, less half a display frame for the repaint to land
+    expect(map.triggerRepaint).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(map.triggerRepaint).toHaveBeenCalledTimes(1);
+    layer.render(gl, frame());
+    layer.onRemove(map as unknown as MlMap, gl);
+    vi.advanceTimersByTime(100);
+    expect(map.triggerRepaint).toHaveBeenCalledTimes(1);
+  });
+
   it('compiles queued models inside the render callback, then resolves', async () => {
     const map = fakeMap();
     let finish!: () => void;

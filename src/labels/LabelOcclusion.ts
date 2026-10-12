@@ -14,7 +14,10 @@ export interface LabelOcclusionOptions {
   id?: string;
   /** Label layers to manage; default: point labels of POI and building layers. */
   labelLayers?: string[];
-  /** Below this zoom every label is shown. */
+  /**
+   * Below this zoom every label is shown (default 14, where landmarks and 3D buildings start:
+   * from any later zoom, labels would show over them until it).
+   */
   minZoom?: number;
   fadeMs?: number;
   /** Labels probed at once, nearest to the screen centre first. */
@@ -23,6 +26,7 @@ export interface LabelOcclusionOptions {
 }
 
 const PROBE_PX = 4;
+const MIN_ZOOM = 14;
 type Listener = (e?: { sourceDataType?: string; sourceId?: string }) => void;
 
 const nextFrame = (fn: (now: number) => void): void => {
@@ -118,7 +122,7 @@ export class LabelOcclusion implements CustomLayerInterface {
     if (!map || this.failed) return;
     if (
       args.defaultProjectionData.projectionTransition > 0 ||
-      map.getZoom() < (this.options.minZoom ?? 15)
+      map.getZoom() < (this.options.minZoom ?? MIN_ZOOM)
     ) {
       this.probing = false;
       this.showAll();
@@ -167,7 +171,7 @@ export class LabelOcclusion implements CustomLayerInterface {
     this.opacity?.wrap(layers);
     this.scanner.setExemptions(exemptionsFor(map));
     const next =
-      map.getZoom() >= (this.options.minZoom ?? 15) && !this.hidden()
+      map.getZoom() >= (this.options.minZoom ?? MIN_ZOOM) && !this.hidden()
         ? this.scanner.scan(layers, this.options.maxLabels ?? 256)
         : [];
     // Labels whose roof lookup was deferred get their turn soon, not at the next idle.

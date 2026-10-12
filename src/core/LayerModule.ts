@@ -19,8 +19,11 @@ export interface LayerModule {
   update(view: ViewState): void;
   /** Called every frame: position objects in metres relative to `origin` (glTF axes). */
   place(origin: Origin): void;
-  /** Optional per-frame animation; return true to request another frame. */
-  frame?(timeMs: number): boolean;
+  /**
+   * Optional per-frame animation: return true to request another frame, or the milliseconds to
+   * wait before the next one (a slow animation need not redraw the whole map every frame).
+   */
+  frame?(timeMs: number): boolean | number;
   /**
    * The map's style was replaced (`style.load`). MapLibre does not call onRemove on a style
    * swap, so modules must drop state tied to the old style. `attached` is false when the new

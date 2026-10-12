@@ -1,7 +1,8 @@
-# Power lines
+# Power lines and street lamps
 
 `PowerLinesLayer` draws the power grid: steel pylons and poles where they are mapped, with
-three sagging wires per span between them. Data comes from
+three sagging wires per span between them. It also stands street lamps along the streets, which
+light up at dusk and night. Data comes from
 [Overture's base theme](https://docs.overturemaps.org/guides/base/) (OpenStreetMap power
 features), whose prebuilt tiles carry an `infrastructure` layer.
 
@@ -30,6 +31,10 @@ any layer, for example an invisible line layer on `infrastructure`.
 - Supports are turned across their line; wires hang from the arm tips and the top, sagging 3% of
   the span.
 - Buried `cable`s and substations are left out.
+- **Street lamps** come from the same layer's `street_lamp` points (OSM `highway=street_lamp`):
+  a 6 m post with an arm and a lantern, each turned its own way. The lanterns glow in the
+  `dawn`, `dusk` and `night` themes, with a soft halo about 9 m across; by day they are unlit. The
+  halo does not light the ground around it.
 
 ## Options
 
@@ -41,6 +46,7 @@ any layer, for example an invisible line layer on `infrastructure`.
 | `maxSupports`  | `2000`             | Nearest supports drawn                                             |
 | `farCutoff`    | `true`             | Pitched views draw supports only to about three screen heights away |
 | `water` | same source, `'water'` | Water polygons: a line without mapped supports gets no pole in water; `false` turns it off |
+| `streetLamps` | `true` | Street lamps; `{ maxLamps }` sets how many of the nearest are drawn (3000), `false` leaves them out |
 | `onError`      | —                  |                                                                    |
 
-Methods: `getStats()` (`supports`, `spans`, `tallest`).
+Methods: `getStats()` (`supports`, `spans`, `tallest`, `lamps`).

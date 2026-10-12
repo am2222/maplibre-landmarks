@@ -1,4 +1,5 @@
 import {
+  DynamicDrawUsage,
   Group,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -12,6 +13,15 @@ import type { PreparedModel } from './models/prepare';
 import type { PlacedTree } from './select';
 
 const EARTH_CIRCUMFERENCE_M = 2 * Math.PI * EARTH_RADIUS_M;
+/** Per-instance attributes the tree material reads, one float each. */
+const INSTANCE_ATTRIBUTES = ['aTint', 'aPhase', 'aBorn'] as const;
+
+/** Mark the first `instances` of an instanced attribute for upload, and nothing past them. */
+function upload(attribute: InstancedBufferAttribute, instances: number): void {
+  attribute.clearUpdateRanges();
+  attribute.addUpdateRange(0, instances * attribute.itemSize);
+  attribute.needsUpdate = true;
+}
 
 /**
  * Sway phase from the tree's absolute position (float64 on the CPU), so it never changes when the
@@ -90,11 +100,12 @@ export class TreeBatches {
       if (t.far) far++;
       else near++;
     }
+    // Send only the instances written (buffers hold `capacity`); an empty mesh is not drawn.
     for (const mesh of all) {
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.geometry.getAttribute('aTint').needsUpdate = true;
-      mesh.geometry.getAttribute('aPhase').needsUpdate = true;
-      mesh.geometry.getAttribute('aBorn').needsUpdate = true;
+      if (!mesh.count) continue;
+      upload(mesh.instanceMatrix, mesh.count);
+      for (const name of INSTANCE_ATTRIBUTES)
+        upload(mesh.geometry.getAttribute(name) as InstancedBufferAttribute, mesh.count);
     }
     this.born = born;
     this.total = near + far;
@@ -106,19 +117,13 @@ export class TreeBatches {
   }
 
   private mesh(geometry: InstancedMesh['geometry']): InstancedMesh {
-    geometry.setAttribute(
-      'aTint',
-      new InstancedBufferAttribute(new Float32Array(this.capacity), 1),
-    );
-    geometry.setAttribute(
-      'aPhase',
-      new InstancedBufferAttribute(new Float32Array(this.capacity), 1),
-    );
-    geometry.setAttribute(
-      'aBorn',
-      new InstancedBufferAttribute(new Float32Array(this.capacity), 1),
-    );
+    for (const name of INSTANCE_ATTRIBUTES)
+      geometry.setAttribute(
+        name,
+        new InstancedBufferAttribute(new Float32Array(this.capacity), 1).setUsage(DynamicDrawUsage),
+      );
     const mesh = new InstancedMesh(geometry, this.material, this.capacity);
+    mesh.instanceMatrix.setUsage(DynamicDrawUsage); // rewritten on every update
     mesh.count = 0;
     mesh.frustumCulled = false;
     this.group.add(mesh);
