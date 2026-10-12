@@ -21,6 +21,13 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/protomaps-build/, ''),
       },
+      // compare.html: OSM2World's 3D viewer, served from this origin so the page can drive its
+      // camera (a cross-origin frame could only be reloaded at each move).
+      '/osm2world': {
+        target: 'https://osm2world.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/osm2world/, ''),
+      },
     },
   },
   build: {
@@ -41,6 +48,7 @@ export default defineConfig({
             trees: page('e2e-trees.html'),
             roofs: page('roofs-gallery.html'),
             seasons: page('tree-seasons.html'),
+            compare: page('compare.html'),
           },
     },
   },
