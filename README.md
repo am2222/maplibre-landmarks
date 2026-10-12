@@ -15,6 +15,8 @@ volumetric fog, animated water, power lines and street lamps, on one shared 3D c
 
 [![Paris at dusk: the Eiffel Tower model over the Seine, with fog, water, trees and 3D buildings](docs/public/skyline.jpg)](https://am2222.github.io/maplibre-landmarks/demo/?theme=dusk&fog=70#16.37/48.858435/2.294978/88.8/84)
 
+[![Paris at night from Porte d'Orléans: street lamps glowing along the boulevards, autumn trees in Square du Serment de Koufra](docs/public/street-lamps.jpg)](https://am2222.github.io/maplibre-landmarks/demo/?theme=night&power#16.5/48.822413/2.327167/99.5/74)
+
 ## Install
 
 ```sh
