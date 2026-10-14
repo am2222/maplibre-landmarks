@@ -9,3 +9,4 @@ demo/public/*.pmtiles
 .playwright-mcp/*
 docs/.vitepress/cache
 docs/.vitepress/dist
+.citygml
