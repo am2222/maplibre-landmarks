@@ -1,5 +1,6 @@
 import { ModuleLayer, type ModuleLayerOptions } from '../core/ModuleLayer';
-import { RoofsModule, type RoofsOptions } from './RoofsModule';
+import type { LngLat } from '../core/types';
+import { RoofsModule, type RoofAt, type RoofsOptions } from './RoofsModule';
 
 export interface RoofsLayerOptions extends RoofsOptions, ModuleLayerOptions {
   id: string;
@@ -17,5 +18,10 @@ export class RoofsLayer extends ModuleLayer {
 
   getStats(): { buildings: number; triangles: number } {
     return this.roofs.getStats();
+  }
+
+  /** The roofs drawn whose footprint holds a point, for inspecting what was built and why. */
+  roofsAt(lngLat: LngLat): RoofAt[] {
+    return this.roofs.roofsAt(lngLat);
   }
 }

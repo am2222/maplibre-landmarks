@@ -147,6 +147,27 @@ describe('RoofsModule', () => {
     expect(high).toBeCloseTo(15 + 6, 6); // a round roof rises half the 12 m span
   });
 
+  it('reports the roofs drawn at a point, with their heights and the roof surface there', () => {
+    const { map, module } = setup();
+    map.features = [
+      feature(1, rectAt(0, 0, 40, 20), { height: 20, roof_shape: 'gabled' }),
+      feature(2, rectAt(100, 0, 10, 10), { height: 20 }),
+    ];
+    module.update(view());
+    const at = (east: number, north: number) =>
+      module.roofsAt([2.2945 + east * M_LNG, 48.8584 + north * M_LAT]);
+    const [roof, ...rest] = at(20, 10);
+    expect(rest).toEqual([]);
+    expect(roof).toMatchObject({ id: 1, props: { shape: 'gabled', height: 20 } });
+    expect(roof!.roofHeight).toBeCloseTo(10 * TAN_30, 1);
+    expect(roof!.wallTop).toBeCloseTo(20 - 10 * TAN_30, 1);
+    expect(roof!.top).toBeCloseTo(20, 1);
+    expect(roof!.surface).toBeCloseTo(20, 1); // on the ridge
+    expect(at(20, 5)[0]!.surface).toBeCloseTo(20 - 5 * TAN_30, 1); // halfway down a face
+    expect(at(105, 5)).toEqual([]); // flat roof: nothing drawn
+    expect(at(-5, 5)).toEqual([]);
+  });
+
   it('merges tile pieces before sizing the roof', () => {
     const { map, module } = setup();
     // 40 × 30 m building cut in two 20 × 30 m pieces (overlapping slightly, like tile buffers).

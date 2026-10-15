@@ -53,6 +53,110 @@
         box-shadow: 0 1px 3px #0003;
         white-space: nowrap;
       }
+      .inspect-toggle {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 3;
+        font: inherit;
+        padding: 4px 10px;
+        border: 1px solid #0003;
+        border-radius: 12px;
+        background: #fffe;
+        box-shadow: 0 1px 3px #0003;
+        cursor: pointer;
+      }
+      .inspect-toggle.on {
+        background: #d33;
+        color: #fff;
+      }
+      .inspector {
+        position: absolute;
+        top: 40px;
+        left: 8px;
+        bottom: 8px;
+        z-index: 3;
+        width: min(440px, calc(100% - 16px));
+        overflow: auto;
+        background: #fffffff2;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px #0004;
+        padding: 0 10px 10px;
+        font-size: 12px;
+      }
+      .inspector header {
+        position: sticky;
+        top: 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: inherit;
+        padding: 8px 0 4px;
+      }
+      .inspector .close {
+        border: 0;
+        background: none;
+        font-size: 18px;
+        cursor: pointer;
+      }
+      .inspector .card {
+        border-top: 1px solid #0002;
+        padding-top: 6px;
+        margin-top: 6px;
+      }
+      .inspector h3 {
+        margin: 0 0 2px;
+        font-size: 13px;
+      }
+      .inspector .sub {
+        color: #555;
+        margin: 2px 0 6px;
+      }
+      .inspector table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 4px 0;
+      }
+      .inspector th,
+      .inspector td {
+        text-align: left;
+        padding: 1px 6px 1px 0;
+        vertical-align: top;
+      }
+      .inspector .heights td,
+      .inspector .heights th:not(:first-child) {
+        text-align: right;
+      }
+      .inspector .why td {
+        color: #666;
+        font-size: 11px;
+      }
+      .inspector .diff,
+      .inspector td.diff {
+        background: #fde2e2;
+      }
+      .inspector .findings {
+        margin: 4px 0;
+        padding-left: 16px;
+      }
+      .inspector .bad {
+        color: #b00;
+      }
+      .inspector .warn {
+        color: #8a5a00;
+      }
+      .inspector .info {
+        color: #335;
+      }
+      .inspector .ok {
+        color: #070;
+      }
+      .inspector pre {
+        white-space: pre-wrap;
+        font-size: 11px;
+        background: #f4f4f4;
+        padding: 4px;
+      }
     </style>
   </head>
   <body>
