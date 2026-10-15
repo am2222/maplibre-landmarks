@@ -4,6 +4,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Protocol } from 'pmtiles';
 import { LabelOcclusion, LandmarksLayer, RoofsLayer, setTheme, TreesLayer } from '../src/index';
+import { startInspector, type O2WScene } from './inspector';
 import { firstPointLabel, roofWalls, styleFor } from './style';
 
 setWorkerUrl(workerUrl);
@@ -37,18 +38,27 @@ const map = new MlMap({
   hash: true,
 });
 
+/** Surfaces of OSM2World's scene above a point, once its viewer is running. */
+let o2wScene: O2WScene | undefined;
+
+const roofs = new RoofsLayer({
+  id: 'roofs',
+  source: 'roof-buildings',
+  sourceLayer: 'building',
+  extrusionLayer: roofWalls(true),
+});
+startInspector(map, {
+  roofs,
+  wallLayers: roofWalls(true),
+  source: 'roof-buildings',
+  sourceLayers: ['building', 'building_part'],
+  osm2world: () => o2wScene,
+});
+
 map.on('load', () => {
   setTheme(map, 'day', { sky: true });
   const before = firstPointLabel(map.getStyle().layers);
-  map.addLayer(
-    new RoofsLayer({
-      id: 'roofs',
-      source: 'roof-buildings',
-      sourceLayer: 'building',
-      extrusionLayer: roofWalls(true),
-    }),
-    before,
-  );
+  map.addLayer(roofs, before);
   map.addLayer(new TreesLayer({ id: 'trees', source: 'protomaps' }), before);
   map.addLayer(
     new LandmarksLayer({ id: 'landmarks', replaceBuildings: ['buildings', ...roofWalls(true)] }),
@@ -133,13 +143,30 @@ interface O2WCamera {
   upperBetaLimit: number;
   onViewMatrixChangedObservable: { add(fn: () => void): void };
 }
+interface PickedMesh {
+  name: string;
+  isEnabled(): boolean;
+  isVisible: boolean;
+}
 interface Viewer {
   camera: O2WCamera;
+  scene: {
+    multiPickWithRay(
+      ray: unknown,
+      predicate: (mesh: PickedMesh) => boolean,
+    ): { pickedPoint: { y: number } | null }[] | null;
+    pick(
+      x: number,
+      y: number,
+      predicate: (mesh: PickedMesh) => boolean,
+    ): { pickedPoint: { x: number; y: number; z: number } | null };
+  };
   originLatLon: unknown;
   setView(origin: unknown, radius: number, alpha: number, beta: number): void;
 }
 interface Babylon {
   Vector3: new (x: number, y: number, z: number) => O2WCamera['target'];
+  Ray: new (origin: O2WCamera['target'], direction: O2WCamera['target'], length: number) => unknown;
   Tools: { PreprocessUrl: (url: string) => string };
 }
 interface Projection {
@@ -191,6 +218,28 @@ function connect(viewer: Viewer, BABYLON: Babylon): void {
       bearing: bearingOf(camera.alpha),
       pitch: camera.beta / RAD,
     });
+  };
+
+  // OSM2World's world is flat (ground at y = 0): a hit's y is its height above ground. Its sky
+  // dome and ground plane are not buildings.
+  const down = new BABYLON.Vector3(0, -1, 0);
+  const solid = (mesh: PickedMesh) =>
+    mesh.isEnabled() && mesh.isVisible && mesh.name !== 'sky' && mesh.name !== 'ground';
+  o2wScene = {
+    heights: (lng, lat) => {
+      const xz = proj.toXZ(new LatLon(lat, lng));
+      const ray = new BABYLON.Ray(new BABYLON.Vector3(-xz.x, 1000, -xz.z), down, 2000);
+      const hits = viewer.scene.multiPickWithRay(ray, solid);
+      return (hits ?? []).flatMap((h) => (h.pickedPoint ? [h.pickedPoint.y] : []));
+    },
+    pick: (fx, fy) => {
+      // The canvas in device pixels, as Babylon picks.
+      const hit = viewer.scene.pick(canvas.width * fx, canvas.height * fy, solid);
+      const p = hit.pickedPoint;
+      if (!p) return undefined;
+      const { lat, lon } = proj.toLatLon({ x: -p.x, z: -p.z });
+      return { lngLat: [lon, lat], height: p.y };
+    },
   };
 
   push();

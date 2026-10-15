@@ -21,6 +21,7 @@ import { contactPoints } from './attached';
 import { BuildingPieces } from './buildingPieces';
 import type { Footprint } from './footprints';
 import type { Vec2 } from './geometry/frame';
+import { heightAt } from './geometry/mesh';
 import { buildRoof, type BuiltRoof } from './geometry/roof';
 import {
   readRoofProps,
@@ -64,6 +65,24 @@ interface Drawn {
   footprint: Footprint;
   props: RoofProps;
   built: BuiltRoof;
+}
+
+/** A roof drawn at a point (`RoofsModule.roofsAt`); heights in metres above the ground. */
+export interface RoofAt {
+  id: number | string;
+  sourceLayer: string | undefined;
+  /** The building's tile attributes. */
+  properties: Record<string, unknown>;
+  /** How those attributes were read. */
+  props: RoofProps;
+  /** Height of the roof drawn. */
+  roofHeight: number;
+  /** Top of the walls, where the roof starts. */
+  wallTop: number;
+  /** Top of the roof. */
+  top: number;
+  /** The roof surface straight above the point (null where only a wall edge passes). */
+  surface: number | null;
 }
 
 /** How far a building's walls are shortened for its roof (none when the roof stands on top). */
@@ -202,6 +221,28 @@ export class RoofsModule implements LayerModule {
   getStats(): { buildings: number; triangles: number } {
     const count = this.mesh?.geometry.getAttribute('position')?.count ?? 0;
     return { buildings: this.drawn.size, triangles: count / 3 };
+  }
+
+  /** The roofs drawn whose footprint holds a point, for inspecting what was built and why. */
+  roofsAt(lngLat: LngLat): RoofAt[] {
+    const found: RoofAt[] = [];
+    for (const { sourceLayer, footprint, props, built } of this.drawn.values()) {
+      if (!pointInPolygons(lngLat, footprint.polygons)) continue;
+      const [x, , z] = localPosition(originAt(footprint.centroid), lngLat);
+      const wallTop = props.height - wallCut({ props, built });
+      const surface = heightAt(built.mesh, x, z);
+      found.push({
+        id: footprint.id,
+        sourceLayer,
+        properties: footprint.properties,
+        props,
+        roofHeight: built.roofHeight,
+        wallTop,
+        top: wallTop + built.roofHeight,
+        surface: surface === null ? null : wallTop + surface,
+      });
+    }
+    return found;
   }
 
   private readonly schedule = (): void => {

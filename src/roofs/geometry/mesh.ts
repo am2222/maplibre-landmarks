@@ -7,6 +7,23 @@ export interface RoofMesh {
   colors: number[];
 }
 
+/** Highest point of `mesh` straight above (x, z), or null when no triangle covers it. */
+export function heightAt({ positions: p }: RoofMesh, x: number, z: number): number | null {
+  let top: number | null = null;
+  for (let i = 0; i + 8 < p.length; i += 9) {
+    const [ax, ay, az, bx, by, bz, cx, cy, cz] = p.slice(i, i + 9) as number[];
+    // Barycentric weights of (x, z) in the triangle's plan.
+    const d = (bz! - cz!) * (ax! - cx!) + (cx! - bx!) * (az! - cz!);
+    if (Math.abs(d) < 1e-12) continue; // vertical face
+    const u = ((bz! - cz!) * (x - cx!) + (cx! - bx!) * (z - cz!)) / d;
+    const v = ((cz! - az!) * (x - cx!) + (ax! - cx!) * (z - cz!)) / d;
+    if (u < -1e-9 || v < -1e-9 || 1 - u - v < -1e-9) continue;
+    const y = u * ay! + v * by! + (1 - u - v) * cy!;
+    if (top === null || y > top) top = y;
+  }
+  return top;
+}
+
 /** Collects flat-shaded triangles (one normal per face). */
 export class MeshBuilder {
   private readonly positions: number[] = [];

@@ -68,7 +68,7 @@ export { seasonAt, type TreeSeason } from './trees/season';
 export { treeModelFromGLB, type GlbTreeOptions } from './trees/models/glb';
 export type { TreeModel, TreeParts } from './trees/models/types';
 export { RoofsLayer, type RoofsLayerOptions } from './roofs/RoofsLayer';
-export { RoofsModule, type RoofsOptions } from './roofs/RoofsModule';
+export { RoofsModule, type RoofAt, type RoofsOptions } from './roofs/RoofsModule';
 export { ROOF_STATE } from './roofs/walls';
 export { buildingBase, buildingHeight, DEFAULT_FIELDS, FLOOR_M, type Fields } from './roofs/schema';
 export { CloudsLayer, type CloudsLayerOptions } from './clouds/CloudsLayer';
