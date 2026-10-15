@@ -22,6 +22,8 @@ export interface StyleOptions {
   roofParts: boolean;
   /** Overture's base tiles for the power lines, when they are shown. */
   powerUrl?: string;
+  /** Overture's transportation tiles for the raised roads, when they are shown. */
+  transportUrl?: string;
   /** Protomaps source: a TileJSON URL or `pmtiles://…`. */
   protomaps: string;
 }
@@ -196,23 +198,54 @@ export function styleFor(o: StyleOptions): StyleSpecification {
       ...(o.powerUrl
         ? { 'overture-base': { type: 'vector' as const, url: `pmtiles://${o.powerUrl}` } }
         : {}),
+      ...(o.transportUrl
+        ? {
+            'overture-transportation': {
+              type: 'vector' as const,
+              url: `pmtiles://${o.transportUrl}`,
+            },
+          }
+        : {}),
       terrain: DEM,
       // Hillshading gets its own copy of the DEM (MapLibre warns when terrain shares one).
       'hillshade-dem': DEM,
     },
-    layers: o.powerUrl
-      ? [
-          ...styleLayers,
-          // MapLibre loads a source's tiles only for a layer that uses it.
-          {
-            id: 'overture-power-lines',
-            type: 'line',
-            source: 'overture-base',
-            'source-layer': 'infrastructure',
-            filter: ['==', ['get', 'subtype'], 'power'],
-            paint: { 'line-opacity': 0 },
-          },
-        ]
-      : styleLayers,
+    // MapLibre loads a source's tiles only for a layer that uses it: invisible ones for ours.
+    layers: [
+      ...styleLayers,
+      ...(o.powerUrl
+        ? [
+            {
+              id: 'overture-power-lines',
+              type: 'line',
+              source: 'overture-base',
+              'source-layer': 'infrastructure',
+              filter: ['==', ['get', 'subtype'], 'power'],
+              paint: { 'line-opacity': 0 },
+            } satisfies LayerSpecification,
+          ]
+        : []),
+      ...(o.transportUrl
+        ? [
+            {
+              id: 'overture-road-segments',
+              type: 'line',
+              source: 'overture-transportation',
+              'source-layer': 'segment',
+              minzoom: 14,
+              paint: { 'line-opacity': 0 },
+            } satisfies LayerSpecification,
+            // Zoomed in, MapLibre keeps only the source layers a style layer draws.
+            {
+              id: 'overture-road-connectors',
+              type: 'circle',
+              source: 'overture-transportation',
+              'source-layer': 'connector',
+              minzoom: 14,
+              paint: { 'circle-opacity': 0, 'circle-radius': 0 },
+            } satisfies LayerSpecification,
+          ]
+        : []),
+    ],
   };
 }

@@ -10,6 +10,7 @@ import {
   LandmarksLayer,
   PowerLinesLayer,
   StreetFurnitureLayer,
+  RoadsLayer,
   RainLayer,
   RoofsLayer,
   SnowLayer,
@@ -51,12 +52,21 @@ const OVERTURE_BUILDINGS =
 // `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
 // `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?clouds` (or
 // `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
-// `?snow=<intensity 0–1>`), `?power` (power lines and street lamps), `?street` (street furniture).
+// `?snow=<intensity 0–1>`), `?power` (power lines and street lamps), `?street` (street furniture),
+// `?roads` (bridges and the roads ramping up to them).
 const params = new URLSearchParams(location.search);
 // Power lines, lamps and street furniture: Overture's base theme (only fetched while the power
 // or street layer is on).
 const OVERTURE_BASE =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/base.pmtiles';
+// Raised roads: Overture's transportation theme (only fetched while the roads layer is on).
+const OVERTURE_TRANSPORTATION =
+  'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/transportation.pmtiles';
+/** Protomaps' flat bridge roads: the 3D decks take their place. */
+const FLAT_BRIDGES = ['highway', 'major', 'minor', 'link', 'other'].flatMap((k) => [
+  `roads_bridges_${k}`,
+  `roads_bridges_${k}_casing`,
+]);
 const roofsParam = params.get('roofs');
 const themeParam = params.get('theme');
 const SEASONS = ['spring', 'summer', 'autumn', 'winter'] as const;
@@ -90,6 +100,7 @@ const style = () =>
     roofsUrl: state.roofData === 'local' && localRoofsUrl ? localRoofsUrl : OVERTURE_BUILDINGS,
     roofParts: roofParts(),
     powerUrl: toggle('power').checked || toggle('street').checked ? OVERTURE_BASE : undefined,
+    transportUrl: toggle('roads').checked ? OVERTURE_TRANSPORTATION : undefined,
     protomaps: pmtilesUrl
       ? `pmtiles://${pmtilesUrl}`
       : `https://api.protomaps.com/tiles/v4.json?key=${key}`,
@@ -104,6 +115,10 @@ if (params.has('street')) {
   toggle('street').checked = true;
   syncTabDots();
 }
+if (params.has('roads')) {
+  toggle('roads').checked = true;
+  syncTabDots();
+}
 
 const map = new MlMap({
   container: 'map',
@@ -114,6 +129,9 @@ const map = new MlMap({
   bearing: -20,
   hash: true,
   maxPitch: 85,
+  // Past a source's last zoom, overscale its tiles whole rather than slicing them (MapLibre 6's
+  // default slices the first four zooms): the raised roads need whole segments to place bridges.
+  zoomLevelsToOverscale: 30,
 });
 
 // ---- Layers -------------------------------------------------------------------------------
@@ -129,6 +147,7 @@ let snow: SnowLayer | undefined;
 let fire: FireLayer | undefined;
 let power: PowerLinesLayer | undefined;
 let street: StreetFurnitureLayer | undefined;
+let roads3d: RoadsLayer | undefined;
 
 let occlusion: LabelOcclusion | undefined;
 let models: LandmarkInfo[] = [];
@@ -253,6 +272,19 @@ function addStreet() {
   map.addLayer(street, before3D());
 }
 
+/** Raised roads from Overture's transportation tiles (the style adds the source while on). */
+function addRoads() {
+  remove('roads');
+  if (!map.getSource('overture-transportation')) return restyle();
+  roads3d = new RoadsLayer({
+    id: 'roads',
+    source: 'overture-transportation',
+    replaceLayers: FLAT_BRIDGES,
+    onError: (err) => console.warn('[roads]', err),
+  });
+  map.addLayer(roads3d, before3D());
+}
+
 function addFog() {
   remove('fog');
   fog = new FogLayer({
@@ -338,6 +370,7 @@ const LAYERS: Record<string, { add(): void; id: () => string | undefined }> = {
   fire: { add: addFire, id: () => 'fire' },
   power: { add: addPower, id: () => 'power' },
   street: { add: addStreet, id: () => 'street' },
+  roads: { add: addRoads, id: () => 'roads' },
   labels: { add: addLabels, id: () => occlusion?.id },
 };
 
@@ -745,6 +778,11 @@ setInterval(() => {
   const st = street?.getStats();
   $('street-stats').textContent =
     st && toggle('street').checked ? `${st.total} props · ${st.areas} areas (zoom 16+)` : '';
+  const rd = roads3d?.getStats();
+  $('roads-stats').textContent =
+    rd && toggle('roads').checked
+      ? `${rd.bridges} bridges · ${rd.approaches} ramps · ${rd.triangles.toLocaleString()} triangles (zoom 15+)`
+      : '';
   const rs = rain?.getStats();
   $('rain-stats').textContent =
     rs && toggle('rain').checked
@@ -779,6 +817,9 @@ renderModels(models);
   },
   get street() {
     return street;
+  },
+  get roads() {
+    return roads3d;
   },
   get clouds() {
     return clouds;

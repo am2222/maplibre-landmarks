@@ -28,6 +28,7 @@ export default defineConfig({
           { text: 'Roof attributes', link: '/guide/roof-attributes' },
           { text: 'Trees', link: '/guide/trees' },
           { text: 'Power lines & lamps', link: '/guide/power' },
+          { text: 'Raised roads', link: '/guide/roads' },
           { text: 'Street furniture', link: '/guide/street' },
           { text: 'Volumetric fog', link: '/guide/fog' },
           { text: 'Volumetric clouds', link: '/guide/clouds' },

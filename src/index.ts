@@ -43,6 +43,8 @@ export { cameraMatrix, localPosition, originAt } from './core/mercator';
 export type { Bounds, LngLat, Origin, ViewState } from './core/types';
 export { LabelOcclusion, type LabelOcclusionOptions } from './labels/LabelOcclusion';
 export { LABEL_STATE } from './labels/opacity';
+export { RoadsLayer, type RoadsLayerOptions } from './roads/RoadsLayer';
+export { RoadsModule, type RoadsOptions, type RoadsStats } from './roads/RoadsModule';
 export { PowerLinesLayer, type PowerLinesLayerOptions } from './power/PowerLayer';
 export { PowerModule, type PowerOptions, type PowerStats } from './power/PowerModule';
 export {

@@ -72,6 +72,7 @@
           <button data-tab="water">Water</button>
           <button data-tab="power">Power</button>
           <button data-tab="street">Street</button>
+          <button data-tab="roads">Roads</button>
           <button data-tab="fog">Fog</button>
           <button data-tab="clouds">Clouds</button>
           <button data-tab="rain">Rain</button>
@@ -224,6 +225,17 @@
               Benches, bins, bollards, hydrants and more, from the same base tiles (zoom 16+).
             </p>
             <p class="stats" id="street-stats"></p>
+          </section>
+
+          <section class="controls" data-controls="roads">
+            <label class="switch"
+              ><input type="checkbox" data-toggle="roads" /> Show raised roads</label
+            >
+            <p class="hint">
+              Bridges and overpasses from Overture's transportation tiles: decks on piers at their
+              OSM layer, with the roads leading onto them ramping up.
+            </p>
+            <p class="stats" id="roads-stats"></p>
           </section>
 
           <section class="controls" data-controls="fog">
