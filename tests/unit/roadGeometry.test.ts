@@ -7,7 +7,7 @@ import {
   rampFor,
   type RaisedInput,
 } from '../../src/roads/geometry';
-import { chainSpans, withApproaches } from '../../src/roads/network';
+import { chainSpans, raiseLinks, withApproaches } from '../../src/roads/network';
 import type { Span } from '../../src/roads/segments';
 import type { LngLat } from '../../src/core/types';
 
@@ -129,21 +129,83 @@ describe('raised road geometry', () => {
   });
   const ys = (positions: number[]) => positions.filter((_, i) => i % 3 === 1);
 
-  it('builds embankments up to a deck on piers, all on the ground', () => {
+  const vertices = (positions: number[]) => {
+    const out: [number, number, number][] = [];
+    for (let k = 0; k < positions.length; k += 3)
+      out.push([positions[k]!, positions[k + 1]!, positions[k + 2]!]);
+    return out;
+  };
+  const colorsOf = (colors: number[]) => {
+    const out = new Set<string>();
+    for (let k = 0; k < colors.length; k += 3)
+      out.add(
+        colors
+          .slice(k, k + 3)
+          .map((c) => c.toFixed(3))
+          .join(),
+      );
+    return out;
+  };
+
+  it('builds a deck on round piers over its approaches, all on the ground, no parapets', () => {
     const { mesh, top } = buildRaised(input());
     expect(top).toBeCloseTo(LEVEL_M, 1);
     expect(mesh.positions.length % 9).toBe(0);
-    // Everything stands on the ground: embankment sides and piers reach 0, nothing goes below.
-    expect(Math.min(...ys(mesh.positions))).toBeCloseTo(0, 5);
-    expect(Math.max(...ys(mesh.positions))).toBeCloseTo(LEVEL_M + 1, 1); // parapets
+    const y = ys(mesh.positions);
+    expect(Math.min(...y)).toBeCloseTo(0, 5); // nothing below the ground
+    // Nothing stands above the deck but its paint.
+    expect(Math.max(...y)).toBeLessThan(LEVEL_M + 0.1);
+    // Piers: column vertices on the ground under the middle of the bridge.
+    const feet = vertices(mesh.positions).filter(([x, vy]) => vy === 0 && x > 100 && x < 220);
+    expect(feet.length).toBeGreaterThan(0);
   });
 
-  it('spans a valley straight between its abutments, embankments following the ground', () => {
+  it('keeps the low ends of its approaches solid, and the high parts open', () => {
+    const { mesh } = buildRaised(input());
+    const walls = vertices(mesh.positions).filter(([, vy, z]) => vy === 0 && Math.abs(z) > 4.9);
+    // Embankment walls reach the ground at the deck's full width only near the ramps' feet.
+    expect(walls.length).toBeGreaterThan(0);
+    expect(walls.every(([x]) => x < 40 || x > 280)).toBe(true);
+  });
+
+  it('moves piers off the roads below, or leaves them out', () => {
+    // A road crossing under the bridge at x = 160 m, 12 m wide.
+    const blocked = ([x]: [number, number], r: number) => Math.abs(x - 160) < 6 + r;
+    const { mesh } = buildRaised(input({ blocked }));
+    const feet = vertices(mesh.positions).filter(([x, vy]) => vy === 0 && x > 60 && x < 260);
+    expect(feet.length).toBeGreaterThan(0);
+    expect(feet.every(([x]) => Math.abs(x - 160) >= 6.7)).toBe(true);
+  });
+
+  it('paints roads and lays rails on railway bridges', () => {
+    const road = colorsOf(buildRaised(input()).mesh.colors);
+    const rail = colorsOf(buildRaised(input({ kind: 'rail', cls: 'standard_gauge' })).mesh.colors);
+    const footway = colorsOf(
+      buildRaised(input({ cls: 'footway', widths: [3, 3, 3, 3] })).mesh.colors,
+    );
+    expect(road.size).toBeGreaterThan(footway.size); // paint
+    expect([...rail].some((c) => !road.has(c))).toBe(true); // ballast and steel
+  });
+
+  it('spans a valley straight between its abutments, approaches following the ground', () => {
     const ground = ([x]: [number, number]) => (x > 60 && x < 260 ? 0 : 20);
     const { mesh } = buildRaised(input({ ground }));
     const y = ys(mesh.positions);
     // The deck stays near its abutments' 20 m (+ its lift); piers go down to the valley floor.
-    expect(Math.min(...y.filter((v) => v > 10))).toBeGreaterThan(19);
+    expect(Math.min(...y.filter((v) => v > 10))).toBeGreaterThan(18);
     expect(Math.min(...y)).toBeCloseTo(0, 5);
+  });
+});
+
+describe('raiseLinks', () => {
+  const ground = (key: string, coords: LngLat[]) => span(key, coords, { level: 0 });
+  it('raises a short road between two bridges, and leaves a long one on the ground', () => {
+    const bridges = [span('a', [at(0), at(100)]), span('b', [at(150), at(250)])];
+    const short = raiseLinks(bridges, [ground('link', [at(100), at(150)])], () => 60);
+    expect(short.bridges.map((b) => b.key)).toContain('link');
+    expect(short.ground).toEqual([]);
+    const far = [span('a', [at(0), at(100)]), span('b', [at(300), at(400)])];
+    const long = raiseLinks(far, [ground('link', [at(100), at(300)])], () => 60);
+    expect(long.ground.map((g) => g.key)).toEqual(['link']);
   });
 });

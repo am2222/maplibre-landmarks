@@ -74,12 +74,23 @@ const map = new maplibregl.Map({ container: 'map', style, zoomLevelsToOverscale:
 - **Height**: level × 6 m (`level_rules`, OSM's `layer`; a bridge is at least 1), reached with
   ramps of 10 % on average (15 % at the steepest), so a level-1 ramp is 60 m. The bridge runs
   straight between the ground at its two ends (it spans a valley rather than following it down);
-  the embankments follow the ground.
-- **Shape**: embankments have solid sides down to the ground, the bridge a 1.2 m deck with piers
-  every 30 m where it clears the ground by more than 2 m; parapets grow with the height.
+  the approaches follow the ground.
+- **Shape**: a deck with a light edge band over a tapered girder, with edge lines and a dashed
+  centre line on roads (rails on railways). Approaches lower than 2.5 m are solid embankments
+  (nothing passes under them); higher, they stand open on piers like the bridge, so the roads they
+  cross stay clear. No parapets.
+- **Piers**: round columns under a cap, two under decks wider than 12 m, about every 30 m where
+  the deck clears the ground by more than 2 m. They stand clear of the other roads and railways
+  below: a pier moves up to 12.5 m along the deck to find a free spot, or is left out (the span
+  grows longer).
+- **Linked bridges**: a road joining two bridges, shorter than the two ramps between them would
+  need, is raised with them instead of dipping between two ramps.
+- **Tiles**: source tiles are read at least 1 km from the view centre, past the far cutoff, and the
+  last 64 tiles to leave the view are kept, so a bridge whose segment runs out of the loaded tiles
+  can still be placed.
 - **Width**: `width_rules` where tagged, else by class (motorway 12 m … footway 3 m, rail 6 m).
 
-Not yet: road surfaces on the ground, lane markings, and tunnels.
+Not yet: road surfaces on the ground, and tunnels.
 
 ## Options
 

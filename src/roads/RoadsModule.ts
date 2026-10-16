@@ -12,7 +12,7 @@ import { tileBounds, TileFeed, type FeedFeature, type FeedMap } from '../core/ti
 import type { LngLat, Origin, ViewState } from '../core/types';
 import type { RoofMesh } from '../roofs/geometry/mesh';
 import { buildRaised, rampFor, type XZ } from './geometry';
-import { chainSpans, withApproaches, type Raised } from './network';
+import { chainSpans, raiseLinks, withApproaches, type Raised } from './network';
 import { partsOf, readPiece, type SegmentPiece, type Span } from './segments';
 
 export interface RoadsOptions {
@@ -48,7 +48,47 @@ export interface RoadsStats {
 }
 
 const REBUILD_DEBOUNCE_MS = 150;
+/**
+ * Tiles are read at least this far from the view centre, metres, past the far cutoff: a bridge
+ * near the cutoff is placed from its segment's pieces and connectors beyond it.
+ */
+const MIN_REACH_M = 1000;
+/** Tiles no longer in view kept to complete segments still in view (most recent first out last). */
+const RETIRED_TILES = 64;
 const M_PER_DEG = 111_320;
+
+/** Keep a dropped tile's data, newest last, at most RETIRED_TILES. */
+function retire<T>(store: Map<string, T>, key: string, value: T): void {
+  store.delete(key);
+  store.set(key, value);
+  while (store.size > RETIRED_TILES) store.delete(store.keys().next().value!);
+}
+
+/** A road or railway the piers must stand clear of, with its bounding box. */
+interface Obstacle {
+  coords: LngLat[];
+  width: number;
+  bbox: [number, number, number, number];
+}
+
+const bboxOf = (coords: LngLat[]): Obstacle['bbox'] => {
+  const xs = coords.map((p) => p[0]);
+  const ys = coords.map((p) => p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+};
+
+/** Distance from a point to a polyline, both in local metres. */
+function distanceTo([x, z]: XZ, line: XZ[]): number {
+  let best = Infinity;
+  for (let i = 0; i + 1 < line.length; i++) {
+    const [a, b] = [line[i]!, line[i + 1]!];
+    const [dx, dz] = [b[0] - a[0], b[1] - a[1]];
+    const len2 = dx * dx + dz * dz;
+    const t = len2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / len2)) : 0;
+    best = Math.min(best, Math.hypot(a[0] + dx * t - x, a[1] + dz * t - z));
+  }
+  return best;
+}
 
 interface Built {
   raised: Raised;
@@ -71,7 +111,15 @@ export class RoadsModule implements LayerModule {
   private readonly tiles = new Map<string, SegmentPiece[]>();
   /** Each held tile's connectors, by id. */
   private readonly connectorTiles = new Map<string, Map<string, LngLat>>();
+  /**
+   * Pieces and connectors of tiles that left the view, newest last: a segment still in view whose
+   * other end is in no loaded tile is completed from them.
+   */
+  private readonly retired = new Map<string, SegmentPiece[]>();
+  private readonly retiredConnectors = new Map<string, Map<string, LngLat>>();
   private raised?: Raised[];
+  /** Roads, railways and bridges of the held tiles, for placing piers clear of them. */
+  private obstacles: Obstacle[] = [];
   /** Built structures by key, kept while they and the ground are unchanged. */
   private built = new Map<string, Built>();
   private drawn: Raised[] = [];
@@ -114,6 +162,8 @@ export class RoadsModule implements LayerModule {
   styleChanged(attached: boolean): void {
     this.feed?.reset();
     this.connectorFeed?.reset();
+    this.retired.clear();
+    this.retiredConnectors.clear();
     this.hidden.clear();
     if (attached) {
       this.hideReplaced();
@@ -143,6 +193,10 @@ export class RoadsModule implements LayerModule {
     }
     this.mesh = undefined;
     this.ctx = undefined;
+  }
+
+  private reach(view: ViewState): number {
+    return Math.max(farCutoffM(view), MIN_REACH_M);
   }
 
   private readonly schedule = (): void => {
@@ -227,8 +281,14 @@ export class RoadsModule implements LayerModule {
     const bySegment = new Map<string, SegmentPiece[]>();
     for (const pieces of this.tiles.values())
       for (const p of pieces) bySegment.set(p.id, [...(bySegment.get(p.id) ?? []), p]);
+    // Only for segments in view: the retired tiles complete them, they add none.
+    for (const pieces of this.retired.values())
+      for (const p of pieces) {
+        const held = bySegment.get(p.id);
+        if (held) held.push(p);
+      }
     const connectors = new Map<string, LngLat>();
-    for (const tile of this.connectorTiles.values())
+    for (const tile of [...this.retiredConnectors.values(), ...this.connectorTiles.values()])
       for (const [id, p] of tile) connectors.set(id, p);
     const bridges: Span[] = [];
     const ground: Span[] = [];
@@ -241,7 +301,14 @@ export class RoadsModule implements LayerModule {
         this.report(err instanceof Error ? err : new Error(String(err)));
       }
     }
-    return withApproaches(chainSpans(bridges), ground, rampFor);
+    // Underpasses are below ground: piers may stand over them.
+    this.obstacles = [...bridges, ...ground.filter((g) => g.level >= 0)].map((g) => ({
+      coords: g.coords,
+      width: g.width,
+      bbox: bboxOf(g.coords),
+    }));
+    const linked = raiseLinks(bridges, ground, rampFor);
+    return withApproaches(chainSpans(linked.bridges), linked.ground, rampFor);
   }
 
   private feedFor(ctx: ModuleContext): TileFeed {
@@ -255,7 +322,7 @@ export class RoadsModule implements LayerModule {
         key === '*' ||
         !this.view ||
         this.options.farCutoff === false ||
-        tileNearestM(key, this.view.center) <= farCutoffM(this.view),
+        tileNearestM(key, this.view.center) <= this.reach(this.view),
       onTile: (key, features) => {
         this.noteSliced(ctx, key);
         this.tiles.set(key, this.read(key, features));
@@ -263,6 +330,8 @@ export class RoadsModule implements LayerModule {
         this.schedule();
       },
       onDrop: (key) => {
+        const pieces = this.tiles.get(key);
+        if (pieces) retire(this.retired, key, pieces);
         if (this.tiles.delete(key)) this.raised = undefined;
         this.schedule();
       },
@@ -300,7 +369,7 @@ export class RoadsModule implements LayerModule {
         key === '*' ||
         !this.view ||
         this.options.farCutoff === false ||
-        tileNearestM(key, this.view.center) <= farCutoffM(this.view),
+        tileNearestM(key, this.view.center) <= this.reach(this.view),
       onTile: (key, features) => {
         const points = new Map<string, LngLat>();
         for (const f of features) {
@@ -313,6 +382,8 @@ export class RoadsModule implements LayerModule {
         this.schedule();
       },
       onDrop: (key) => {
+        const points = this.connectorTiles.get(key);
+        if (points) retire(this.retiredConnectors, key, points);
         if (this.connectorTiles.delete(key)) this.raised = undefined;
         this.schedule();
       },
@@ -378,6 +449,28 @@ export class RoadsModule implements LayerModule {
     ctx.requestRepaint();
   }
 
+  /**
+   * Whether a pier column would stand on another road: the obstacles near this structure, less
+   * the ones running along it (its own segments, and roads under its deck lengthwise).
+   */
+  private blockerFor(raised: Raised, local: (p: LngLat) => XZ): (p: XZ, r: number) => boolean {
+    const pad = 40 / M_PER_DEG;
+    const [w, s, e, n] = bboxOf(raised.coords);
+    const own = raised.coords.map(local);
+    const halfWidth = Math.max(...raised.widths) / 2 + 1.5;
+    const near = this.obstacles
+      .filter(
+        (o) =>
+          o.bbox[0] <= e + pad &&
+          o.bbox[2] >= w - pad &&
+          o.bbox[1] <= n + pad &&
+          o.bbox[3] >= s - pad,
+      )
+      .map((o) => ({ line: o.coords.map(local), width: o.width }))
+      .filter(({ line }) => !line.every((p) => distanceTo(p, own) <= halfWidth));
+    return (p, r) => near.some(({ line, width }) => distanceTo(p, line) < width / 2 + r);
+  }
+
   private build(raised: Raised, ground: (p: LngLat) => number): Built {
     const origin = originAt(raised.coords[0]!);
     const local = (p: LngLat): XZ => {
@@ -392,6 +485,7 @@ export class RoadsModule implements LayerModule {
       cls: raised.cls,
       approaches: raised.approaches,
       ground: ([x, z]) => ground(lngLatAt(origin, x, z)),
+      blocked: this.blockerFor(raised, local),
     });
     return { raised, mesh, top };
   }

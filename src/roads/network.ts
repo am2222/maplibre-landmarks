@@ -250,3 +250,35 @@ export function withApproaches(
     };
   });
 }
+
+/**
+ * Ground stretches that join two bridges of the same kind, shorter than both ramps between them
+ * would need: raised with the bridges (at the higher of their levels), so a road between two close
+ * overpasses stays up instead of dipping between two ramps.
+ */
+export function raiseLinks(
+  bridges: Span[],
+  ground: Span[],
+  rampOf: (level: number) => number,
+): { bridges: Span[]; ground: Span[] } {
+  if (!bridges.length || !ground.length) return { bridges, ground };
+  const o = bridges[0]!.coords[0]!;
+  const m = metres(o);
+  const ends = new Ends(bridges, m, o);
+  const raised: Span[] = [];
+  const kept: Span[] = [];
+  for (const g of ground) {
+    const levelAt = (p: LngLat) =>
+      ends
+        .at(p)
+        .map((e) => bridges[e.line]!)
+        .filter((b) => b.kind === g.kind)
+        .reduce((l, b) => Math.max(l, b.level), 0);
+    const [a, b] = [levelAt(g.coords[0]!), levelAt(g.coords.at(-1)!)];
+    const length = g.coords.slice(1).reduce((s, p, i) => s + m.dist(g.coords[i]!, p), 0);
+    if (g.level >= 0 && a > 0 && b > 0 && length < rampOf(a) + rampOf(b))
+      raised.push({ ...g, level: Math.max(a, b) });
+    else kept.push(g);
+  }
+  return { bridges: [...bridges, ...raised], ground: kept };
+}

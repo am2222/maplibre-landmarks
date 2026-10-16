@@ -85,6 +85,54 @@ describe('RoadsModule', () => {
     expect(map.layout.get('roads_bridges_major')).toBe('visible');
   });
 
+  it('warns once when the source tiles are sliced past their last zoom', () => {
+    const onError = vi.fn();
+    const { map, module } = setup({ onError }, [
+      { ...segment('a', 0, 300), tile: { z: 16, x: 18970, y: 23452 } },
+    ]);
+    map.getSource = (id: string) =>
+      id === 'transport' ? { type: 'vector', maxzoom: 14 } : undefined;
+    module.update(view({ center: C, zoom: 16 }));
+    module.update(view({ center: C, zoom: 16.5 }));
+    const sliced = onError.mock.calls.filter(([e]) => String(e).includes('sliced past zoom 14'));
+    expect(sliced).toHaveLength(1);
+  });
+
+  it('keeps placing a bridge from a tile that has left the view', () => {
+    // A 400 m segment across the edge between two zoom-15 tiles, bridged from 200 to 300 m.
+    const z = 15;
+    const x = Math.floor(((C[0] + 180) / 360) * 2 ** z) + 1;
+    const edge = (x / 2 ** z) * 360 - 180;
+    const y = Math.floor(
+      ((1 -
+        Math.log(Math.tan((C[1] * Math.PI) / 180) + 1 / Math.cos((C[1] * Math.PI) / 180)) /
+          Math.PI) /
+        2) *
+        2 ** z,
+    );
+    const east = (m: number): [number, number] => [edge + m / KX, C[1]];
+    const props = {
+      id: 's',
+      subtype: 'road',
+      class: 'primary',
+      road_flags: '[{"between":[0.5,0.75],"values":["is_bridge"]}]',
+    };
+    const piece = (from: number, to: number, tx: number) => ({
+      properties: props,
+      geometry: { type: 'LineString', coordinates: [east(from), east(to)] },
+      tile: { z, x: tx, y },
+    });
+    const west = piece(-200, 10, x - 1);
+    const eastPiece = piece(-10, 200, x);
+    const { map, module } = setup({}, [west, eastPiece]);
+    const at = view({ center: east(0), zoom: 16 });
+    module.update(at);
+    expect(module.getStats().bridges).toBe(1);
+    map.features = [eastPiece]; // the western tile leaves the view
+    module.update(view({ center: east(1), zoom: 16 }));
+    expect(module.getStats().bridges).toBe(1);
+  });
+
   it('draws nothing below minZoom', () => {
     const { scene, module } = setup({}, [segment('a', 0, 300)]);
     module.update(view({ center: C, zoom: 14 }));
