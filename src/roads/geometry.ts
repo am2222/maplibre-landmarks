@@ -597,6 +597,9 @@ const PORTAL = toRGB('#bdb7ac');
 const MOUTH = toRGB('#1d1e21');
 /** Clearance of a tunnel mouth, metres (roads, railways). */
 const PORTAL_CLEARANCE = { road: 5, rail: 6.5 } as const;
+const PORTAL_LINTEL_M = 1.4;
+/** How deep the portal's frame is, along the road. */
+const PORTAL_DEPTH_M = 1.5;
 
 /**
  * A tunnel portal: a concrete frame across the road, its opening dark, facing out of the tunnel.
@@ -616,8 +619,8 @@ export function buildPortal(
   const clear = PORTAL_CLEARANCE[kind];
   const half = width / 2 + 0.5;
   const wall = 1.2;
-  const lintel = 1.4;
-  const depth = 1.5;
+  const lintel = PORTAL_LINTEL_M;
+  const depth = PORTAL_DEPTH_M;
   /** A point `a` metres to the left, `f` metres into the tunnel, `y` up. */
   const pt = (a: number, f: number, y: number): Vec3 => [
     at[0] + lx * a + fx * f,
@@ -661,6 +664,299 @@ export function buildPortal(
     pt(-half, depth + 0.05, clear),
     pt(half, depth + 0.05, clear),
     PORTAL,
+  );
+  return b.build();
+}
+
+/** Depth of a cutting at the portal: the tunnel's clearance and the portal's lintel. */
+export const cuttingDepth = (kind: Raised['kind']) => PORTAL_CLEARANCE[kind] + PORTAL_LINTEL_M;
+/** Length of the road dropping into a cutting, metres (the bridges' average grade). */
+export const cuttingLength = (kind: Raised['kind']) => cuttingDepth(kind) / AVERAGE_GRADE;
+/** Retaining walls: their gap from the road edge, coping height above the ground and width. */
+const WALL_GAP_M = 0.3;
+const COPING_M = 0.6;
+const COPING_T = 0.4;
+/** The invisible ground hiding what lies below it: this far out beside a cutting and over a tunnel. */
+const MASK_BAND_M = 25;
+const MASK_COVER_M = 40;
+
+export interface CuttingInput {
+  /** From the top of the cutting to the portal, local metres (one point: a portal on the level). */
+  points: XZ[];
+  widths: number[];
+  /** Width of the tunnel. */
+  width: number;
+  kind: Raised['kind'];
+  cls: string;
+  /** Into the tunnel at the portal, local (x east, z south). */
+  heading: XZ;
+  /** How far below the ground the road reaches at the portal, metres. */
+  depth: number;
+  ground(p: XZ): number;
+  /**
+   * How far from `p` along unit `dir` the ground is free of other cuttings, metres (default: as
+   * far as needed). The ground mask stops there, so it never covers another cutting's trench.
+   */
+  room?(p: XZ, dir: XZ, max: number): number;
+}
+
+/**
+ * A road dropping into a cutting to a tunnel portal: the road descending between retaining walls,
+ * whose coping stands a little above the ground, to a portal whose top meets the ground. The
+ * `mask` is the ground around it, to draw into the depth buffer only: the flat map writes no
+ * depth, so without it what lies below the ground (the walls' backs, the tunnel) would show
+ * through. The `hole` is the trench's opening, to draw as far depth before it: terrain writes
+ * depth, and would hide the trench.
+ */
+export function buildCutting(input: CuttingInput): {
+  mesh: RoofMesh;
+  mask: RoofMesh;
+  hole: RoofMesh;
+} {
+  const b = new MeshBuilder();
+  const mask = new MeshBuilder();
+  const hole = new MeshBuilder();
+  const room = input.room ?? ((_p: XZ, _d: XZ, max: number) => max);
+  const portalAt = input.points.at(-1)!;
+  const portalGround = input.ground(portalAt);
+  let length = 0;
+  if (input.points.length > 1 && input.depth > 0.05) {
+    // A width per step along the road (one fewer than its points): each point gets the step's.
+    const steps = input.widths.length ? input.widths : [input.width];
+    const perPoint = input.points.map((_, i) => steps[Math.min(i, steps.length - 1)]!);
+    const smooth = smoothed(
+      input.points,
+      perPoint.map((w) => w + 2 * WALL_GAP_M),
+    );
+    const track = resample(smooth.points, smooth.widths);
+    const { samples } = track;
+    length = track.length;
+    const left = lefts(samples);
+    const grounds = samples.map(({ p }) => input.ground(p));
+    const dip = (s: number) => {
+      const t = Math.max(0, Math.min(1, s / (length || 1)));
+      return input.depth * t * t * (3 - 2 * t);
+    };
+    const heights = samples.map(({ s }, i) => grounds[i]! + GROUND_LIFT_M - dip(s));
+    const at = (i: number, off: number, y: number): Vec3 => {
+      const { p } = samples[i]!;
+      return [p[0] + left[i]![0] * off, y, p[1] + left[i]![1] * off];
+    };
+    const surface = PATHS.has(input.cls) ? SURFACE.path : SURFACE[input.kind];
+    for (let i = 0; i + 1 < samples.length; i++) {
+      const j = i + 1;
+      const [wi, wj] = [samples[i]!.w / 2, samples[j]!.w / 2];
+      b.triangle(
+        at(i, wi, heights[i]!),
+        at(i, -wi, heights[i]!),
+        at(j, -wj, heights[j]!),
+        surface,
+        true,
+      );
+      b.triangle(
+        at(i, wi, heights[i]!),
+        at(j, -wj, heights[j]!),
+        at(j, wj, heights[j]!),
+        surface,
+        true,
+      );
+      for (const side of [1, -1]) {
+        const [oi, oj] = [wi * side, wj * side];
+        const [ci, cj] = [(wi + COPING_T) * side, (wj + COPING_T) * side];
+        const [ti, tj] = [grounds[i]! + COPING_M, grounds[j]! + COPING_M];
+        // The wall's face from the road up to its coping, the coping's top and outer face.
+        b.quad(
+          at(i, oi, heights[i]!),
+          at(i, oi, ti),
+          at(j, oj, tj),
+          at(j, oj, heights[j]!),
+          FASCIA,
+        );
+        b.quad(at(i, oi, ti), at(i, ci, ti), at(j, cj, tj), at(j, oj, tj), PIER);
+        b.quad(at(i, ci, ti), at(i, ci, grounds[i]!), at(j, cj, grounds[j]!), at(j, cj, tj), PIER);
+        // The opening between the copings, at the ground: where the trench shows through terrain.
+        if (side === 1)
+          hole.quad(
+            at(i, ci, grounds[i]!),
+            at(i, -ci, grounds[i]!),
+            at(j, -cj, grounds[j]!),
+            at(j, cj, grounds[j]!),
+            PIER,
+          );
+        // The ground beside it, out to the band's edge or the next cutting.
+        const out = (k: number, w: number) => {
+          const from = at(k, (w + COPING_T) * side, 0);
+          const dir: XZ = [left[k]![0] * side, left[k]![1] * side];
+          const l = Math.hypot(dir[0], dir[1]) || 1;
+          const free = room([from[0], from[2]], [dir[0] / l, dir[1] / l], MASK_BAND_M);
+          return (w + COPING_T + free * l) * side;
+        };
+        const [bi, bj] = [out(i, wi), out(j, wj)];
+        mask.quad(
+          at(i, ci, grounds[i]! - 0.02),
+          at(i, bi, grounds[i]! - 0.02),
+          at(j, bj, grounds[j]! - 0.02),
+          at(j, cj, grounds[j]! - 0.02),
+          PIER,
+        );
+      }
+    }
+    paint(
+      b,
+      { samples: samples.map((x) => ({ ...x, w: x.w - 2 * WALL_GAP_M })), left, heights, length },
+      input.kind,
+      input.cls,
+    );
+  }
+  const base = portalGround - (length > 0 ? input.depth : 0);
+  const portal = buildPortal(portalAt, input.heading, input.width, input.kind, base);
+  appendMesh(b, portal);
+  if (length > 0) {
+    // The ground over the tunnel, from the portal's back on: hides the tunnel below it.
+    const l = Math.hypot(input.heading[0], input.heading[1]) || 1;
+    const [fx, fz] = [input.heading[0] / l, input.heading[1] / l];
+    const [lx, lz] = [fz, -fx];
+    const pt = (a: number, f: number): Vec3 => {
+      const p: XZ = [portalAt[0] + lx * a + fx * f, portalAt[1] + lz * a + fz * f];
+      return [p[0], input.ground(p) - 0.02, p[1]];
+    };
+    // As wide and as long as the ground stays clear of other cuttings.
+    const frame = input.width / 2 + 0.5 + 1.2;
+    const sideways = (sign: number) =>
+      frame +
+      room(
+        [portalAt[0] + lx * frame * sign, portalAt[1] + lz * frame * sign],
+        [lx * sign, lz * sign],
+        MASK_BAND_M,
+      );
+    const [half0, half1] = [sideways(1), sideways(-1)];
+    const ahead =
+      PORTAL_DEPTH_M +
+      room(
+        [portalAt[0] + fx * PORTAL_DEPTH_M, portalAt[1] + fz * PORTAL_DEPTH_M],
+        [fx, fz],
+        MASK_COVER_M,
+      );
+    if (ahead > PORTAL_DEPTH_M + 0.5)
+      mask.quad(
+        pt(half0, PORTAL_DEPTH_M),
+        pt(-half1, PORTAL_DEPTH_M),
+        pt(-half1, ahead),
+        pt(half0, ahead),
+        PIER,
+      );
+  }
+  return { mesh: b.build(), mask: mask.build(), hole: hole.build() };
+}
+
+/** Add a built mesh's triangles to a builder (as built: normals and colours kept). */
+function appendMesh(b: MeshBuilder, mesh: RoofMesh): void {
+  const p = mesh.positions;
+  for (let i = 0; i + 8 < p.length; i += 9)
+    b.triangle(
+      [p[i]!, p[i + 1]!, p[i + 2]!],
+      [p[i + 3]!, p[i + 4]!, p[i + 5]!],
+      [p[i + 6]!, p[i + 7]!, p[i + 8]!],
+      [mesh.colors[i]!, mesh.colors[i + 1]!, mesh.colors[i + 2]!],
+    );
+}
+
+const CEILING = toRGB('#3a3b3e');
+
+/**
+ * A short tunnel on the level (a gallery, a covered stretch, a toll canopy): the road carrying on
+ * under a concrete box, side walls up to a roof, dark beneath.
+ */
+export function buildCover(input: {
+  points: XZ[];
+  width: number;
+  kind: Raised['kind'];
+  cls: string;
+  ground(p: XZ): number;
+}): RoofMesh {
+  const b = new MeshBuilder();
+  const { samples, length } = resample(
+    input.points,
+    input.points.map(() => input.width),
+  );
+  if (samples.length < 2 || length < 0.5) return b.build();
+  const left = lefts(samples);
+  const grounds = samples.map(({ p }) => input.ground(p));
+  const heights = grounds.map((g) => g + GROUND_LIFT_M);
+  const clear = PORTAL_CLEARANCE[input.kind];
+  const at = (i: number, off: number, y: number): Vec3 => {
+    const { p } = samples[i]!;
+    return [p[0] + left[i]![0] * off, y, p[1] + left[i]![1] * off];
+  };
+  const surface = PATHS.has(input.cls) ? SURFACE.path : SURFACE[input.kind];
+  const inner = input.width / 2 + 0.5;
+  const outer = inner + 0.6;
+  for (let i = 0; i + 1 < samples.length; i++) {
+    const j = i + 1;
+    const [ri, rj] = [grounds[i]! + clear, grounds[j]! + clear];
+    b.triangle(
+      at(i, inner, heights[i]!),
+      at(i, -inner, heights[i]!),
+      at(j, -inner, heights[j]!),
+      surface,
+      true,
+    );
+    b.triangle(
+      at(i, inner, heights[i]!),
+      at(j, -inner, heights[j]!),
+      at(j, inner, heights[j]!),
+      surface,
+      true,
+    );
+    for (const side of [1, -1]) {
+      b.quad(
+        at(i, inner * side, grounds[i]!),
+        at(i, inner * side, ri),
+        at(j, inner * side, rj),
+        at(j, inner * side, grounds[j]!),
+        FASCIA,
+      );
+      b.quad(
+        at(i, outer * side, grounds[i]!),
+        at(i, outer * side, ri + 0.8),
+        at(j, outer * side, rj + 0.8),
+        at(j, outer * side, grounds[j]!),
+        PORTAL,
+      );
+    }
+    b.quad(
+      at(i, outer, ri + 0.8),
+      at(i, -outer, ri + 0.8),
+      at(j, -outer, rj + 0.8),
+      at(j, outer, rj + 0.8),
+      PORTAL,
+    );
+    b.quad(at(i, inner, ri), at(i, -inner, ri), at(j, -inner, rj), at(j, inner, rj), CEILING);
+  }
+  // Its two ends: the frame around the opening (wall ends and the roof's edge).
+  for (const i of [0, samples.length - 1]) {
+    const r = grounds[i]! + clear;
+    for (const side of [1, -1])
+      b.quad(
+        at(i, inner * side, grounds[i]!),
+        at(i, outer * side, grounds[i]!),
+        at(i, outer * side, r + 0.8),
+        at(i, inner * side, r + 0.8),
+        PORTAL,
+      );
+    b.quad(
+      at(i, inner, r),
+      at(i, -inner, r),
+      at(i, -inner, r + 0.8),
+      at(i, inner, r + 0.8),
+      PORTAL,
+    );
+  }
+  paint(
+    b,
+    { samples: samples.map((x) => ({ ...x, w: input.width })), left, heights, length },
+    input.kind,
+    input.cls,
   );
   return b.build();
 }

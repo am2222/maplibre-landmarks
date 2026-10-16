@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildCover,
+  buildCutting,
   buildRaised,
+  cuttingDepth,
+  type CuttingInput,
   LEVEL_M,
   liftAt,
   profileOf,
   rampFor,
   type RaisedInput,
 } from '../../src/roads/geometry';
-import { chainSpans, raiseLinks, withApproaches } from '../../src/roads/network';
+import { chainSpans, cuttingsOf, raiseLinks, withApproaches } from '../../src/roads/network';
 import type { Span } from '../../src/roads/segments';
 import type { LngLat } from '../../src/core/types';
 
@@ -207,5 +211,94 @@ describe('raiseLinks', () => {
     const far = [span('a', [at(0), at(100)]), span('b', [at(300), at(400)])];
     const long = raiseLinks(far, [ground('link', [at(100), at(300)])], () => 60);
     expect(long.ground.map((g) => g.key)).toEqual(['link']);
+  });
+});
+
+describe('cuttings into tunnels', () => {
+  const ground = (key: string, coords: LngLat[]) => span(key, coords, { level: 0 });
+  const ys = (positions: number[]) => positions.filter((_, i) => i % 3 === 1);
+  it('follows the road leading into a tunnel, as far as the cutting needs', () => {
+    const {
+      cuttings: [cutting, ...rest],
+      covers,
+    } = cuttingsOf(
+      [span('tunnel', [at(100), at(300)], { level: -1 })],
+      [ground('road', [at(0), at(100)])],
+      () => 60,
+    );
+    expect(covers).toEqual([]);
+    expect(rest).toEqual([]); // the far mouth meets no road
+    expect(eastOf(cutting!.coords[0]!)).toBe(40);
+    expect(eastOf(cutting!.coords.at(-1)!)).toBe(100); // the portal
+    expect(cutting!.heading[0]).toBeCloseTo(1); // into the tunnel, east
+    expect(cutting!.taken).toEqual([
+      { key: 'road', fromStart: false, length: expect.closeTo(60, 3) },
+    ]);
+  });
+
+  it('covers a short tunnel on the level instead (a gallery, a canopy)', () => {
+    const { cuttings, covers } = cuttingsOf(
+      [span('canopy', [at(100), at(130)], { level: -1 })],
+      [ground('road', [at(0), at(100)]), ground('on', [at(130), at(300)])],
+      () => 60,
+    );
+    expect(cuttings).toEqual([]);
+    expect(covers.map((c) => c.key)).toEqual(['canopy']);
+    const mesh = buildCover({
+      points: [
+        [0, 0],
+        [30, 0],
+      ],
+      width: 10,
+      kind: 'road',
+      cls: 'primary',
+      ground: () => 0,
+    });
+    const y = ys(mesh.positions);
+    expect(Math.min(...y)).toBeCloseTo(0, 5); // on the level
+    expect(Math.max(...y)).toBeCloseTo(5 + 0.8, 5); // clearance and roof
+  });
+
+  const input = (over: Partial<CuttingInput> = {}): CuttingInput => ({
+    points: [
+      [0, 0],
+      [30, 0],
+      [64, 0],
+    ],
+    widths: [10, 10],
+    width: 10,
+    kind: 'road',
+    cls: 'primary',
+    heading: [1, 0],
+    depth: cuttingDepth('road'),
+    ground: () => 0,
+    ...over,
+  });
+
+  it('drops the road to the portal, walled, with the ground around it as a mask', () => {
+    const { mesh, mask } = buildCutting(input());
+    const y = ys(mesh.positions);
+    expect(Math.min(...y)).toBeCloseTo(-cuttingDepth('road') + 0.05, 1); // the road at the portal
+    expect(Math.max(...y)).toBeCloseTo(0.6, 5); // the walls' coping, above the ground
+    expect(mask.positions.length).toBeGreaterThan(0);
+    // The mask lies just under the ground.
+    expect(ys(mask.positions).every((v) => v < 0 && v > -0.1)).toBe(true);
+  });
+
+  it('stops the mask at other cuttings beside it', () => {
+    const zs = (positions: number[]) => positions.filter((_, i) => i % 3 === 2);
+    const wide = buildCutting(input()).mask.positions;
+    const near = buildCutting(input({ room: () => 2 })).mask.positions;
+    // The road is 10 m wide with 0.3 m gaps and 0.4 m copings: 5.7 m from its centre line.
+    expect(Math.max(...zs(wide).map(Math.abs))).toBeGreaterThan(20);
+    // Beside the trench the band now ends 2 m out; the cover over the tunnel 2 m past the portal's
+    // frame (5 m + 0.5 m gap + 1.2 m wall).
+    expect(Math.max(...zs(near).map(Math.abs))).toBeLessThanOrEqual(6.7 + 2 + 1e-6);
+  });
+
+  it('stands the portal on the level where there is nothing to dip along', () => {
+    const { mesh, mask } = buildCutting(input({ points: [[64, 0]], widths: [] }));
+    expect(Math.min(...ys(mesh.positions))).toBeCloseTo(0, 5);
+    expect(mask.positions).toEqual([]);
   });
 });

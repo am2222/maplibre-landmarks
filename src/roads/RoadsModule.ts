@@ -3,7 +3,11 @@ import {
   DoubleSide,
   Float32BufferAttribute,
   Mesh,
+  AlwaysDepth,
+  GLSL3,
+  MeshBasicMaterial,
   MeshStandardMaterial,
+  ShaderMaterial,
 } from 'three';
 import { farCutoffM, tileNearestM } from '../core/cutoff';
 import type { LayerModule, ModuleContext } from '../core/LayerModule';
@@ -11,9 +15,27 @@ import { lngLatAt, localPosition, originAt } from '../core/mercator';
 import { tileBounds, TileFeed, type FeedFeature, type FeedMap } from '../core/tileFeed';
 import type { LngLat, Origin, ViewState } from '../core/types';
 import type { RoofMesh } from '../roofs/geometry/mesh';
-import { buildGround, buildJunction, buildPortal, buildRaised, rampFor, type XZ } from './geometry';
-import { groundLeft, junctionsOf, portalsOf, rankOf, type Junction, type Portal } from './ground';
-import { chainSpans, raiseLinks, withApproaches, type Raised } from './network';
+import {
+  buildCover,
+  buildCutting,
+  buildGround,
+  buildJunction,
+  buildRaised,
+  cuttingDepth,
+  cuttingLength,
+  rampFor,
+  type XZ,
+} from './geometry';
+import { groundLeft, junctionsOf, rankOf, type Junction } from './ground';
+import {
+  chainSpans,
+  cuttingsOf,
+  raiseLinks,
+  withApproaches,
+  type Cover,
+  type Cutting,
+  type Raised,
+} from './network';
 import { partsOf, readPiece, type SegmentPiece, type Span } from './segments';
 
 export interface RoadsOptions {
@@ -55,6 +77,8 @@ export interface RoadsStats {
   ground: number;
   junctions: number;
   portals: number;
+  /** Short tunnels covered over on the level. */
+  covers: number;
   /** Bridge ends that ramp down along the road beyond them (the rest ramp on the bridge). */
   approaches: number;
   triangles: number;
@@ -111,7 +135,10 @@ interface World {
   /** Road and rail stretches on the ground, less what the approaches take. */
   ground: Span[];
   junctions: Junction[];
-  portals: Portal[];
+  /** Where roads drop into cuttings to tunnel portals. */
+  cuttings: Cutting[];
+  /** Short tunnels, covered over on the level. */
+  covers: Cover[];
 }
 
 /** Something to draw: its mesh is built around `origin`, once while `source` is unchanged. */
@@ -119,7 +146,7 @@ interface Item {
   key: string;
   source: object;
   origin: LngLat;
-  make(origin: LngLat): { mesh: RoofMesh; top: number };
+  make(origin: LngLat): { mesh: RoofMesh; mask?: RoofMesh; hole?: RoofMesh; top: number };
 }
 
 interface Built {
@@ -127,8 +154,31 @@ interface Built {
   /** Mesh around `origin`, heights above sea level. */
   origin: LngLat;
   mesh: RoofMesh;
+  /** Depth only: the ground around a cutting, hiding what lies below it. */
+  mask?: RoofMesh;
+  /** Far depth: a cutting's opening, through the terrain's depth. */
+  hole?: RoofMesh;
   top: number;
 }
+
+/**
+ * Resets depth to the far plane where it draws, in no colour: terrain writes depth over what lies
+ * below it, and a cutting's opening must show the trench drawn after.
+ */
+const holeMaterial = () =>
+  new ShaderMaterial({
+    glslVersion: GLSL3,
+    vertexShader:
+      'void main() { gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'void main() { gl_FragDepth = 1.0; }',
+    colorWrite: false,
+    depthWrite: true,
+    depthFunc: AlwaysDepth,
+    side: DoubleSide,
+  });
+
+/** How far ahead into a tunnel the ground is read, for a hillside over the portal, metres. */
+const HILLSIDE_M = [10, 20, 30, 40];
 
 const GROUND_RADIUS_M = 800;
 const MAX_GROUND = 2500;
@@ -141,6 +191,10 @@ const MAX_GROUND = 2500;
 export class RoadsModule implements LayerModule {
   private ctx?: ModuleContext;
   private mesh?: Mesh<BufferGeometry, MeshStandardMaterial>;
+  /** Depth only, drawn first: the ground around cuttings, so what lies below it stays hidden. */
+  private mask?: Mesh<BufferGeometry, MeshBasicMaterial>;
+  /** Far depth, drawn before all: cuttings' openings, through the terrain's depth. */
+  private hole?: Mesh<BufferGeometry, ShaderMaterial>;
   private feed?: TileFeed;
   private connectorFeed?: TileFeed;
   /** Each held tile's road and rail pieces. */
@@ -167,6 +221,7 @@ export class RoadsModule implements LayerModule {
     ground: 0,
     junctions: 0,
     portals: 0,
+    covers: 0,
     approaches: 0,
     triangles: 0,
     highest: 0,
@@ -186,7 +241,18 @@ export class RoadsModule implements LayerModule {
     );
     this.mesh.name = 'raised-roads';
     this.mesh.frustumCulled = false;
-    ctx.scene.add(this.mesh);
+    this.mask = new Mesh(
+      new BufferGeometry(),
+      new MeshBasicMaterial({ colorWrite: false, side: DoubleSide }),
+    );
+    this.mask.name = 'ground-mask';
+    this.mask.frustumCulled = false;
+    this.mask.renderOrder = -1;
+    this.hole = new Mesh(new BufferGeometry(), holeMaterial());
+    this.hole.name = 'ground-hole';
+    this.hole.frustumCulled = false;
+    this.hole.renderOrder = -2;
+    ctx.scene.add(this.hole, this.mask, this.mesh);
     ctx.map.on('terrain', this.onTerrain);
     ctx.map.on('sourcedata', this.onSourceData);
     this.hideReplaced();
@@ -198,9 +264,11 @@ export class RoadsModule implements LayerModule {
   }
 
   place(origin: Origin): void {
-    if (!this.mesh) return;
-    this.mesh.position.set(...localPosition(origin, this.anchor, 0));
-    this.mesh.updateMatrixWorld();
+    for (const mesh of [this.mesh, this.mask, this.hole]) {
+      if (!mesh) continue;
+      mesh.position.set(...localPosition(origin, this.anchor, 0));
+      mesh.updateMatrixWorld();
+    }
   }
 
   styleChanged(attached: boolean): void {
@@ -230,12 +298,15 @@ export class RoadsModule implements LayerModule {
     this.connectorFeed?.dispose();
     this.connectorFeed = undefined;
     this.restoreReplaced();
-    if (this.mesh) {
-      ctx.scene.remove(this.mesh);
-      this.mesh.geometry.dispose();
-      this.mesh.material.dispose();
+    for (const mesh of [this.mesh, this.mask, this.hole]) {
+      if (!mesh) continue;
+      ctx.scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
     }
     this.mesh = undefined;
+    this.mask = undefined;
+    this.hole = undefined;
     this.ctx = undefined;
   }
 
@@ -347,24 +418,101 @@ export class RoadsModule implements LayerModule {
         });
     }
     if (this.options.tunnels !== false)
-      for (const p of nearest(world.portals, (p) => away(p.at), cutoff, Infinity))
+      for (const c of nearest(world.cuttings, distance, cutoff, Infinity))
         items.push({
-          key: `portal:${p.at.join()}`,
-          source: p,
-          origin: p.at,
-          // Into the tunnel in (east, south) local axes.
-          make: () => ({
-            mesh: buildPortal(
-              [0, 0],
-              [p.heading[0], -p.heading[1]],
-              p.width,
-              p.kind,
-              this.groundAt(p.at),
-            ),
-            top: 0,
-          }),
+          key: `cutting:${c.key}`,
+          source: c,
+          origin: c.coords.at(-1)!,
+          make: (o) => this.buildCuttingAt(c, o, world.cuttings),
+        });
+    if (this.options.tunnels !== false)
+      for (const c of nearest(world.covers, distance, cutoff, Infinity))
+        items.push({
+          key: `cover:${c.key}`,
+          source: c,
+          origin: c.coords[0]!,
+          make: (at) => {
+            const o = originAt(at);
+            const local = (p: LngLat): XZ => {
+              const [x, , z] = localPosition(o, p);
+              return [x, z];
+            };
+            return {
+              mesh: buildCover({
+                points: c.coords.map(local),
+                width: c.width,
+                kind: c.kind,
+                cls: c.cls,
+                ground: ([x, z]) => this.groundAt(lngLatAt(o, x, z)),
+              }),
+              top: 0,
+            };
+          },
         });
     this.draw(view, items);
+  }
+
+  /**
+   * A cutting down to a portal, as deep as the portal needs, less how far the ground rises over
+   * the tunnel within HILLSIDE_M (a tunnel into a hillside needs no cutting).
+   */
+  private buildCuttingAt(
+    c: Cutting,
+    origin: LngLat,
+    all: Cutting[],
+  ): { mesh: RoofMesh; mask: RoofMesh; hole: RoofMesh; top: number } {
+    const o = originAt(origin);
+    const local = (p: LngLat): XZ => {
+      const [x, , z] = localPosition(o, p);
+      return [x, z];
+    };
+    const mouth = c.coords.at(-1)!;
+    const k = M_PER_DEG * Math.cos((mouth[1] * Math.PI) / 180);
+    const ahead = (d: number): LngLat => [
+      mouth[0] + (c.heading[0] * d) / k,
+      mouth[1] + (c.heading[1] * d) / M_PER_DEG,
+    ];
+    const at = this.groundAt(mouth);
+    const rise = Math.max(0, ...HILLSIDE_M.map((d) => this.groundAt(ahead(d)) - at));
+    const { mesh, mask, hole } = buildCutting({
+      points: c.coords.map(local),
+      widths: c.widths,
+      width: c.width,
+      kind: c.kind,
+      cls: c.cls,
+      // Into the tunnel in local (east, south) axes.
+      heading: [c.heading[0], -c.heading[1]],
+      depth: Math.max(0, cuttingDepth(c.kind) - rise),
+      ground: ([x, z]) => this.groundAt(lngLatAt(o, x, z)),
+      room: this.roomFor(c, all, local),
+    });
+    return { mesh, mask, hole, top: 0 };
+  }
+
+  /**
+   * Free ground beside a cutting: how far a ray goes before reaching another cutting's trench (its
+   * road and walls), stepping a metre at a time.
+   */
+  private roomFor(
+    c: Cutting,
+    all: Cutting[],
+    local: (p: LngLat) => XZ,
+  ): (p: XZ, dir: XZ, max: number) => number {
+    const pad = 80 / M_PER_DEG;
+    const [w, s, e, n] = bboxOf(c.coords);
+    const others = all
+      .filter((o) => o !== c && o.coords.length > 1)
+      .filter((o) => {
+        const [ow, os, oe, on] = bboxOf(o.coords);
+        return ow <= e + pad && oe >= w - pad && os <= n + pad && on >= s - pad;
+      })
+      .map((o) => ({ line: o.coords.map(local), half: Math.max(...o.widths, o.width) / 2 + 1 }));
+    if (!others.length) return (_p, _d, max) => max;
+    return ([x, z], [dx, dz], max) => {
+      for (let d = 0; d < max; d += 1)
+        if (others.some((o) => distanceTo([x + dx * d, z + dz * d], o.line) < o.half)) return d;
+      return max;
+    };
   }
 
   private groundAt(p: LngLat): number {
@@ -432,14 +580,22 @@ export class RoadsModule implements LayerModule {
     }));
     const linked = raiseLinks(bridges, ground, rampFor);
     const raised = withApproaches(chainSpans(linked.bridges), linked.ground, rampFor);
+    const { cuttings, covers } =
+      this.options.tunnels === false
+        ? { cuttings: [], covers: [] }
+        : cuttingsOf(tunnels, linked.ground, cuttingLength);
     const segments = [...bySegment.values()].map((pieces) => pieces[0]!);
     return {
       raised,
-      ground: groundLeft(linked.ground, raised),
+      ground: groundLeft(linked.ground, [
+        ...raised.flatMap((r) => r.taken),
+        ...cuttings.flatMap((c) => c.taken),
+      ]),
       junctions: this.options.groundRoads
         ? junctionsOf(segments, (id) => connectors.get(id), raised)
         : [],
-      portals: portalsOf(tunnels, ground),
+      cuttings,
+      covers,
     };
   }
 
@@ -565,6 +721,8 @@ export class RoadsModule implements LayerModule {
     const positions: number[] = [];
     const normals: number[] = [];
     const colors: number[] = [];
+    const masked: number[] = [];
+    const holes: number[] = [];
     let highest = 0;
     for (const b of built.values()) {
       const [ox, , oz] = localPosition(anchorOrigin, b.origin);
@@ -572,7 +730,19 @@ export class RoadsModule implements LayerModule {
       for (let i = 0; i < p.length; i += 3) positions.push(p[i]! + ox, p[i + 1]!, p[i + 2]! + oz);
       normals.push(...b.mesh.normals);
       colors.push(...b.mesh.colors);
+      const q = b.mask?.positions ?? [];
+      for (let i = 0; i < q.length; i += 3) masked.push(q[i]! + ox, q[i + 1]!, q[i + 2]! + oz);
+      const h = b.hole?.positions ?? [];
+      for (let i = 0; i < h.length; i += 3) holes.push(h[i]! + ox, h[i + 1]!, h[i + 2]! + oz);
       highest = Math.max(highest, b.top);
+    }
+    for (const [mesh, data] of [
+      [this.mask, masked],
+      [this.hole, holes],
+    ] as const) {
+      if (!mesh) continue;
+      mesh.geometry.setAttribute('position', new Float32BufferAttribute(data, 3));
+      mesh.geometry.computeBoundingSphere();
     }
     const geometry = this.mesh.geometry;
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
@@ -585,7 +755,8 @@ export class RoadsModule implements LayerModule {
       bridges: raised.length,
       ground: of('ground:').length,
       junctions: of('junction:').length,
-      portals: of('portal:').length,
+      portals: of('cutting:').length,
+      covers: of('cover:').length,
       approaches: raised.reduce((n, r) => n + r.approaches.filter((a) => a > 0).length, 0),
       triangles: positions.length / 9,
       highest,

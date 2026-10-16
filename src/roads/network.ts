@@ -191,51 +191,8 @@ export function withApproaches(
   const roads = ground.filter((g) => g.level >= 0);
   const groundEnds = new Ends(roads, m, o);
   const bridgeEnds = new Ends(chains, m, o);
-  const cos = Math.cos((APPROACH_DEG * Math.PI) / 180);
-
-  /** Outward from `p`, heading `dir`: the approach's points (p first) and widths. */
-  const walk = (chain: Chain, p: LngLat, dir: [number, number], want: number) => {
-    const coords: LngLat[] = [p];
-    const widths: number[] = [];
-    const taken: Taken[] = [];
-    const seen = new Set<number>();
-    let here = p;
-    let heading = dir;
-    while (want > 0) {
-      const options = groundEnds
-        .at(here)
-        .filter((e) => !seen.has(e.line) && roads[e.line]!.kind === chain.kind)
-        .map((e) => {
-          const line = roads[e.line]!;
-          const run = e.first ? line.coords : [...line.coords].reverse();
-          const h = m.heading(run[0]!, run[1]!);
-          return { e, run, line, along: h[0] * heading[0] + h[1] * heading[1] };
-        });
-      // Past the bridge's own end, any number may meet (a T at the abutment): the straightest.
-      // Further on, only a simple join is followed.
-      const pick =
-        coords.length === 1
-          ? options.filter((x) => x.along >= cos).sort((a, b) => b.along - a.along)[0]
-          : options.length === 1 && options[0]!.along >= cos
-            ? options[0]
-            : undefined;
-      if (!pick) break;
-      seen.add(pick.e.line);
-      const part = head(pick.run, want, m);
-      let used = 0;
-      for (let i = 1; i < part.length; i++) {
-        used += m.dist(part[i - 1]!, part[i]!);
-        coords.push(part[i]!);
-        widths.push(pick.line.width);
-      }
-      want -= used;
-      taken.push({ key: pick.line.key, fromStart: pick.e.first, length: used });
-      here = coords.at(-1)!;
-      if (part.length < pick.run.length || want <= 0) break;
-      heading = m.heading(pick.run.at(-2)!, pick.run.at(-1)!);
-    }
-    return { coords, widths, taken };
-  };
+  const walk = (chain: Chain, p: LngLat, dir: [number, number], want: number) =>
+    walkOut(roads, groundEnds, m, chain.kind, p, dir, want);
 
   return chains.map((chain) => {
     const want = rampOf(chain.level);
@@ -249,7 +206,7 @@ export function withApproaches(
       bridgeEnds.at(ends[k]).length > 1
         ? { coords: [ends[k]], widths: [] as number[], taken: [] as Taken[] }
         : walk(chain, ends[k], dirs[k], want),
-    ) as [ReturnType<typeof walk>, ReturnType<typeof walk>];
+    ) as [Walk, Walk];
     const length = (c: LngLat[]) => c.slice(1).reduce((s, p, i) => s + m.dist(c[i]!, p), 0);
     return {
       ...chain,
@@ -263,6 +220,149 @@ export function withApproaches(
       taken: [...before.taken, ...after.taken],
     };
   });
+}
+
+/** A walk out along the ground roads: its points (the start first), widths, and what it takes. */
+interface Walk {
+  coords: LngLat[];
+  widths: number[];
+  taken: Taken[];
+}
+
+/**
+ * Outward from `p`, heading `dir`, along the ground roads of `kind`: the straightest within
+ * APPROACH_DEG of those meeting `p` (a T at an abutment or a tunnel mouth), then on through simple
+ * joins only, until `want` metres are found or a junction is reached.
+ */
+function walkOut(
+  roads: Span[],
+  ends: Ends,
+  m: ReturnType<typeof metres>,
+  kind: Span['kind'],
+  p: LngLat,
+  dir: [number, number],
+  want: number,
+): Walk {
+  const cos = Math.cos((APPROACH_DEG * Math.PI) / 180);
+  const coords: LngLat[] = [p];
+  const widths: number[] = [];
+  const taken: Taken[] = [];
+  const seen = new Set<number>();
+  let here = p;
+  let heading = dir;
+  while (want > 0) {
+    const options = ends
+      .at(here)
+      .filter((e) => !seen.has(e.line) && roads[e.line]!.kind === kind)
+      .map((e) => {
+        const line = roads[e.line]!;
+        const run = e.first ? line.coords : [...line.coords].reverse();
+        const h = m.heading(run[0]!, run[1]!);
+        return { e, run, line, along: h[0] * heading[0] + h[1] * heading[1] };
+      });
+    const pick =
+      coords.length === 1
+        ? options.filter((x) => x.along >= cos).sort((a, b) => b.along - a.along)[0]
+        : options.length === 1 && options[0]!.along >= cos
+          ? options[0]
+          : undefined;
+    if (!pick) break;
+    seen.add(pick.e.line);
+    const part = head(pick.run, want, m);
+    let used = 0;
+    for (let i = 1; i < part.length; i++) {
+      used += m.dist(part[i - 1]!, part[i]!);
+      coords.push(part[i]!);
+      widths.push(pick.line.width);
+    }
+    want -= used;
+    taken.push({ key: pick.line.key, fromStart: pick.e.first, length: used });
+    here = coords.at(-1)!;
+    if (part.length < pick.run.length || want <= 0) break;
+    heading = m.heading(pick.run.at(-2)!, pick.run.at(-1)!);
+  }
+  return { coords, widths, taken };
+}
+
+/**
+ * Where a road or railway goes into a tunnel: the ground road leading to the mouth, which drops
+ * into a cutting down to the portal. `coords` runs from the top of the cutting to the portal (a
+ * single point where no road leads straight in: a portal on the level).
+ */
+export interface Cutting {
+  key: string;
+  kind: Span['kind'];
+  cls: string;
+  coords: LngLat[];
+  widths: number[];
+  /** Width of the tunnel, metres. */
+  width: number;
+  /** Unit heading into the tunnel at the portal, (east, north). */
+  heading: [number, number];
+  taken: Taken[];
+}
+
+/** A short tunnel (a gallery, a covered stretch, a toll canopy): covered over on the level. */
+export interface Cover {
+  key: string;
+  kind: Span['kind'];
+  cls: string;
+  coords: LngLat[];
+  width: number;
+}
+
+/** Tunnels shorter than this are covers on the level, metres, not cuttings and portals. */
+export const SHORT_TUNNEL_M = 60;
+
+/**
+ * Tunnels joined end to end. Short ones are covers on the level; at each end of a longer one that
+ * meets a ground road of the same kind, a cutting: that road followed outward for `want(kind)`
+ * metres.
+ */
+export function cuttingsOf(
+  tunnels: Span[],
+  ground: Span[],
+  want: (kind: Span['kind']) => number,
+): { cuttings: Cutting[]; covers: Cover[] } {
+  if (!tunnels.length) return { cuttings: [], covers: [] };
+  const o = tunnels[0]!.coords[0]!;
+  const m = metres(o);
+  const roads = ground.filter((g) => g.level >= 0);
+  const ends = new Ends(roads, m, o);
+  const out: Cutting[] = [];
+  const covers: Cover[] = [];
+  for (const t of chainSpans(tunnels)) {
+    const length = t.coords.slice(1).reduce((sum, p, i) => sum + m.dist(t.coords[i]!, p), 0);
+    if (length < SHORT_TUNNEL_M) {
+      covers.push({
+        key: t.key,
+        kind: t.kind,
+        cls: t.cls,
+        coords: t.coords,
+        width: Math.max(...t.widths),
+      });
+      continue;
+    }
+    for (const [mouth, inner] of [
+      [t.coords[0]!, t.coords[1]!],
+      [t.coords.at(-1)!, t.coords.at(-2)!],
+    ] as const) {
+      if (!ends.at(mouth).some((e) => roads[e.line]!.kind === t.kind)) continue;
+      const heading = m.heading(mouth, inner);
+      const walk = walkOut(roads, ends, m, t.kind, mouth, [-heading[0], -heading[1]], want(t.kind));
+      out.push({
+        key: `${t.key}@${mouth.join()}`,
+        kind: t.kind,
+        cls: t.cls,
+        coords: [...walk.coords].reverse(),
+        widths: [...walk.widths].reverse(),
+        width: Math.max(...t.widths),
+        heading,
+        taken: walk.taken,
+      });
+    }
+  }
+  return { cuttings: out, covers };
 }
 
 /**

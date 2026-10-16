@@ -178,6 +178,28 @@ describe('RoadsModule', () => {
     expect(module.getStats()).toMatchObject({ bridges: 0, portals: 1 });
   });
 
+  it('cuts down into a tunnel on the level, but not into a hillside', () => {
+    const tunnel = segment('t', 0, 300, {
+      road_flags: '[{"between":[0.5,1],"values":["is_tunnel"]}]',
+    });
+    const mask = (scene: Scene) =>
+      (scene.getObjectByName('ground-mask') as Mesh<BufferGeometry>).geometry.getAttribute(
+        'position',
+      )?.count ?? 0;
+    const flat = setup({}, [tunnel]);
+    flat.module.update(view({ center: C, zoom: 16 }));
+    expect(flat.module.getStats().portals).toBe(1);
+    expect(mask(flat.scene)).toBeGreaterThan(0);
+    // The ground rising 20 m over the tunnel, from 10 m past its mouth (at 150 m east).
+    const hill = setup({}, [tunnel]);
+    hill.map.getTerrain = () => ({ source: 'dem' });
+    hill.map.queryTerrainElevation = ((p: [number, number]) =>
+      (p[0] - C[0]) * KX > 155 ? 20 : 0) as never;
+    hill.module.update(view({ center: C, zoom: 16 }));
+    expect(hill.module.getStats().portals).toBe(1);
+    expect(mask(hill.scene)).toBe(0);
+  });
+
   it('draws nothing below minZoom', () => {
     const { scene, module } = setup({}, [segment('a', 0, 300)]);
     module.update(view({ center: C, zoom: 14 }));

@@ -1,5 +1,5 @@
 import type { LngLat } from '../core/types';
-import { Ends, metres, type Raised } from './network';
+import { metres, type Raised, type Taken } from './network';
 import { cut, defaultWidth, lengthsOf, type SegmentPiece, type Span } from './segments';
 
 /** Where roads meet on the ground: a patch over their overlap, and no markings across it. */
@@ -9,15 +9,6 @@ export interface Junction {
   radius: number;
   /** The highest rank meeting here (the patch lies over all of them). */
   rank: number;
-}
-
-/** Where a road or railway goes into a tunnel. */
-export interface Portal {
-  at: LngLat;
-  /** Unit heading into the tunnel, (east, north). */
-  heading: [number, number];
-  width: number;
-  kind: Span['kind'];
 }
 
 /** Drawing order on the ground: bigger roads lie over smaller ones where they overlap. */
@@ -36,18 +27,17 @@ export const rankOf = (s: Pick<Span, 'kind' | 'cls'>): number =>
   s.kind === 'rail' ? 1 : (RANK[s.cls] ?? 0);
 
 /**
- * The ground stretches still on the ground: less what the approaches of raised roads take from
- * their start or end. A stretch taken whole is left out.
+ * The ground stretches still on the ground: less what approaches to bridges and cuttings down to
+ * tunnels take from their start or end. A stretch taken whole is left out.
  */
-export function groundLeft(ground: Span[], raised: Raised[]): Span[] {
+export function groundLeft(ground: Span[], takenBy: Taken[]): Span[] {
   const taken = new Map<string, { start: number; end: number }>();
-  for (const r of raised)
-    for (const t of r.taken) {
-      const cut = taken.get(t.key) ?? { start: 0, end: 0 };
-      if (t.fromStart) cut.start = Math.max(cut.start, t.length);
-      else cut.end = Math.max(cut.end, t.length);
-      taken.set(t.key, cut);
-    }
+  for (const t of takenBy) {
+    const cut = taken.get(t.key) ?? { start: 0, end: 0 };
+    if (t.fromStart) cut.start = Math.max(cut.start, t.length);
+    else cut.end = Math.max(cut.end, t.length);
+    taken.set(t.key, cut);
+  }
   return ground.flatMap((g) => {
     const t = taken.get(g.key);
     if (!t) return [g];
@@ -87,24 +77,6 @@ export function junctionsOf(
     if (raised.some((r) => onLine(at, r.coords, Math.max(...r.widths) / 2))) continue;
     out.push({ at, radius: m.radius, rank: m.rank });
   }
-  return out;
-}
-
-/** Where tunnels meet the ground roads of the same kind: one portal per tunnel mouth. */
-export function portalsOf(tunnels: Span[], ground: Span[]): Portal[] {
-  if (!tunnels.length || !ground.length) return [];
-  const o = tunnels[0]!.coords[0]!;
-  const m = metres(o);
-  const ends = new Ends(ground, m, o);
-  const out: Portal[] = [];
-  for (const t of tunnels)
-    for (const [at, next] of [
-      [t.coords[0]!, t.coords[1]!],
-      [t.coords.at(-1)!, t.coords.at(-2)!],
-    ] as const) {
-      if (!ends.at(at).some((e) => ground[e.line]!.kind === t.kind)) continue;
-      out.push({ at, heading: m.heading(at, next), width: t.width, kind: t.kind });
-    }
   return out;
 }
 

@@ -99,11 +99,23 @@ const map = new maplibregl.Map({ container: 'map', style, zoomLevelsToOverscale:
   where roads meet from three or more directions), with no markings across it. Hide the basemap's
   road lines with `replaceLayers` while it is on. It costs more than flat lines: thousands of
   stretches in a city view.
-- **Tunnels**: segments flagged `is_tunnel` are not drawn, and where a road or railway goes into
-  one from the ground a concrete portal stands across it, its opening dark. Hide the basemap's
-  tunnel lines with `replaceLayers`.
+- **Tunnels**: segments flagged `is_tunnel` are not drawn. Where a road or railway goes into one
+  from the ground, it drops into a cutting (about 6.4 m for roads, 7.9 m for railways, over the
+  bridges' 10 % average grade): the road descending between retaining walls whose coping stands a
+  little above the ground, to a portal whose top meets the ground, its opening dark. With terrain,
+  the cutting is only as deep as the ground ahead does not already rise over the tunnel: a tunnel
+  into a hillside gets its portal and no cutting.
+- **Short tunnels** (under 60 m: galleries, covered stretches, toll canopies) stay on the level,
+  covered by a concrete box.
+- **Seeing into a cutting**: the flat map writes no depth, so the layer draws the ground around
+  each cutting (and over the tunnel) into the depth buffer only, hiding what lies below the
+  ground; terrain does write depth, so the cutting's opening is cleared to far depth first, to show
+  the trench through it. A 3D building standing right between the camera and a cutting's opening
+  can show the trench through itself.
 
-Not yet: approaches sloping down into tunnels, and lane counts.
+Hide the basemap's tunnel lines with `replaceLayers`.
+
+Not yet: lane counts.
 
 ## Options
 
@@ -117,9 +129,9 @@ Not yet: approaches sloping down into tunnels, and lane counts.
 | `farCutoff`     | `true`      | Pitched views draw only to about three screen heights away         |
 | `rail`          | `true`      | Railways too                                                       |
 | `groundRoads`   | `false`     | Roads on the ground in 3D too; `{ radius, maxSegments }` (800 m, 2500) |
-| `tunnels`       | `true`      | Portals at tunnel mouths                                           |
+| `tunnels`       | `true`      | Cuttings and portals at tunnel mouths, covers over short tunnels   |
 | `replaceLayers` | —           | The app's flat layers this draws instead (bridges, tunnels, ground roads), hidden while on |
 | `onError`       | —           |                                                                    |
 
-Methods: `getStats()` (`bridges`, `approaches`, `ground`, `junctions`, `portals`, `triangles`,
-`highest`).
+Methods: `getStats()` (`bridges`, `approaches`, `ground`, `junctions`, `portals`, `covers`,
+`triangles`, `highest`).
