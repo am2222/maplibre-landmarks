@@ -19,6 +19,15 @@ export interface Chain {
  */
 export interface Raised extends Chain {
   approaches: [number, number];
+  /** The ground stretches its approaches take: no longer drawn on the ground. */
+  taken: Taken[];
+}
+
+/** `length` metres of a ground stretch, from its start or its end. */
+export interface Taken {
+  key: string;
+  fromStart: boolean;
+  length: number;
 }
 
 const M_PER_DEG = 111_320;
@@ -28,7 +37,7 @@ const JOIN_M = 1.5;
 const APPROACH_DEG = 35;
 
 /** Planar metres around an origin (enough for the few kilometres a view holds). */
-function metres(o: LngLat) {
+export function metres(o: LngLat) {
   const kx = M_PER_DEG * Math.cos((o[1] * Math.PI) / 180);
   return {
     kx,
@@ -48,7 +57,7 @@ interface End {
 }
 
 /** The ends of a set of lines, found by position. */
-class Ends {
+export class Ends {
   private readonly cells = new Map<string, End[]>();
 
   constructor(
@@ -188,6 +197,7 @@ export function withApproaches(
   const walk = (chain: Chain, p: LngLat, dir: [number, number], want: number) => {
     const coords: LngLat[] = [p];
     const widths: number[] = [];
+    const taken: Taken[] = [];
     const seen = new Set<number>();
     let here = p;
     let heading = dir;
@@ -212,16 +222,19 @@ export function withApproaches(
       if (!pick) break;
       seen.add(pick.e.line);
       const part = head(pick.run, want, m);
+      let used = 0;
       for (let i = 1; i < part.length; i++) {
-        want -= m.dist(part[i - 1]!, part[i]!);
+        used += m.dist(part[i - 1]!, part[i]!);
         coords.push(part[i]!);
         widths.push(pick.line.width);
       }
+      want -= used;
+      taken.push({ key: pick.line.key, fromStart: pick.e.first, length: used });
       here = coords.at(-1)!;
       if (part.length < pick.run.length || want <= 0) break;
       heading = m.heading(pick.run.at(-2)!, pick.run.at(-1)!);
     }
-    return { coords, widths };
+    return { coords, widths, taken };
   };
 
   return chains.map((chain) => {
@@ -234,7 +247,7 @@ export function withApproaches(
     const [before, after] = ([0, 1] as const).map((k) =>
       // Another bridge carries on here: it ramps down at its own far end.
       bridgeEnds.at(ends[k]).length > 1
-        ? { coords: [ends[k]], widths: [] as number[] }
+        ? { coords: [ends[k]], widths: [] as number[], taken: [] as Taken[] }
         : walk(chain, ends[k], dirs[k], want),
     ) as [ReturnType<typeof walk>, ReturnType<typeof walk>];
     const length = (c: LngLat[]) => c.slice(1).reduce((s, p, i) => s + m.dist(c[i]!, p), 0);
@@ -247,6 +260,7 @@ export function withApproaches(
       ],
       widths: [...[...before.widths].reverse(), ...chain.widths, ...after.widths],
       approaches: [length(before.coords), length(after.coords)],
+      taken: [...before.taken, ...after.taken],
     };
   });
 }

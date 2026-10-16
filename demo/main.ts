@@ -63,10 +63,28 @@ const OVERTURE_BASE =
 const OVERTURE_TRANSPORTATION =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/transportation.pmtiles';
 /** Protomaps' flat bridge roads: the 3D decks take their place. */
-const FLAT_BRIDGES = ['highway', 'major', 'minor', 'link', 'other'].flatMap((k) => [
-  `roads_bridges_${k}`,
-  `roads_bridges_${k}_casing`,
-]);
+const ROAD_KINDS = ['highway', 'major', 'minor', 'link', 'other'];
+const FLAT_BRIDGES = ROAD_KINDS.flatMap((k) => [`roads_bridges_${k}`, `roads_bridges_${k}_casing`]);
+/** Protomaps' tunnels: the 3D layer stands portals at their mouths instead. */
+const FLAT_TUNNELS = ROAD_KINDS.flatMap((k) => [`roads_tunnels_${k}`, `roads_tunnels_${k}_casing`]);
+/** Protomaps' roads on the ground, drawn in 3D with road surfaces on (labels and shields stay). */
+const FLAT_GROUND = [
+  'roads_highway',
+  'roads_highway_casing_early',
+  'roads_highway_casing_late',
+  'roads_major',
+  'roads_major_casing_early',
+  'roads_major_casing_late',
+  'roads_minor',
+  'roads_minor_casing',
+  'roads_minor_service',
+  'roads_minor_service_casing',
+  'roads_link',
+  'roads_link_casing',
+  'roads_other',
+  'roads_oneway',
+  'roads_rail',
+];
 const roofsParam = params.get('roofs');
 const themeParam = params.get('theme');
 const SEASONS = ['spring', 'summer', 'autumn', 'winter'] as const;
@@ -276,10 +294,12 @@ function addStreet() {
 function addRoads() {
   remove('roads');
   if (!map.getSource('overture-transportation')) return restyle();
+  const surfaces = ($('road-surfaces') as HTMLInputElement).checked;
   roads3d = new RoadsLayer({
     id: 'roads',
     source: 'overture-transportation',
-    replaceLayers: FLAT_BRIDGES,
+    groundRoads: surfaces,
+    replaceLayers: [...FLAT_BRIDGES, ...FLAT_TUNNELS, ...(surfaces ? FLAT_GROUND : [])],
     onError: (err) => console.warn('[roads]', err),
   });
   map.addLayer(roads3d, before3D());
@@ -515,6 +535,9 @@ const snowSettle = range(
   () => {},
   (v) => (v ? `${v} s` : 'at once'),
 );
+$('road-surfaces').addEventListener('change', () => {
+  if (toggle('roads').checked) addRoads();
+});
 $('snow-settle').addEventListener('change', () => {
   if (toggle('snow').checked) addSnow();
 });
@@ -781,7 +804,9 @@ setInterval(() => {
   const rd = roads3d?.getStats();
   $('roads-stats').textContent =
     rd && toggle('roads').checked
-      ? `${rd.bridges} bridges · ${rd.approaches} ramps · ${rd.triangles.toLocaleString()} triangles (zoom 15+)`
+      ? `${rd.bridges} bridges · ${rd.approaches} ramps · ${rd.portals} portals` +
+        (rd.ground ? ` · ${rd.ground} roads · ${rd.junctions} junctions` : '') +
+        ` · ${rd.triangles.toLocaleString()} triangles (zoom 15+)`
       : '';
   const rs = rain?.getStats();
   $('rain-stats').textContent =

@@ -169,11 +169,16 @@ function lefts(samples: { p: XZ }[]): XZ[] {
  */
 export function buildRaised(input: RaisedInput): { mesh: RoofMesh; top: number } {
   const b = new MeshBuilder();
-  const { samples, length } = resample(input.points, input.widths);
+  const rough = lengthOf(input.points);
+  const smooth = smoothed(input.points, input.widths);
+  const { samples, length } = resample(smooth.points, smooth.widths);
   if (samples.length < 2 || length < 1) return { mesh: b.build(), top: 0 };
+  // Rounding the corners shortens the line a little: the approaches keep their share of it.
+  const scale = rough > 0 ? length / rough : 1;
+  const approaches = input.approaches.map((a) => a * scale) as [number, number];
   const deck: [number, number] = [
-    Math.min(input.approaches[0], length),
-    Math.max(input.approaches[0], length - input.approaches[1]),
+    Math.min(approaches[0], length),
+    Math.max(approaches[0], length - approaches[1]),
   ];
   const profile = profileOf(length, deck, input.level);
   const left = lefts(samples);
@@ -181,13 +186,15 @@ export function buildRaised(input: RaisedInput): { mesh: RoofMesh; top: number }
   const surface = path ? SURFACE.path : SURFACE[input.kind];
   const grounds = samples.map(({ p }) => input.ground(p));
   // The bridge rests on its abutments: a straight line between the ground at its two ends.
-  const abutment = (s: number) =>
-    grounds[
-      Math.max(
-        0,
-        samples.findIndex((x) => x.s >= s - 1e-6),
-      )
-    ]!;
+  const abutment = (s: number): number => {
+    const k = Math.max(
+      1,
+      samples.findIndex((x) => x.s >= s),
+    );
+    const [a, c] = [samples[k - 1]!, samples[k]!];
+    const t = c.s > a.s ? Math.max(0, Math.min(1, (s - a.s) / (c.s - a.s))) : 0;
+    return input.ground([a.p[0] + (c.p[0] - a.p[0]) * t, a.p[1] + (c.p[1] - a.p[1]) * t]);
+  };
   const [g0, g1] = [abutment(deck[0]), abutment(deck[1])];
   const onDeck = samples.map(({ s }) => s > deck[0] + 1e-6 && s < deck[1] - 1e-6);
   const base = samples.map(({ s }, i) =>
@@ -270,62 +277,7 @@ export function buildRaised(input: RaisedInput): { mesh: RoofMesh; top: number }
     );
   }
 
-  // Along the deck: a point `offset` metres left of the centre line, `lift` above the surface.
-  const along = (s: number, offset: number, lift: number): Vec3 => {
-    const k = Math.max(
-      1,
-      samples.findIndex((x) => x.s >= s),
-    );
-    const [a, c] = [samples[k - 1]!, samples[k]!];
-    const t = c.s > a.s ? Math.max(0, Math.min(1, (s - a.s) / (c.s - a.s))) : 0;
-    const p: XZ = [a.p[0] + (c.p[0] - a.p[0]) * t, a.p[1] + (c.p[1] - a.p[1]) * t];
-    const l: XZ = [
-      left[k - 1]![0] + (left[k]![0] - left[k - 1]![0]) * t,
-      left[k - 1]![1] + (left[k]![1] - left[k - 1]![1]) * t,
-    ];
-    const y = heights[k - 1]! + (heights[k]! - heights[k - 1]!) * t + lift;
-    return [p[0] + l[0] * offset, y, p[1] + l[1] * offset];
-  };
-  const widthAt = (s: number) =>
-    samples[
-      Math.max(
-        0,
-        samples.findIndex((x) => x.s >= s),
-      )
-    ]!.w;
-  /** A strip `wide` metres across, `offset` left of centre, from s0 to s1, raised by `lift`. */
-  const strip = (
-    s0: number,
-    s1: number,
-    offset: number,
-    wide: number,
-    lift: number,
-    color: RGB,
-  ) => {
-    const cuts = [s0, ...samples.map((x) => x.s).filter((s) => s > s0 && s < s1), s1];
-    for (let k = 0; k + 1 < cuts.length; k++) {
-      const [a, c] = [cuts[k]!, cuts[k + 1]!];
-      b.quad(
-        along(a, offset + wide / 2, lift),
-        along(a, offset - wide / 2, lift),
-        along(c, offset - wide / 2, lift),
-        along(c, offset + wide / 2, lift),
-        color,
-      );
-    }
-  };
-  if (input.kind === 'rail') {
-    // One track: two rails a standard gauge apart, on the ballast.
-    for (const side of [0.72, -0.72]) strip(0, length, side, 0.12, 0.12, STEEL);
-  } else if (!path) {
-    for (const side of [1, -1]) {
-      const w = (s: number) => widthAt(s) / 2 - EDGE_INSET_M;
-      strip(0, length, side * w(length / 2), LINE_M, 0.03, PAINT);
-    }
-    if (widthAt(length / 2) >= MARKED_FROM_M)
-      for (let s = DASH_M[1] / 2; s + DASH_M[0] < length; s += DASH_M[1])
-        strip(s, s + DASH_M[0], 0, LINE_M, 0.03, PAINT);
-  }
+  paint(b, { samples, left, heights, length }, input.kind, input.cls);
 
   // Piers under the open stretches, every PIER_EVERY_M, moved along to stand clear of the roads.
   const blocked = input.blocked ?? (() => false);
@@ -435,4 +387,280 @@ function pier(
     corner(1, -1, capFoot, 0.67),
     PIER,
   );
+}
+
+const lengthOf = (points: XZ[]) =>
+  points
+    .slice(1)
+    .reduce((sum, p, i) => sum + Math.hypot(p[0] - points[i]![0], p[1] - points[i]![1]), 0);
+
+/**
+ * Corners rounded (Chaikin, twice): a curve mapped as a few straight pieces drawn as a curve. The
+ * ends stay where they are.
+ */
+export function smoothed(points: XZ[], widths: number[]): { points: XZ[]; widths: number[] } {
+  let p = points;
+  let w = widths;
+  for (let round = 0; round < 2 && p.length > 2; round++) {
+    const np: XZ[] = [p[0]!];
+    const nw: number[] = [w[0]!];
+    for (let i = 0; i + 1 < p.length; i++) {
+      const [a, c] = [p[i]!, p[i + 1]!];
+      const [wa, wc] = [w[i]!, w[i + 1]!];
+      if (i > 0) {
+        np.push([a[0] * 0.75 + c[0] * 0.25, a[1] * 0.75 + c[1] * 0.25]);
+        nw.push(wa * 0.75 + wc * 0.25);
+      }
+      if (i + 2 < p.length) {
+        np.push([a[0] * 0.25 + c[0] * 0.75, a[1] * 0.25 + c[1] * 0.75]);
+        nw.push(wa * 0.25 + wc * 0.75);
+      }
+    }
+    np.push(p.at(-1)!);
+    nw.push(w.at(-1)!);
+    p = np;
+    w = nw;
+  }
+  return { points: p, widths: w };
+}
+
+/** A line laid out for drawing: samples, their left vectors and surface heights. */
+interface Track {
+  samples: { p: XZ; s: number; w: number }[];
+  left: XZ[];
+  heights: number[];
+  length: number;
+}
+
+/**
+ * Markings on a road (edge lines, and a dashed centre line on roads wide enough) or a railway's
+ * rails, along a track; none over the `skip` stretches (junctions).
+ */
+function paint(
+  b: MeshBuilder,
+  { samples, left, heights, length }: Track,
+  kind: Raised['kind'],
+  cls: string,
+  skip: [number, number][] = [],
+): void {
+  // A point `offset` metres left of the centre line, `lift` above the surface, `s` metres along.
+  const along = (s: number, offset: number, lift: number): Vec3 => {
+    const k = Math.max(
+      1,
+      samples.findIndex((x) => x.s >= s),
+    );
+    const [a, c] = [samples[k - 1]!, samples[k]!];
+    const t = c.s > a.s ? Math.max(0, Math.min(1, (s - a.s) / (c.s - a.s))) : 0;
+    const p: XZ = [a.p[0] + (c.p[0] - a.p[0]) * t, a.p[1] + (c.p[1] - a.p[1]) * t];
+    const l: XZ = [
+      left[k - 1]![0] + (left[k]![0] - left[k - 1]![0]) * t,
+      left[k - 1]![1] + (left[k]![1] - left[k - 1]![1]) * t,
+    ];
+    const y = heights[k - 1]! + (heights[k]! - heights[k - 1]!) * t + lift;
+    return [p[0] + l[0] * offset, y, p[1] + l[1] * offset];
+  };
+  const widthAt = (s: number) =>
+    samples[
+      Math.max(
+        0,
+        samples.findIndex((x) => x.s >= s),
+      )
+    ]!.w;
+  /** The parts of [s0, s1] outside the skipped stretches. */
+  const visible = (s0: number, s1: number): [number, number][] =>
+    skip
+      .slice()
+      .sort((x, y) => x[0] - y[0])
+      .reduce<[number, number][]>(
+        (parts, [a, c]) =>
+          parts.flatMap(([u, v]): [number, number][] =>
+            c <= u || a >= v
+              ? [[u, v]]
+              : [
+                  ...(a > u ? [[u, a] as [number, number]] : []),
+                  ...(c < v ? [[c, v] as [number, number]] : []),
+                ],
+          ),
+        [[s0, s1]],
+      );
+  /** A strip `wide` metres across, `offset` left of centre, from s0 to s1, raised by `lift`. */
+  const strip = (
+    s0: number,
+    s1: number,
+    offset: number,
+    wide: number,
+    lift: number,
+    color: RGB,
+  ) => {
+    for (const [u, v] of visible(s0, s1)) {
+      const cuts = [u, ...samples.map((x) => x.s).filter((s) => s > u && s < v), v];
+      for (let k = 0; k + 1 < cuts.length; k++) {
+        const [a, c] = [cuts[k]!, cuts[k + 1]!];
+        b.quad(
+          along(a, offset + wide / 2, lift),
+          along(a, offset - wide / 2, lift),
+          along(c, offset - wide / 2, lift),
+          along(c, offset + wide / 2, lift),
+          color,
+        );
+      }
+    }
+  };
+  if (kind === 'rail') {
+    // One track: two rails a standard gauge apart, on the ballast.
+    for (const side of [0.72, -0.72]) strip(0, length, side, 0.12, 0.12, STEEL);
+  } else if (!PATHS.has(cls)) {
+    const half = widthAt(length / 2) / 2 - EDGE_INSET_M;
+    for (const side of [1, -1]) strip(0, length, side * half, LINE_M, 0.03, PAINT);
+    if (widthAt(length / 2) >= MARKED_FROM_M)
+      for (let s = DASH_M[1] / 2; s + DASH_M[0] < length; s += DASH_M[1])
+        strip(s, s + DASH_M[0], 0, LINE_M, 0.03, PAINT);
+  }
+}
+
+/** Ground roads lie this far above the ground, plus GROUND_RANK_M per rank (bigger roads on top). */
+const GROUND_LIFT_M = 0.05;
+const GROUND_RANK_M = 0.03;
+/** Height of a ground road of `rank` above the ground. */
+export const groundLift = (rank: number) => GROUND_LIFT_M + rank * GROUND_RANK_M;
+
+export interface GroundInput {
+  points: XZ[];
+  width: number;
+  kind: Raised['kind'];
+  cls: string;
+  /** Drawing order: bigger roads lie over smaller ones (see `groundLift`). */
+  rank: number;
+  ground(p: XZ): number;
+  /** Junctions along it, local metres: no markings across them. */
+  junctions?: { at: XZ; radius: number }[];
+}
+
+/** A road or railway on the ground: a ribbon following the terrain, with its markings or rails. */
+export function buildGround(input: GroundInput): RoofMesh {
+  const b = new MeshBuilder();
+  const smooth = smoothed(
+    input.points,
+    input.points.map(() => input.width),
+  );
+  const { samples, length } = resample(smooth.points, smooth.widths);
+  if (samples.length < 2 || length < 0.5) return b.build();
+  const left = lefts(samples);
+  const lift = groundLift(input.rank);
+  const heights = samples.map(({ p }) => input.ground(p) + lift);
+  const surface = PATHS.has(input.cls) ? SURFACE.path : SURFACE[input.kind];
+  const edge = (i: number, side: number): Vec3 => {
+    const { p, w } = samples[i]!;
+    return [p[0] + left[i]![0] * (w / 2) * side, heights[i]!, p[1] + left[i]![1] * (w / 2) * side];
+  };
+  // Facing up, so it is lit like the ground it lies on.
+  for (let i = 0; i + 1 < samples.length; i++) {
+    b.triangle(edge(i, 1), edge(i, -1), edge(i + 1, -1), surface, true);
+    b.triangle(edge(i, 1), edge(i + 1, -1), edge(i + 1, 1), surface, true);
+  }
+  // No markings across a junction: from where the line comes within its radius until it leaves.
+  const skip: [number, number][] = [];
+  for (const j of input.junctions ?? []) {
+    let best = { d: Infinity, s: 0 };
+    for (const x of samples) {
+      const d = Math.hypot(x.p[0] - j.at[0], x.p[1] - j.at[1]);
+      if (d < best.d) best = { d, s: x.s };
+    }
+    if (best.d <= j.radius + input.width / 2) {
+      const r = j.radius + 1;
+      skip.push([best.s - r, best.s + r]);
+    }
+  }
+  paint(b, { samples, left, heights, length }, input.kind, input.cls, skip);
+  return b.build();
+}
+
+/** A junction's patch: a disc over the roads meeting there, at the highest one's height. */
+export function buildJunction(at: XZ, radius: number, rank: number, ground: number): RoofMesh {
+  const b = new MeshBuilder();
+  const y = ground + groundLift(rank) + 0.012;
+  const n = 20;
+  for (let k = 0; k < n; k++) {
+    const [a0, a1] = [(k * 2 * Math.PI) / n, ((k + 1) * 2 * Math.PI) / n];
+    b.triangle(
+      [at[0], y, at[1]],
+      [at[0] + Math.cos(a0) * radius, y, at[1] + Math.sin(a0) * radius],
+      [at[0] + Math.cos(a1) * radius, y, at[1] + Math.sin(a1) * radius],
+      SURFACE.road,
+      true,
+    );
+  }
+  return b.build();
+}
+
+const PORTAL = toRGB('#bdb7ac');
+const MOUTH = toRGB('#1d1e21');
+/** Clearance of a tunnel mouth, metres (roads, railways). */
+const PORTAL_CLEARANCE = { road: 5, rail: 6.5 } as const;
+
+/**
+ * A tunnel portal: a concrete frame across the road, its opening dark, facing out of the tunnel.
+ * `heading` points into the tunnel (local x east, z south).
+ */
+export function buildPortal(
+  at: XZ,
+  heading: XZ,
+  width: number,
+  kind: Raised['kind'],
+  ground: number,
+): RoofMesh {
+  const b = new MeshBuilder();
+  const l = Math.hypot(heading[0], heading[1]) || 1;
+  const [fx, fz] = [heading[0] / l, heading[1] / l];
+  const [lx, lz] = [fz, -fx];
+  const clear = PORTAL_CLEARANCE[kind];
+  const half = width / 2 + 0.5;
+  const wall = 1.2;
+  const lintel = 1.4;
+  const depth = 1.5;
+  /** A point `a` metres to the left, `f` metres into the tunnel, `y` up. */
+  const pt = (a: number, f: number, y: number): Vec3 => [
+    at[0] + lx * a + fx * f,
+    ground + y,
+    at[1] + lz * a + fz * f,
+  ];
+  const box = (a0: number, a1: number, y0: number, y1: number) => {
+    const c = [
+      [a0, 0],
+      [a1, 0],
+      [a1, depth],
+      [a0, depth],
+    ] as const;
+    for (let k = 0; k < 4; k++) {
+      const [p, q] = [c[k]!, c[(k + 1) % 4]!];
+      b.quad(
+        pt(p[0], p[1], y0),
+        pt(q[0], q[1], y0),
+        pt(q[0], q[1], y1),
+        pt(p[0], p[1], y1),
+        PORTAL,
+      );
+    }
+    b.quad(pt(a0, 0, y1), pt(a1, 0, y1), pt(a1, depth, y1), pt(a0, depth, y1), PORTAL);
+  };
+  box(half, half + wall, 0, clear + lintel);
+  box(-half - wall, -half, 0, clear + lintel);
+  box(-half, half, clear, clear + lintel);
+  // The dark opening, just inside the frame.
+  b.quad(
+    pt(half, depth, 0),
+    pt(-half, depth, 0),
+    pt(-half, depth, clear),
+    pt(half, depth, clear),
+    MOUTH,
+  );
+  // Behind it, the tunnel: closed in concrete, so the portal is solid seen from behind.
+  b.quad(
+    pt(half, depth + 0.05, 0),
+    pt(-half, depth + 0.05, 0),
+    pt(-half, depth + 0.05, clear),
+    pt(half, depth + 0.05, clear),
+    PORTAL,
+  );
+  return b.build();
 }

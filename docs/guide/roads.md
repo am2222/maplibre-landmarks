@@ -90,7 +90,20 @@ const map = new maplibregl.Map({ container: 'map', style, zoomLevelsToOverscale:
   can still be placed.
 - **Width**: `width_rules` where tagged, else by class (motorway 12 m … footway 3 m, rail 6 m).
 
-Not yet: road surfaces on the ground, and tunnels.
+## Roads on the ground and tunnels
+
+- **Road surfaces** (`groundRoads`, off by default): every road and railway within 800 m of the
+  view centre (the nearest 2500) drawn in 3D too, following the terrain: asphalt with edge lines
+  and a dashed centre line, lighter paths, railways with their rails. Bigger roads lie a few
+  centimetres over smaller ones where they overlap, and a patch covers each junction (a connector
+  where roads meet from three or more directions), with no markings across it. Hide the basemap's
+  road lines with `replaceLayers` while it is on. It costs more than flat lines: thousands of
+  stretches in a city view.
+- **Tunnels**: segments flagged `is_tunnel` are not drawn, and where a road or railway goes into
+  one from the ground a concrete portal stands across it, its opening dark. Hide the basemap's
+  tunnel lines with `replaceLayers`.
+
+Not yet: approaches sloping down into tunnels, and lane counts.
 
 ## Options
 
@@ -103,7 +116,10 @@ Not yet: road surfaces on the ground, and tunnels.
 | `maxBridges`    | `400`       | Nearest bridges (with their approaches) drawn                      |
 | `farCutoff`     | `true`      | Pitched views draw only to about three screen heights away         |
 | `rail`          | `true`      | Railways too                                                       |
-| `replaceLayers` | —           | The app's flat bridge layers, hidden while this layer is on        |
+| `groundRoads`   | `false`     | Roads on the ground in 3D too; `{ radius, maxSegments }` (800 m, 2500) |
+| `tunnels`       | `true`      | Portals at tunnel mouths                                           |
+| `replaceLayers` | —           | The app's flat layers this draws instead (bridges, tunnels, ground roads), hidden while on |
 | `onError`       | —           |                                                                    |
 
-Methods: `getStats()` (`bridges`, `approaches`, `triangles`, `highest`).
+Methods: `getStats()` (`bridges`, `approaches`, `ground`, `junctions`, `portals`, `triangles`,
+`highest`).

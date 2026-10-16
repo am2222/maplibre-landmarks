@@ -11,7 +11,8 @@ import { lngLatAt, localPosition, originAt } from '../core/mercator';
 import { tileBounds, TileFeed, type FeedFeature, type FeedMap } from '../core/tileFeed';
 import type { LngLat, Origin, ViewState } from '../core/types';
 import type { RoofMesh } from '../roofs/geometry/mesh';
-import { buildRaised, rampFor, type XZ } from './geometry';
+import { buildGround, buildJunction, buildPortal, buildRaised, rampFor, type XZ } from './geometry';
+import { groundLeft, junctionsOf, portalsOf, rankOf, type Junction, type Portal } from './ground';
 import { chainSpans, raiseLinks, withApproaches, type Raised } from './network';
 import { partsOf, readPiece, type SegmentPiece, type Span } from './segments';
 
@@ -31,8 +32,18 @@ export interface RoadsOptions {
   /** Railway bridges too (default true). */
   rail?: boolean;
   /**
-   * The app's flat bridge layers (e.g. Protomaps' `roads_bridges_*`): hidden while this layer is
-   * on, so the decks do not float over a road painted on the river.
+   * Roads and railways on the ground in 3D too, following the terrain, with their markings and a
+   * patch over each junction (default false: the basemap draws them). `radius`: how far from the
+   * view centre, metres (default 800, within the far cutoff); `maxSegments`: the nearest drawn at
+   * most (default 2500).
+   */
+  groundRoads?: boolean | { radius?: number; maxSegments?: number };
+  /** A portal where a road or railway goes into a tunnel (default true). */
+  tunnels?: boolean;
+  /**
+   * The app's flat layers this layer draws instead, hidden while it is on: bridges (e.g.
+   * Protomaps' `roads_bridges_*`) so decks do not float over a road painted on the river,
+   * tunnels (`roads_tunnels_*`), and with `groundRoads` the roads on the ground.
    */
   replaceLayers?: string[];
   onError?: (err: unknown) => void;
@@ -40,6 +51,10 @@ export interface RoadsOptions {
 
 export interface RoadsStats {
   bridges: number;
+  /** Road and rail stretches drawn on the ground (with `groundRoads`). */
+  ground: number;
+  junctions: number;
+  portals: number;
   /** Bridge ends that ramp down along the road beyond them (the rest ramp on the bridge). */
   approaches: number;
   triangles: number;
@@ -90,12 +105,33 @@ function distanceTo([x, z]: XZ, line: XZ[]): number {
   return best;
 }
 
+/** What the held tiles hold, ready to draw. */
+interface World {
+  raised: Raised[];
+  /** Road and rail stretches on the ground, less what the approaches take. */
+  ground: Span[];
+  junctions: Junction[];
+  portals: Portal[];
+}
+
+/** Something to draw: its mesh is built around `origin`, once while `source` is unchanged. */
+interface Item {
+  key: string;
+  source: object;
+  origin: LngLat;
+  make(origin: LngLat): { mesh: RoofMesh; top: number };
+}
+
 interface Built {
-  raised: Raised;
-  /** Mesh around the chain's first vertex (`origin`), heights above sea level. */
+  source: object;
+  /** Mesh around `origin`, heights above sea level. */
+  origin: LngLat;
   mesh: RoofMesh;
   top: number;
 }
+
+const GROUND_RADIUS_M = 800;
+const MAX_GROUND = 2500;
 
 /**
  * Roads and railways off the ground, from Overture's transportation theme: bridges as decks on
@@ -117,16 +153,24 @@ export class RoadsModule implements LayerModule {
    */
   private readonly retired = new Map<string, SegmentPiece[]>();
   private readonly retiredConnectors = new Map<string, Map<string, LngLat>>();
-  private raised?: Raised[];
+  private world?: World;
   /** Roads, railways and bridges of the held tiles, for placing piers clear of them. */
   private obstacles: Obstacle[] = [];
   /** Built structures by key, kept while they and the ground are unchanged. */
   private built = new Map<string, Built>();
-  private drawn: Raised[] = [];
+  private drawn: Item[] = [];
   private anchor: LngLat = [0, 0];
   private view?: ViewState;
   private timer?: ReturnType<typeof setTimeout>;
-  private stats: RoadsStats = { bridges: 0, approaches: 0, triangles: 0, highest: 0 };
+  private stats: RoadsStats = {
+    bridges: 0,
+    ground: 0,
+    junctions: 0,
+    portals: 0,
+    approaches: 0,
+    triangles: 0,
+    highest: 0,
+  };
   /** Visibility of the replaced layers before we hid them. */
   private readonly hidden = new Map<string, unknown>();
   private reported = false;
@@ -255,29 +299,106 @@ export class RoadsModule implements LayerModule {
     }
     this.connectorFeedFor(ctx).settle();
     this.feedFor(ctx).settle();
-    this.raised ??= this.raisedOfTiles();
+    const world = (this.world ??= this.worldOfTiles());
     const cutoff = this.options.farCutoff === false ? Infinity : farCutoffM(view);
     const k = M_PER_DEG * Math.cos((view.center[1] * Math.PI) / 180);
-    const distance = (c: Raised) =>
-      Math.min(
-        ...c.coords.map(([lng, lat]) =>
-          Math.hypot((lng - view.center[0]) * k, (lat - view.center[1]) * M_PER_DEG),
-        ),
-      );
-    const chosen = this.raised
-      .map((c) => ({ c, d: distance(c) }))
-      .filter(({ d }) => d <= cutoff)
-      .sort((a, b) => a.d - b.d)
-      .slice(0, this.options.maxBridges ?? 400)
-      .map(({ c }) => c);
-    this.draw(view, chosen);
+    const away = ([lng, lat]: LngLat) =>
+      Math.hypot((lng - view.center[0]) * k, (lat - view.center[1]) * M_PER_DEG);
+    const distance = (c: { coords: LngLat[] }) => Math.min(...c.coords.map(away));
+    const nearest = <T>(list: T[], d: (t: T) => number, within: number, max: number) =>
+      list
+        .map((t) => ({ t, d: d(t) }))
+        .filter((x) => x.d <= within)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, max)
+        .map(({ t }) => t);
+    const items: Item[] = nearest(
+      world.raised,
+      distance,
+      cutoff,
+      this.options.maxBridges ?? 400,
+    ).map((r) => ({
+      key: `raised:${r.key}`,
+      source: r,
+      origin: r.coords[0]!,
+      make: (o) => this.build(r, o),
+    }));
+    const surfaces = this.options.groundRoads;
+    if (surfaces) {
+      const opts = typeof surfaces === 'object' ? surfaces : {};
+      const within = Math.min(cutoff, opts.radius ?? GROUND_RADIUS_M);
+      const ground = nearest(world.ground, distance, within, opts.maxSegments ?? MAX_GROUND);
+      for (const g of ground)
+        items.push({
+          key: `ground:${g.key}`,
+          source: g,
+          origin: g.coords[0]!,
+          make: (o) => ({ mesh: this.buildGroundSpan(g, o, world.junctions), top: 0 }),
+        });
+      for (const j of nearest(world.junctions, (j) => away(j.at), within, Infinity))
+        items.push({
+          key: `junction:${j.at.join()}`,
+          source: j,
+          origin: j.at,
+          make: () => ({
+            mesh: buildJunction([0, 0], j.radius, j.rank, this.groundAt(j.at)),
+            top: 0,
+          }),
+        });
+    }
+    if (this.options.tunnels !== false)
+      for (const p of nearest(world.portals, (p) => away(p.at), cutoff, Infinity))
+        items.push({
+          key: `portal:${p.at.join()}`,
+          source: p,
+          origin: p.at,
+          // Into the tunnel in (east, south) local axes.
+          make: () => ({
+            mesh: buildPortal(
+              [0, 0],
+              [p.heading[0], -p.heading[1]],
+              p.width,
+              p.kind,
+              this.groundAt(p.at),
+            ),
+            top: 0,
+          }),
+        });
+    this.draw(view, items);
+  }
+
+  private groundAt(p: LngLat): number {
+    const map = this.ctx?.map;
+    return map?.getTerrain() ? (map.queryTerrainElevation(p) ?? 0) : 0;
+  }
+
+  private buildGroundSpan(g: Span, origin: LngLat, junctions: Junction[]): RoofMesh {
+    const o = originAt(origin);
+    const local = (p: LngLat): XZ => {
+      const [x, , z] = localPosition(o, p);
+      return [x, z];
+    };
+    const pad = 30 / M_PER_DEG;
+    const [w, s, e, n] = bboxOf(g.coords);
+    const near = junctions
+      .filter(({ at: [x, y] }) => x >= w - pad && x <= e + pad && y >= s - pad && y <= n + pad)
+      .map((j) => ({ at: local(j.at), radius: j.radius }));
+    return buildGround({
+      points: g.coords.map(local),
+      width: g.width,
+      kind: g.kind,
+      cls: g.cls,
+      rank: rankOf(g),
+      ground: ([x, z]) => this.groundAt(lngLatAt(o, x, z)),
+      junctions: near,
+    });
   }
 
   /**
    * The raised roads of the held tiles: each segment's pieces together, split into bridges and
    * ground; bridges joined end to end, then given the ground roads that lead onto them.
    */
-  private raisedOfTiles(): Raised[] {
+  private worldOfTiles(): World {
     const bySegment = new Map<string, SegmentPiece[]>();
     for (const pieces of this.tiles.values())
       for (const p of pieces) bySegment.set(p.id, [...(bySegment.get(p.id) ?? []), p]);
@@ -291,11 +412,13 @@ export class RoadsModule implements LayerModule {
     for (const tile of [...this.retiredConnectors.values(), ...this.connectorTiles.values()])
       for (const [id, p] of tile) connectors.set(id, p);
     const bridges: Span[] = [];
+    const tunnels: Span[] = [];
     const ground: Span[] = [];
     for (const pieces of bySegment.values()) {
       try {
         const parts = partsOf(pieces, (id) => connectors.get(id));
         bridges.push(...parts.bridges);
+        tunnels.push(...parts.tunnels);
         ground.push(...parts.ground);
       } catch (err) {
         this.report(err instanceof Error ? err : new Error(String(err)));
@@ -308,7 +431,16 @@ export class RoadsModule implements LayerModule {
       bbox: bboxOf(g.coords),
     }));
     const linked = raiseLinks(bridges, ground, rampFor);
-    return withApproaches(chainSpans(linked.bridges), linked.ground, rampFor);
+    const raised = withApproaches(chainSpans(linked.bridges), linked.ground, rampFor);
+    const segments = [...bySegment.values()].map((pieces) => pieces[0]!);
+    return {
+      raised,
+      ground: groundLeft(linked.ground, raised),
+      junctions: this.options.groundRoads
+        ? junctionsOf(segments, (id) => connectors.get(id), raised)
+        : [],
+      portals: portalsOf(tunnels, ground),
+    };
   }
 
   private feedFor(ctx: ModuleContext): TileFeed {
@@ -326,13 +458,13 @@ export class RoadsModule implements LayerModule {
       onTile: (key, features) => {
         this.noteSliced(ctx, key);
         this.tiles.set(key, this.read(key, features));
-        this.raised = undefined;
+        this.world = undefined;
         this.schedule();
       },
       onDrop: (key) => {
         const pieces = this.tiles.get(key);
         if (pieces) retire(this.retired, key, pieces);
-        if (this.tiles.delete(key)) this.raised = undefined;
+        if (this.tiles.delete(key)) this.world = undefined;
         this.schedule();
       },
     });
@@ -378,13 +510,13 @@ export class RoadsModule implements LayerModule {
             points.set(String(id), f.geometry.coordinates as LngLat);
         }
         this.connectorTiles.set(key, points);
-        this.raised = undefined;
+        this.world = undefined;
         this.schedule();
       },
       onDrop: (key) => {
         const points = this.connectorTiles.get(key);
         if (points) retire(this.retiredConnectors, key, points);
-        if (this.connectorTiles.delete(key)) this.raised = undefined;
+        if (this.connectorTiles.delete(key)) this.world = undefined;
         this.schedule();
       },
     });
@@ -409,20 +541,23 @@ export class RoadsModule implements LayerModule {
     return pieces;
   }
 
-  /** The chosen structures in one mesh around the view centre (rebuilt only when they change). */
-  private draw(view: ViewState, chosen: Raised[]): void {
+  /** The chosen items in one mesh around the view centre (rebuilt only when they change). */
+  private draw(view: ViewState, chosen: Item[]): void {
     const ctx = this.ctx;
     if (!ctx || !this.mesh) return;
     // The same objects: unchanged (new tiles make new ones, even for the same bridge).
-    if (chosen.length === this.drawn.length && chosen.every((r, i) => r === this.drawn[i])) return;
+    if (
+      chosen.length === this.drawn.length &&
+      chosen.every((r, i) => r.source === this.drawn[i]!.source)
+    )
+      return;
     this.drawn = chosen;
-    const ground = (p: LngLat) =>
-      ctx.map.getTerrain() ? (ctx.map.queryTerrainElevation(p) ?? 0) : 0;
     const built = new Map<string, Built>();
-    for (const raised of chosen) {
-      let b = this.built.get(raised.key);
-      if (!b || b.raised !== raised) b = this.build(raised, ground);
-      built.set(raised.key, b);
+    for (const item of chosen) {
+      let b = this.built.get(item.key);
+      if (!b || b.source !== item.source)
+        b = { source: item.source, origin: item.origin, ...item.make(item.origin) };
+      built.set(item.key, b);
     }
     this.built = built;
     this.anchor = view.center;
@@ -432,7 +567,7 @@ export class RoadsModule implements LayerModule {
     const colors: number[] = [];
     let highest = 0;
     for (const b of built.values()) {
-      const [ox, , oz] = localPosition(anchorOrigin, b.raised.coords[0]!);
+      const [ox, , oz] = localPosition(anchorOrigin, b.origin);
       const p = b.mesh.positions;
       for (let i = 0; i < p.length; i += 3) positions.push(p[i]! + ox, p[i + 1]!, p[i + 2]! + oz);
       normals.push(...b.mesh.normals);
@@ -444,8 +579,17 @@ export class RoadsModule implements LayerModule {
     geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
     geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
     geometry.computeBoundingSphere();
-    const approaches = chosen.reduce((n, r) => n + r.approaches.filter((a) => a > 0).length, 0);
-    this.stats = { bridges: built.size, approaches, triangles: positions.length / 9, highest };
+    const of = (prefix: string) => chosen.filter((i) => i.key.startsWith(prefix));
+    const raised = of('raised:').map((i) => i.source as Raised);
+    this.stats = {
+      bridges: raised.length,
+      ground: of('ground:').length,
+      junctions: of('junction:').length,
+      portals: of('portal:').length,
+      approaches: raised.reduce((n, r) => n + r.approaches.filter((a) => a > 0).length, 0),
+      triangles: positions.length / 9,
+      highest,
+    };
     ctx.requestRepaint();
   }
 
@@ -471,8 +615,8 @@ export class RoadsModule implements LayerModule {
     return (p, r) => near.some(({ line, width }) => distanceTo(p, line) < width / 2 + r);
   }
 
-  private build(raised: Raised, ground: (p: LngLat) => number): Built {
-    const origin = originAt(raised.coords[0]!);
+  private build(raised: Raised, at: LngLat): { mesh: RoofMesh; top: number } {
+    const origin = originAt(at);
     const local = (p: LngLat): XZ => {
       const [x, , z] = localPosition(origin, p);
       return [x, z];
@@ -484,9 +628,9 @@ export class RoadsModule implements LayerModule {
       kind: raised.kind,
       cls: raised.cls,
       approaches: raised.approaches,
-      ground: ([x, z]) => ground(lngLatAt(origin, x, z)),
+      ground: ([x, z]) => this.groundAt(lngLatAt(origin, x, z)),
       blocked: this.blockerFor(raised, local),
     });
-    return { raised, mesh, top };
+    return { mesh, top };
   }
 }

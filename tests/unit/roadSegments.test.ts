@@ -97,6 +97,7 @@ describe('partsOf', () => {
     cls: 'primary',
     coords: [at(0), at(200)],
     bridges: [[0, 1]],
+    tunnels: [],
     levels: [],
     widths: [],
     connectors: [],
@@ -128,6 +129,21 @@ describe('partsOf', () => {
     expect(ground).toHaveLength(1);
     expect(ground[0]).toMatchObject({ level: 0 });
     expect(lengthOf(ground[0]!.coords)).toBeCloseTo(100, 3);
+  });
+
+  it('takes tunnels out of the ground, leaving bridges whole', () => {
+    const { bridges, tunnels, ground } = partsOf([
+      piece({
+        bridges: [[0.5, 0.75]],
+        tunnels: [
+          [0, 0.25],
+          [0.6, 1],
+        ],
+      }),
+    ]);
+    expect(bridges.map((b) => Math.round(lengthOf(b.coords)))).toEqual([50]);
+    expect(tunnels.map((t) => Math.round(lengthOf(t.coords)))).toEqual([50, 50]);
+    expect(ground.map((g) => Math.round(lengthOf(g.coords)))).toEqual([50]);
   });
 
   it('keeps a segment without a bridge as ground', () => {

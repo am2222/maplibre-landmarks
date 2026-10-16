@@ -28,7 +28,9 @@ function setup(over: Partial<RoadsOptions> = {}, features: unknown[] = []) {
     getSource: (id: string) => (id === 'transport' ? { type: 'vector' } : undefined),
     getTerrain: (): { source: string } | null => null,
     queryTerrainElevation: (): number | null => 0,
-    querySourceFeatures: vi.fn(() => map.features),
+    querySourceFeatures: vi.fn(
+      (_s: string, _o?: { sourceLayer?: string }): unknown[] => map.features,
+    ),
     getLayer: (id: string) => (layout.has(id) ? { id } : undefined),
     getLayoutProperty: (id: string) => layout.get(id),
     setLayoutProperty: vi.fn((id: string, _p: string, v: unknown) => layout.set(id, v)),
@@ -131,6 +133,49 @@ describe('RoadsModule', () => {
     map.features = [eastPiece]; // the western tile leaves the view
     module.update(view({ center: east(1), zoom: 16 }));
     expect(module.getStats().bridges).toBe(1);
+  });
+
+  it('draws the roads on the ground only when asked, with a patch over each junction', () => {
+    const road = (id: string, from: number, to: number, connectors: string) =>
+      segment(id, from, to, { road_flags: undefined, connectors });
+    const features = [
+      road('a', -100, 0, '[{"connector_id":"w","at":0},{"connector_id":"x","at":1}]'),
+      road('b', 0, 100, '[{"connector_id":"x","at":0},{"connector_id":"e","at":1}]'),
+      // A side road ending at x: three ways meet there.
+      {
+        properties: {
+          id: 'c',
+          subtype: 'road',
+          class: 'residential',
+          connectors: '[{"connector_id":"x","at":0},{"connector_id":"n","at":1}]',
+        },
+        geometry: { type: 'LineString', coordinates: [at(0), at(0, 80)] },
+      },
+    ];
+    const connectors = [
+      { properties: { id: 'x' }, geometry: { type: 'Point', coordinates: at(0) } },
+    ];
+    const plain = setup({}, features);
+    plain.map.querySourceFeatures.mockImplementation((_s: string, o?: { sourceLayer?: string }) =>
+      o?.sourceLayer === 'connector' ? connectors : plain.map.features,
+    );
+    plain.module.update(view({ center: C, zoom: 16 }));
+    expect(plain.module.getStats()).toMatchObject({ bridges: 0, ground: 0, junctions: 0 });
+    const ground = setup({ groundRoads: true }, features);
+    ground.map.querySourceFeatures.mockImplementation((_s: string, o?: { sourceLayer?: string }) =>
+      o?.sourceLayer === 'connector' ? connectors : ground.map.features,
+    );
+    ground.module.update(view({ center: C, zoom: 16 }));
+    expect(ground.module.getStats()).toMatchObject({ ground: 3, junctions: 1 });
+    expect(deck(ground.scene).geometry.getAttribute('position').count).toBeGreaterThan(0);
+  });
+
+  it('stands a portal where a road goes into a tunnel', () => {
+    const { module } = setup({}, [
+      segment('t', 0, 300, { road_flags: '[{"between":[0.5,1],"values":["is_tunnel"]}]' }),
+    ]);
+    module.update(view({ center: C, zoom: 16 }));
+    expect(module.getStats()).toMatchObject({ bridges: 0, portals: 1 });
   });
 
   it('draws nothing below minZoom', () => {

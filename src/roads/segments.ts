@@ -22,6 +22,8 @@ export interface SegmentPiece {
   coords: LngLat[];
   /** Where the segment is a bridge: shares of its length. */
   bridges: [number, number][];
+  /** Where it runs in a tunnel: shares of its length. */
+  tunnels: [number, number][];
   levels: Rule<number>[];
   widths: Rule<number>[];
   /** Its connectors (junctions and ends) and where they are along it, as shares of its length. */
@@ -65,6 +67,10 @@ const CLASS_WIDTH: Record<string, number> = {
 };
 const DEFAULT_ROAD_WIDTH = 7;
 const RAIL_WIDTH = 6;
+
+/** Width of a road or railway where none is tagged, metres. */
+export const defaultWidth = (kind: 'road' | 'rail', cls: string): number =>
+  kind === 'rail' ? RAIL_WIDTH : (CLASS_WIDTH[cls] ?? DEFAULT_ROAD_WIDTH);
 
 const parse = (v: unknown): unknown => {
   if (typeof v !== 'string') return v;
@@ -117,10 +123,10 @@ export function readPiece(
 ): SegmentPiece | null {
   const subtype = String(properties.subtype ?? '');
   if (subtype !== 'road' && subtype !== 'rail') return null;
-  const bridges = flagRanges(
-    subtype === 'rail' ? properties.rail_flags : properties.road_flags,
-    'is_bridge',
-  );
+  const flags = subtype === 'rail' ? properties.rail_flags : properties.road_flags;
+  const bridges = flagRanges(flags, 'is_bridge');
+  // A covered bridge is a bridge; a tunnel inside a bridge's range stays a bridge.
+  const tunnels = flagRanges(flags, 'is_tunnel');
   if (coords.length < 2) return null;
   return {
     id: String(properties.id ?? fallbackId),
@@ -128,6 +134,7 @@ export function readPiece(
     cls: String(properties.class ?? ''),
     coords,
     bridges,
+    tunnels,
     levels: numberRules(properties.level_rules),
     widths: numberRules(properties.width_rules),
     connectors: connectorsOf(properties.connectors),
@@ -213,7 +220,7 @@ const dedupe = (line: LngLat[]) =>
   line.filter((p, i) => i === 0 || p[0] !== line[i - 1]![0] || p[1] !== line[i - 1]![1]);
 
 /** Distance along a line at each vertex, metres. */
-function lengthsOf(line: LngLat[]): number[] {
+export function lengthsOf(line: LngLat[]): number[] {
   const xy = line.map(metres(line[0]!));
   const lengths = [0];
   for (let i = 1; i < xy.length; i++)
@@ -224,7 +231,7 @@ function lengthsOf(line: LngLat[]): number[] {
 }
 
 /** The part of a line between `from` and `to` metres along it. */
-function cut(line: LngLat[], lengths: number[], from: number, to: number): LngLat[] {
+export function cut(line: LngLat[], lengths: number[], from: number, to: number): LngLat[] {
   const at = (d: number): LngLat => {
     const i = Math.max(
       1,
@@ -267,9 +274,9 @@ function placeShare(t: number, anchors: Anchor[], total: number): number | undef
 const inside = ([lng, lat]: LngLat, [w, s, e, n]: SegmentPiece['tile'], marginDeg: number) =>
   lng > w + marginDeg && lng < e - marginDeg && lat > s + marginDeg && lat < n - marginDeg;
 
-/** The shares of a segment outside its bridges. */
-function between(bridges: [number, number][]): [number, number][] {
-  const sorted = [...bridges].sort((a, b) => a[0] - b[0]);
+/** The shares of a segment outside the given ranges. */
+function between(ranges: [number, number][]): [number, number][] {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
   const out: [number, number][] = [];
   let at = 0;
   for (const [from, to] of sorted) {
@@ -280,8 +287,15 @@ function between(bridges: [number, number][]): [number, number][] {
   return out;
 }
 
+/** A segment's parts: on bridges, in tunnels, and on the ground between them. */
+export interface Parts {
+  bridges: Span[];
+  tunnels: Span[];
+  ground: Span[];
+}
+
 /**
- * One segment's bridges and its parts on the ground, from its pieces. Stretches over all of the
+ * One segment's bridges, tunnels and parts on the ground, from its pieces. Stretches over all of the
  * segment are taken from whatever pieces are held. A stretch over part of it is a share of the
  * full length, which the held pieces may not show (tiles cut segments, and MapLibre slices
  * zoomed-in tiles further): it is placed from anchors on the held line whose share is known, the
@@ -291,9 +305,9 @@ function between(bridges: [number, number][]): [number, number][] {
 export function partsOf(
   pieces: SegmentPiece[],
   connectorAt: (id: string) => LngLat | undefined = () => undefined,
-): { bridges: Span[]; ground: Span[] } {
+): Parts {
   const first = pieces[0];
-  const parts = { bridges: [] as Span[], ground: [] as Span[] };
+  const parts: Parts = { bridges: [], tunnels: [], ground: [] };
   if (!first) return parts;
   const line = stitch(pieces.map((p) => p.coords));
   if (line.length < 2) return parts;
@@ -333,16 +347,24 @@ export function partsOf(
       cls: first.cls,
       coords,
       level: bridge ? Math.max(1, level) : level,
-      width:
-        ruleAt(first.widths, mid) ??
-        (first.kind === 'rail' ? RAIL_WIDTH : (CLASS_WIDTH[first.cls] ?? DEFAULT_ROAD_WIDTH)),
+      width: ruleAt(first.widths, mid) ?? defaultWidth(first.kind, first.cls),
     };
   };
   for (const range of first.bridges) {
     const span = stretch(range, true);
     if (span) parts.bridges.push(span);
   }
-  for (const range of between(first.bridges)) {
+  // Tunnels outside the bridges (a bridge's range wins where they overlap).
+  const tunnels = first.tunnels.flatMap(([from, to]) =>
+    between(first.bridges)
+      .map(([a, b]): [number, number] => [Math.max(a, from), Math.min(b, to)])
+      .filter(([a, b]) => b - a > 1e-6),
+  );
+  for (const range of tunnels) {
+    const span = stretch(range, false);
+    if (span) parts.tunnels.push(span);
+  }
+  for (const range of between([...first.bridges, ...tunnels])) {
     const span = stretch(range, false);
     if (span) parts.ground.push(span);
   }
