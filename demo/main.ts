@@ -48,7 +48,8 @@ if (!key && !pmtilesUrl) {
 const OVERTURE_BUILDINGS =
   'https://overturemaps-extras-us-west-2.s3.amazonaws.com/tiles/2026-09-23.1/buildings.pmtiles';
 // Start-up settings from the page URL (the docs embed a dusk skyline):
-// `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded), `?roofs=<tileset>`,
+// `?theme=dusk`, `?fog` (or `?fog=<height in metres>`), `?panel=0` (folded; the default on
+// phone-sized screens, where `?panel=1` opens it), `?roofs=<tileset>`,
 // `?season=autumn` (spring | summer | autumn | winter | auto | 0–4), `?clouds` (or
 // `?clouds=<coverage 0–1>`), `?rain` (or `?rain=<intensity 0–1>`), `?snow` (or
 // `?snow=<intensity 0–1>`), `?power` (power lines and street lamps), `?street` (street furniture).
@@ -364,7 +365,9 @@ function restoreLayers() {
 
 initTabs(params.has('season') ? 'trees' : 'landmarks');
 initCollapse();
-if (params.get('panel') === '0') $('collapse').click();
+// On a phone the open panel covers most of the map, and drags meant for the map land on it.
+const narrow = matchMedia('(max-width: 600px)').matches;
+if (params.get('panel') === '0' || (narrow && params.get('panel') !== '1')) $('collapse').click();
 for (const name of Object.keys(LAYERS))
   toggle(name).addEventListener('change', () => setLayer(name, toggle(name).checked));
 syncTabDots();

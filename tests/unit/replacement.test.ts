@@ -1,3 +1,4 @@
+import polygonClipping from 'polygon-clipping';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { distanceM } from '../../src/landmarks/discovery';
 import {
@@ -232,6 +233,36 @@ describe('BuildingReplacement (feature-state)', () => {
     new BuildingReplacement(target, ['buildings'], 1.5).update([full(landmark())]);
     expect(map.states.get(5)?.[FADE_STATE]).toBe(1);
     expect(map.states.has(6)).toBe(false);
+  });
+
+  it('does not clip a merged low-zoom building block that cannot be mostly inside', () => {
+    const { map, target } = fakeStyle();
+    // Protomaps merges a whole block into one polygon at z13–14: about 1 km across, covering the
+    // landmark, its centre outside the footprint. Clipping such outlines took seconds on phones.
+    const block = {
+      id: 9,
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [2.29, 48.857],
+            [2.3, 48.857],
+            [2.3, 48.867],
+            [2.29, 48.867],
+            [2.29, 48.857],
+          ],
+        ],
+      },
+    };
+    map.features.splice(0, map.features.length, block);
+    const clip = vi.spyOn(polygonClipping, 'intersection');
+    try {
+      new BuildingReplacement(target, ['buildings'], 1.5).update([full(landmark())]);
+      expect(clip).not.toHaveBeenCalled();
+    } finally {
+      clip.mockRestore();
+    }
+    expect(map.states.has(9)).toBe(false);
   });
 
   it('rescans thousands of far-away buildings quickly (dense tiles, detailed footprints)', () => {

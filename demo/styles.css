@@ -70,6 +70,14 @@ body {
   overflow: auto;
   min-height: 0;
 }
+@media (max-width: 600px) {
+  #panel {
+    width: auto;
+    max-width: 290px;
+    right: 12px;
+    max-height: 60%;
+  }
+}
 #panel.collapsed #panel-body {
   display: none;
 }
