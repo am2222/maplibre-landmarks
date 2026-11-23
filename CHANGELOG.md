@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.1](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.6.0...maplibre-landmarks-v0.6.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **demo:** fold the control panel by default on phone-sized screens ([4fd4913](https://github.com/am2222/maplibre-landmarks/commit/4fd491383af6df28b4ae02713adfa8e802c2edf4))
+
+
+### Performance Improvements
+
+* **labels:** reduce roof lookups and state writes during map gestures ([c4d5961](https://github.com/am2222/maplibre-landmarks/commit/c4d596127a6f84901f9ad28aa66c7e9531b99d13))
+* **labels:** reduce roof lookups and state writes during map gestures ([4fd4913](https://github.com/am2222/maplibre-landmarks/commit/4fd491383af6df28b4ae02713adfa8e802c2edf4))
+* **landmarks:** skip polygon clipping for buildings that cannot overlap enough ([4fd4913](https://github.com/am2222/maplibre-landmarks/commit/4fd491383af6df28b4ae02713adfa8e802c2edf4))
+
 ## [0.6.0](https://github.com/am2222/maplibre-landmarks/compare/maplibre-landmarks-v0.5.0...maplibre-landmarks-v0.6.0) (2026-10-12)
 
 
