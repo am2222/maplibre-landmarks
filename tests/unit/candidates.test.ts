@@ -141,6 +141,15 @@ describe('CandidateScanner', () => {
     expect(map.queryRenderedFeatures).toHaveBeenCalledTimes(7);
   });
 
+  it('takes a smaller roof lookup budget for one scan when asked', () => {
+    const map = fakeMap();
+    const s = new CandidateScanner(asScan(map), 48);
+    const [first, second] = s.scan(['pois'], 10, 1);
+    expect(first!.pending).toBe(false);
+    expect(second!.pending).toBe(true);
+    expect(map.queryRenderedFeatures).toHaveBeenCalledTimes(2); // labels + one roof
+  });
+
   it('marks labels inside exempt footprints and skips their roof lookup', () => {
     const map = fakeMap();
     const s = new CandidateScanner(asScan(map));

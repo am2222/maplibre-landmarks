@@ -188,6 +188,51 @@ describe('LabelOcclusion', () => {
     void map;
   });
 
+  it('during a gesture, spends fewer roof lookups and waits for moveend to finish pending ones', async () => {
+    const { CandidateScanner } = await import('../../src/labels/candidates');
+    const scan = vi.spyOn(CandidateScanner.prototype, 'scan').mockReturnValue([
+      {
+        key: 'a',
+        feature: { source: 's', id: 1 },
+        lngLat: [2.29, 48.85],
+        elevation: 2.5,
+        exempt: false,
+        pending: true,
+      },
+    ]);
+    try {
+      const { map } = setup();
+      vi.advanceTimersByTime(100); // the idle-time follow-up for the pending label
+      scan.mockClear();
+      map.handlers.get('movestart')!();
+      map.handlers.get('move')!();
+      vi.advanceTimersByTime(300);
+      expect(scan).toHaveBeenCalledTimes(1);
+      expect(scan.mock.calls[0]![2]).toBeLessThan(48); // smaller budget while moving
+      vi.advanceTimersByTime(500);
+      expect(scan).toHaveBeenCalledTimes(1); // no 50 ms follow-ups mid-gesture
+      map.handlers.get('moveend')!();
+      vi.advanceTimersByTime(150);
+      expect(scan).toHaveBeenCalledTimes(3); // moveend scan, then a follow-up for the pending one
+      expect(scan.mock.calls[1]![2]).toBeUndefined(); // full budget again
+    } finally {
+      scan.mockRestore();
+    }
+  });
+
+  it('writes feature-state a few times per fade, not on every frame', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const { map, f, layer } = setup({ fadeMs: 400 });
+    layer.render(f.gl, FRAME);
+    f.answer((first) => first === 0); // label 2 hidden
+    map.setFeatureState.mockClear();
+    vi.advanceTimersByTime(1000); // ~60 frames of fading
+    expect(stateOf(map, 2)).toBe(0);
+    const writes = map.setFeatureState.mock.calls.filter(([f]) => f.id === 2).length;
+    expect(writes).toBeGreaterThan(1); // still a fade, not a jump
+    expect(writes).toBeLessThanOrEqual(5);
+  });
+
   it('shows labels again when the layer is hidden with visibility: none', () => {
     const { map, f, layer } = setup();
     layer.render(f.gl, FRAME);

@@ -128,7 +128,8 @@ export class CandidateScanner {
     for (const [key, { roof }] of this.roofs) if (roof === 0) this.roofs.delete(key);
   }
 
-  scan(layerIds: string[], maxLabels: number): Candidate[] {
+  /** `roofLookups` caps the roof lookups of this scan (default: the scanner's budget). */
+  scan(layerIds: string[], maxLabels: number, roofLookups = this.maxRoofLookups): Candidate[] {
     if (!layerIds.length) return [];
     const centre = this.map.project(this.map.getCenter());
     const { clientWidth: width, clientHeight: height } = this.map.getCanvas();
@@ -152,7 +153,7 @@ export class CandidateScanner {
       .filter((l) => l.type === 'fill-extrusion')
       .map((l) => l.id);
     const terrain = !!this.map.getTerrain();
-    let budget = this.maxRoofLookups;
+    let budget = roofLookups;
     return nearest.map(({ key, feature, lngLat, onScreen }) => {
       const exempt = !onScreen || pointInPolygons(lngLat, this.exemptions);
       let roof = 0;

@@ -27,6 +27,13 @@ export interface LabelOcclusionOptions {
 
 const PROBE_PX = 4;
 const MIN_ZOOM = 14;
+/**
+ * Roof lookups per scan while the map moves. Each one is a `queryRenderedFeatures` call, and a
+ * full budget every 250 ms of a pan stutters slower phones; the rest wait for `moveend`.
+ */
+const MOVING_ROOF_LOOKUPS = 8;
+/** Fades are written to feature-state in this many steps; each write re-evaluates tile paint. */
+const FADE_STEPS = 4;
 type Listener = (e?: { sourceDataType?: string; sourceId?: string }) => void;
 
 const nextFrame = (fn: (now: number) => void): void => {
@@ -58,6 +65,8 @@ export class LabelOcclusion implements CustomLayerInterface {
   private signature = '';
   private looping = false;
   private placing = false;
+  /** Between `movestart` and `moveend`. */
+  private moving = false;
   /** False while every label is being shown (no probing): late answers are ignored. */
   private probing = false;
 
@@ -67,8 +76,15 @@ export class LabelOcclusion implements CustomLayerInterface {
   }
 
   private readonly handlers: [string, Listener][] = [
+    ['movestart', () => (this.moving = true)],
     ['move', () => this.changed(Math.max(0, 250 - (performance.now() - this.lastScan)))],
-    ['moveend', () => this.changed(60)],
+    [
+      'moveend',
+      () => {
+        this.moving = false;
+        this.changed(60);
+      },
+    ],
     // Symbols are placed after tiles and collisions settle, with no event of their own.
     ['idle', () => this.schedule(60)],
     [
@@ -172,10 +188,13 @@ export class LabelOcclusion implements CustomLayerInterface {
     this.scanner.setExemptions(exemptionsFor(map));
     const next =
       map.getZoom() >= (this.options.minZoom ?? MIN_ZOOM) && !this.hidden()
-        ? this.scanner.scan(layers, this.options.maxLabels ?? 256)
+        ? this.moving
+          ? this.scanner.scan(layers, this.options.maxLabels ?? 256, MOVING_ROOF_LOOKUPS)
+          : this.scanner.scan(layers, this.options.maxLabels ?? 256)
         : [];
-    // Labels whose roof lookup was deferred get their turn soon, not at the next idle.
-    if (next.some((c) => c.pending)) this.schedule(50);
+    // Labels whose roof lookup was deferred get their turn soon, not at the next idle. Mid-gesture
+    // the move scans carry on and `moveend` scans again.
+    if (!this.moving && next.some((c) => c.pending)) this.schedule(50);
     const keep = new Set(next.map((c) => c.key));
     for (const [key, feature] of this.labels) if (!keep.has(key)) this.drop(key, feature);
     for (const c of next) {
@@ -243,7 +262,7 @@ export class LabelOcclusion implements CustomLayerInterface {
 
   private write(): void {
     for (const [key, feature] of this.labels) {
-      const value = this.fades.value(key);
+      const value = Math.round(this.fades.value(key) * FADE_STEPS) / FADE_STEPS;
       if (this.written.get(key) === value) continue;
       this.safely(() => this.map!.setFeatureState(feature, { [LABEL_STATE]: value }));
       this.written.set(key, value);

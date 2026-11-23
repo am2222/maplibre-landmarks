@@ -152,10 +152,26 @@ function paddedTileBounds(key: string): Bbox {
   return [w - dx, south - dy, e + dx, n + dy];
 }
 
-/** Share (0..1) of a building's area inside a footprint; 0 when it cannot be computed. */
-function shareInside(building: number[][][][], footprint: number[][][][]): number {
+/**
+ * Whether at least `MOSTLY_INSIDE` of a building's area lies inside a region's footprint.
+ * The overlap is at most the footprint's area and the area of the two bounding boxes' overlap:
+ * when either is too small, the (costly) clip is skipped. Low-zoom tiles merge whole blocks
+ * into one polygon of thousands of vertices around a landmark, which clipped for seconds.
+ */
+function mostlyInside(building: number[][][][], box: Bbox, region: Region): boolean {
   const area = areaOf(building);
-  if (!(area > 0)) return 0;
+  if (!(area > 0)) return false;
+  const needed = MOSTLY_INSIDE * area;
+  const [w, s, e, n] = region.bbox;
+  const boxOverlap =
+    Math.max(0, Math.min(box[2], e) - Math.max(box[0], w)) *
+    Math.max(0, Math.min(box[3], n) - Math.max(box[1], s));
+  if (region.area < needed || boxOverlap < needed) return false;
+  return shareInside(building, area, region.footprints) >= MOSTLY_INSIDE;
+}
+
+/** Share (0..1) of a building's area inside a footprint; 0 when it cannot be computed. */
+function shareInside(building: number[][][][], area: number, footprint: number[][][][]): number {
   try {
     const inside = polygonClipping.intersection(
       building as MultiPolygon,
@@ -185,7 +201,14 @@ interface Claimed {
   owners: string[];
 }
 
-type Region = { key: string; footprints: number[][][][]; bbox: Bbox; ids: (number | string)[] };
+type Region = {
+  key: string;
+  footprints: number[][][][];
+  bbox: Bbox;
+  /** Area of the footprints (degrees², as `areaOf`). */
+  area: number;
+  ids: (number | string)[];
+};
 
 /** A target source (and source layer) followed tile by tile. */
 interface Followed {
@@ -249,6 +272,7 @@ export class BuildingReplacement {
           key: entryKey(entry),
           footprints,
           bbox: bboxOf(footprints),
+          area: areaOf(footprints),
           ids: entry.basemapReplacement?.featureIds ?? [],
         };
       });
@@ -467,9 +491,7 @@ export class BuildingReplacement {
       const box = bboxOf(polygons);
       for (const r of regions) {
         if (!overlaps(box, r.bbox)) continue;
-        const inside =
-          pointInPolygons(centre, r.footprints) ||
-          shareInside(polygons, r.footprints) >= MOSTLY_INSIDE;
+        const inside = pointInPolygons(centre, r.footprints) || mostlyInside(polygons, box, r);
         if (inside)
           claimInto(claims, `${sourceKey}/${feature.id}`, at(f.target, feature.id), r.key);
       }
